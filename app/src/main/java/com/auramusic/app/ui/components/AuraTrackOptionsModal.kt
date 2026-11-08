@@ -65,6 +65,7 @@ fun AuraTrackOptionsModal(
     onDownloadTrack: (() -> Unit)? = null,
     onRemoveDownload: (() -> Unit)? = null,
     onRemoveFromPlaylist: (() -> Unit)? = null,
+    onRemoveFromRecent: (() -> Unit)? = null,
     onWatchVideo: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -190,6 +191,15 @@ fun AuraTrackOptionsModal(
                     label = "Remove from Playlist",
                     iconTint = Color.White,
                     onClick = onRemoveFromPlaylist
+                )
+            }
+
+            if (onRemoveFromRecent != null) {
+                TrackOptionRow(
+                    icon = Icons.Rounded.DeleteOutline,
+                    label = "Remove from Recent",
+                    iconTint = Color.White,
+                    onClick = onRemoveFromRecent
                 )
             }
 

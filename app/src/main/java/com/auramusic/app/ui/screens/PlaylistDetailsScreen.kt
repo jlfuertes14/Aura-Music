@@ -2,12 +2,21 @@ package com.auramusic.app.ui.screens
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -16,21 +25,35 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.AddCircleOutline
+import androidx.compose.material.icons.rounded.ArrowCircleDown
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
@@ -38,6 +61,8 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,12 +77,17 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.ui.components.AuraPlaylistCover
 import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
 import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
+import com.auramusic.app.ui.components.LazyColumnScrollbar
 import com.auramusic.app.ui.components.TrackOptionRow
+import com.auramusic.app.ui.theme.extractAuraPaletteFromUrl
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,10 +96,23 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,6 +133,13 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+enum class PlaylistSortOption(val displayName: String) {
+    DEFAULT("Sort"),
+    TITLE("Title"),
+    ARTIST("Artist"),
+    DURATION("Duration")
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -164,173 +214,485 @@ fun PlaylistDetailsScreen(
         }
     }
 
-    Column(
+    var playlistPalette by remember { mutableStateOf<AuraPalette?>(null) }
+    LaunchedEffect(playlist.coverUrl, playlist.tracks) {
+        val artUrl = playlist.coverUrl.ifBlank { playlist.tracks.firstOrNull()?.highResArtworkUrl ?: "" }
+        if (artUrl.isNotBlank()) {
+            try {
+                playlistPalette = extractAuraPaletteFromUrl(artUrl)
+            } catch (_: Exception) {}
+        }
+    }
+    val dominantColor = playlistPalette?.backgroundTop ?: Color(0xFF1E3264)
+
+    var searchInPlaylistQuery by remember { mutableStateOf("") }
+    var sortOption by remember { mutableStateOf(PlaylistSortOption.DEFAULT) }
+
+    val processedTracks = remember(playlist.tracks, searchInPlaylistQuery, sortOption) {
+        val filtered = if (searchInPlaylistQuery.isBlank()) {
+            playlist.tracks
+        } else {
+            playlist.tracks.filter {
+                it.title.contains(searchInPlaylistQuery, ignoreCase = true) ||
+                it.artist.contains(searchInPlaylistQuery, ignoreCase = true)
+            }
+        }
+        when (sortOption) {
+            PlaylistSortOption.DEFAULT -> filtered
+            PlaylistSortOption.TITLE -> filtered.sortedBy { it.title.lowercase() }
+            PlaylistSortOption.ARTIST -> filtered.sortedBy { it.artist.lowercase() }
+            PlaylistSortOption.DURATION -> filtered.sortedByDescending { it.durationSeconds }
+        }
+    }
+
+    val listState = rememberLazyListState()
+
+    var isSearchRevealed by remember { mutableStateOf(false) }
+
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                // If scrolling down into tracks (swiping finger up, available.y < -12f), hide search bar if query is empty
+                if (available.y < -12f && searchInPlaylistQuery.isEmpty() && isSearchRevealed) {
+                    isSearchRevealed = false
+                }
+                return Offset.Zero
+            }
+
+            override fun onPostScroll(
+                consumed: Offset,
+                available: Offset,
+                source: NestedScrollSource
+            ): Offset {
+                // If user pulls down while at top of list, reveal search bar
+                if (available.y > 10f && listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0) {
+                    isSearchRevealed = true
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    // Shrink progress: DO NOT shrink immediately upon scroll.
+    // Wait until the invisible top header reaches the collage image.
+    // Phase 1 (0.0 -> 0.55): Cover image shrinks FIRST while staying 100% opaque.
+    // Phase 2 (0.55 -> 1.0): Cover image ghosts/fades out AFTER shrinking.
+    val shrinkStartOffset = if (isSearchRevealed) 240f else 110f
+    val shrinkEndOffset = if (isSearchRevealed) 920f else 760f
+
+    val shrinkFraction by remember(isSearchRevealed) {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                val offset = listState.firstVisibleItemScrollOffset.toFloat()
+                ((offset - shrinkStartOffset) / (shrinkEndOffset - shrinkStartOffset)).coerceIn(0f, 1f)
+            }
+        }
+    }
+
+    var pinnedHeaderBottomY by remember { mutableFloatStateOf(0f) }
+    var belowCoverTitleBottomY by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+
+    val headerBackgroundAlpha by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else {
+                ((shrinkFraction - 0.45f) / 0.35f).coerceIn(0f, 1f)
+            }
+        }
+    }
+    // Centered playlist title on the pinned header ONLY appears AFTER the playlist title below the cover image is covered by the header
+    val headerTitleAlpha by remember {
+        derivedStateOf {
+            if (listState.firstVisibleItemIndex > 0) {
+                1f
+            } else if (pinnedHeaderBottomY > 0f && belowCoverTitleBottomY < Float.MAX_VALUE) {
+                val overlapPx = pinnedHeaderBottomY - belowCoverTitleBottomY
+                (overlapPx / 36f).coerceIn(0f, 1f)
+            } else {
+                ((shrinkFraction - 0.85f) / 0.15f).coerceIn(0f, 1f)
+            }
+        }
+    }
+    val threeDotAlpha by remember {
+        derivedStateOf {
+            (1f - headerBackgroundAlpha).coerceIn(0f, 1f)
+        }
+    }
+
+    val headerSolidGradient = remember(dominantColor) {
+        Brush.verticalGradient(
+            colors = listOf(
+                dominantColor,                                         // Top (status bar)
+                dominantColor,                                         // Middle (toolbar title)
+                lerp(dominantColor, Color(0xFF1C1D24), 0.18f),         // Slightly darkened
+                lerp(dominantColor, Color(0xFF14151B), 0.30f)          // Slightly dark / grayed out at bottom (NOT gradient to black)
+            )
+        )
+    }
+
+    val statusBarTopPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(SpotifyPitchBlack)
     ) {
-        // Top Navigation Bar
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = TextPrimary
-                )
-            }
-
-            Text(
-                text = playlist.name,
-                style = MaterialTheme.typography.titleMedium,
-                color = TextPrimary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(horizontal = 8.dp)
-            )
-
-            IconButton(onClick = { showMenu = true }) {
-                Icon(
-                    imageVector = Icons.Rounded.MoreVert,
-                    contentDescription = "Playlist Options",
-                    tint = TextPrimary
-                )
-            }
-        }
-
+        // 1. Scrollable Content: background color lives inside the header item up to the globe/time row so it scrolls away with the header and is never sticky
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(bottom = 120.dp)
+            state = listState,
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(nestedScrollConnection),
+            contentPadding = PaddingValues(top = 0.dp, bottom = 128.dp)
         ) {
-            // Header section: Cover, Title, Stats, Action buttons
-            item {
+            // Header: Search & Sort + Shrinking Collage + Title + Metadata + Actions
+            item(key = "spotify_playlist_header") {
                 Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 24.dp, vertical = 12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    // Big Cover Image with tap-to-modify badge
-                    Box(
+                    // Colored Top Section: from Android status bar down to the Globe icon (tracks count) & time text row
+                    Column(
                         modifier = Modifier
-                            .size(210.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(SpotifyCard)
-                            .clickable { onPickCoverImage() },
-                        contentAlignment = Alignment.Center
+                            .fillMaxWidth()
+                            .background(
+                                Brush.verticalGradient(
+                                    colorStops = arrayOf(
+                                        0.0f to dominantColor,
+                                        0.45f to dominantColor,
+                                        0.82f to lerp(dominantColor, SpotifyPitchBlack, 0.65f),
+                                        1.0f to SpotifyPitchBlack
+                                    )
+                                )
+                            )
+                            .padding(
+                                top = statusBarTopPadding + 52.dp,
+                                start = 20.dp,
+                                end = 20.dp,
+                                bottom = 6.dp
+                            )
                     ) {
-                        AuraPlaylistCover(
-                            coverUrl = playlist.coverUrl,
-                            tracks = playlist.tracks,
-                            modifier = Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(16.dp)
-                        )
-
-                        // Subtle overlay badge: "Edit Cover"
-                        Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = Color.Black.copy(alpha = 0.65f),
+                    // Search & Sort row: revealed ONLY on pull-down drag (not initially displayed)
+                    AnimatedVisibility(
+                        visible = isSearchRevealed || searchInPlaylistQuery.isNotEmpty(),
+                        enter = expandVertically(
+                            animationSpec = tween(240, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+                        ) + fadeIn(animationSpec = tween(180)),
+                        exit = shrinkVertically(
+                            animationSpec = tween(200, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+                        ) + fadeOut(animationSpec = tween(150))
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .align(Alignment.BottomEnd)
-                                .padding(8.dp)
-                                .clickable { onPickCoverImage() }
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .graphicsLayer {
+                                    alpha = (1f - (shrinkFraction * 1.5f)).coerceIn(0f, 1f)
+                                },
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.15f))
+                                    .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.Edit,
-                                    contentDescription = "Edit Cover",
-                                    tint = AuraPlayGreen,
-                                    modifier = Modifier.size(13.dp)
+                                    imageVector = Icons.Rounded.Search,
+                                    contentDescription = null,
+                                    tint = Color.White.copy(alpha = 0.70f),
+                                    modifier = Modifier.size(18.dp)
                                 )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text(
-                                    text = "Edit Cover",
-                                    fontSize = 11.sp,
-                                    color = Color.White,
-                                    fontWeight = FontWeight.SemiBold
+                                Spacer(modifier = Modifier.width(8.dp))
+                                BasicTextField(
+                                    value = searchInPlaylistQuery,
+                                    onValueChange = { searchInPlaylistQuery = it },
+                                    singleLine = true,
+                                    textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+                                    modifier = Modifier.weight(1f),
+                                    decorationBox = { inner ->
+                                        if (searchInPlaylistQuery.isEmpty()) {
+                                            Text(
+                                                text = "Find in playlist",
+                                                color = Color.White.copy(alpha = 0.60f),
+                                                fontSize = 13.sp
+                                            )
+                                        }
+                                        inner()
+                                    }
                                 )
+                                if (searchInPlaylistQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { searchInPlaylistQuery = "" },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Close,
+                                            contentDescription = "Clear",
+                                            tint = Color.White.copy(alpha = 0.70f),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(10.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color.White.copy(alpha = 0.15f),
+                                modifier = Modifier
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        sortOption = when (sortOption) {
+                                            PlaylistSortOption.DEFAULT -> PlaylistSortOption.TITLE
+                                            PlaylistSortOption.TITLE -> PlaylistSortOption.ARTIST
+                                            PlaylistSortOption.ARTIST -> PlaylistSortOption.DURATION
+                                            PlaylistSortOption.DURATION -> PlaylistSortOption.DEFAULT
+                                        }
+                                        val label = when (sortOption) {
+                                            PlaylistSortOption.DEFAULT -> "Default Order"
+                                            PlaylistSortOption.TITLE -> "Sorted by Title"
+                                            PlaylistSortOption.ARTIST -> "Sorted by Artist"
+                                            PlaylistSortOption.DURATION -> "Sorted by Duration"
+                                        }
+                                        Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
+                                    }
+                            ) {
+                                Box(
+                                    modifier = Modifier.padding(horizontal = 14.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = sortOption.displayName,
+                                        color = Color.White,
+                                        fontSize = 12.5.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    Text(
-                        text = playlist.name,
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = TextPrimary,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    Text(
-                        text = "${playlist.tracks.size} songs • Spotify Playlist",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary
-                    )
-
-                    Spacer(modifier = Modifier.height(18.dp))
-
-                    // Play and Shuffle row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = SpotifyCard,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable {
-                                    val contextualTracks = playlist.tracks.map { it.copy(album = playlist.name) }
-                                    val shuffled = contextualTracks.shuffled()
-                                    shuffled.firstOrNull()?.let { first ->
-                                        onPlayTrack(first, shuffled)
-                                    }
+                    // Centered Shrinking & Ghost/Transparent Collage Cover (Larger ~280dp)
+                    // Shrinks FIRST (0.0 -> 0.55) while fully opaque, then ghosts/fades out (0.55 -> 0.92)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = if (isSearchRevealed) 10.dp else 16.dp)
+                            .graphicsLayer {
+                                val scalePhase = (shrinkFraction / 0.65f).coerceIn(0f, 1f)
+                                val coverScale = (1f - (scalePhase * 0.48f)).coerceIn(0.52f, 1f)
+                                val ghostAlpha = if (shrinkFraction < 0.50f) {
+                                    1f
+                                } else {
+                                    (1f - ((shrinkFraction - 0.50f) / 0.38f)).coerceIn(0f, 1f)
                                 }
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Shuffle,
-                                    contentDescription = "Shuffle",
-                                    tint = AuraPlayGreen,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = "Shuffle",
-                                    color = TextPrimary,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        // Prominent circular Play button
+                                scaleX = coverScale
+                                scaleY = coverScale
+                                alpha = ghostAlpha
+                                translationY = shrinkFraction * 45f
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
                         Box(
                             modifier = Modifier
-                                .size(56.dp)
+                                .fillMaxWidth(0.72f)
+                                .aspectRatio(1f)
+                                .sizeIn(maxWidth = 285.dp, maxHeight = 285.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E2028))
+                                .clickable { onPickCoverImage() },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AuraPlaylistCover(
+                                coverUrl = playlist.coverUrl,
+                                tracks = playlist.tracks,
+                                modifier = Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                        }
+                    }
+
+                    // Playlist Title (tracked so pinned header title only appears after this title is covered by the header)
+                    Text(
+                        text = playlist.name,
+                        color = Color.White,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            belowCoverTitleBottomY = coords.positionInRoot().y + coords.size.height
+                        }
+                    )
+
+                    // Description if present
+                    if (playlist.description.isNotBlank()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = playlist.description,
+                            color = Color.White.copy(alpha = 0.70f),
+                            fontSize = 12.5.sp,
+                            lineHeight = 17.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Creator Row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(AuraPlayGreen),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = playlist.name.firstOrNull()?.uppercase() ?: "A",
+                                color = Color.Black,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (playlist.id.startsWith("spotify")) "Spotify" else "Aura Music",
+                            color = Color.White,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    // Metadata Row (Globe + tracks + duration)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = 6.dp)
+                    ) {
+                        Canvas(modifier = Modifier.size(13.dp)) {
+                            val stroke = Stroke(width = 1.2.dp.toPx())
+                            drawCircle(color = Color.White.copy(alpha = 0.60f), style = stroke)
+                            drawLine(
+                                color = Color.White.copy(alpha = 0.60f),
+                                start = Offset(0f, size.height / 2),
+                                end = Offset(size.width, size.height / 2),
+                                strokeWidth = 1.2.dp.toPx()
+                            )
+                            drawOval(
+                                color = Color.White.copy(alpha = 0.60f),
+                                size = Size(size.width * 0.5f, size.height),
+                                topLeft = Offset(size.width * 0.25f, 0f),
+                                style = stroke
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        val totalSec = playlist.tracks.sumOf { it.durationSeconds.toLong() }
+                        val hours = totalSec / 3600
+                        val minutes = (totalSec % 3600) / 60
+                        val durText = if (hours > 0) "${hours}h ${minutes}min" else "${minutes}min"
+                        Text(
+                            text = "${playlist.tracks.size} tracks • $durText",
+                            color = Color.White.copy(alpha = 0.65f),
+                            fontSize = 12.sp
+                        )
+                    }
+                    } // End of Colored Top Section (stops at Globe icon & time text row)
+
+                    // Action buttons row (Add, Download, Share, 3-dots, Shuffle, Big Play) on pure black background
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(SpotifyPitchBlack)
+                            .padding(horizontal = 20.dp)
+                            .padding(top = 10.dp, bottom = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Download All
+                        IconButton(
+                            onClick = {
+                                val notDownloaded = playlist.tracks.filterNot { track -> downloads.any { it.videoId == track.videoId && it.isDownloaded } }
+                                notDownloaded.forEach { onDownloadTrack(it) }
+                                Toast.makeText(context, "Downloading ${notDownloaded.size} tracks…", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Download,
+                                contentDescription = "Download All",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        // Share
+                        IconButton(
+                            onClick = {
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "text/plain"
+                                    putExtra(Intent.EXTRA_TEXT, "Listen to playlist '${playlist.name}' (${playlist.tracks.size} songs) on Aura Music")
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share Playlist"))
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Share,
+                                contentDescription = "Share",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+
+                        // Options
+                        IconButton(
+                            onClick = { showMenu = true },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = "Options",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        // Shuffle
+                        IconButton(
+                            onClick = {
+                                val contextualTracks = processedTracks.map { it.copy(album = playlist.name) }
+                                val shuffled = contextualTracks.shuffled()
+                                shuffled.firstOrNull()?.let { first -> onPlayTrack(first, shuffled) }
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Shuffle,
+                                contentDescription = "Shuffle",
+                                tint = Color.White.copy(alpha = 0.85f),
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.weight(1f))
+
+                        // Big Spotify Green Play Button
+                        Box(
+                            modifier = Modifier
+                                .size(52.dp)
                                 .clip(CircleShape)
                                 .background(AuraPlayGreen)
                                 .clickable {
-                                    val contextualTracks = playlist.tracks.map { it.copy(album = playlist.name) }
+                                    val contextualTracks = processedTracks.map { it.copy(album = playlist.name) }
                                     contextualTracks.firstOrNull()?.let { first ->
                                         onPlayTrack(first, contextualTracks)
                                     }
@@ -348,22 +710,9 @@ fun PlaylistDetailsScreen(
                 }
             }
 
-            // Songs Header
-            item {
-                Text(
-                    text = "Tracks",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp)
-                )
-            }
-
-            // Song list items
-            // Imported playlists may intentionally contain the same song more than once.
-            // Include the occurrence index so repeated video IDs never collide in LazyColumn.
+            // Track list items
             itemsIndexed(
-                items = playlist.tracks,
+                items = processedTracks,
                 key = { index, track -> "playlist_track_${index}_${track.videoId.ifBlank { track.id }}" }
             ) { _, track ->
                 SpotifyTrackRowItem(
@@ -374,13 +723,101 @@ fun PlaylistDetailsScreen(
                     isDownloading = downloadingIds.contains(track.videoId),
                     downloadProgress = downloadProgressMap[track.videoId],
                     onClick = {
-                        val contextualTracks = playlist.tracks.map { it.copy(album = playlist.name) }
+                        val contextualTracks = processedTracks.map { it.copy(album = playlist.name) }
                         onPlayTrack(track.copy(album = playlist.name), contextualTracks)
                     },
                     onToggleFavorite = { onToggleFavorite(track) },
                     onDownload = { onDownloadTrack(track) },
                     onOptionsClick = { selectedModalTrack = track }
                 )
+            }
+
+            // Bottom blank space equivalent to ~2 song tiles so mini player never covers the last item
+            item(key = "playlist_bottom_blank_space") {
+                Spacer(modifier = Modifier.height(16.dp))
+            }
+        }
+
+        // Fast scrollbar on the right edge
+        LazyColumnScrollbar(
+            state = listState,
+            modifier = Modifier.align(Alignment.CenterEnd),
+            onlyWhenTrackScrolling = true
+        )
+
+        // Pinned Top Bar covering Android Status Bar (battery, time, wifi) + Toolbar
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+                .onGloballyPositioned { coords ->
+                    pinnedHeaderBottomY = coords.positionInRoot().y + coords.size.height
+                }
+                .then(
+                    if (headerBackgroundAlpha > 0.001f) {
+                        Modifier.background(headerSolidGradient, alpha = headerBackgroundAlpha)
+                    } else {
+                        Modifier
+                    }
+                )
+        ) {
+            // Android Status Bar Area (battery, time, wifi) included in header background color
+            Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
+
+            // Row 1: Dedicated Navigation Row with Back button & 3-dots button (dark circle backgrounds per reference)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                // Centered Title appearing as collage shrinks
+                Text(
+                    text = playlist.name,
+                    color = Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .padding(horizontal = 48.dp)
+                        .graphicsLayer { alpha = headerTitleAlpha }
+                )
+
+                // Back button - Flat, no circle fill, larger icon size
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .size(44.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        tint = Color.White,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+
+                // 3-dots Options button - Flat, no circle fill, larger icon size
+                if (threeDotAlpha > 0.01f) {
+                    IconButton(
+                        onClick = { showMenu = true },
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .size(44.dp)
+                            .graphicsLayer { alpha = threeDotAlpha }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MoreVert,
+                            contentDescription = "Playlist Options",
+                            tint = Color.White,
+                            modifier = Modifier.size(26.dp)
+                        )
+                    }
+                }
             }
         }
     }
@@ -431,6 +868,10 @@ fun PlaylistDetailsScreen(
         AuraPlaylistOptionsModal(
             playlist = playlist,
             onDismiss = { showMenu = false },
+            onFindInPlaylist = {
+                showMenu = false
+                isSearchRevealed = true
+            },
             onDownloadAll = {
                 showMenu = false
                 playlist.tracks.forEach { onDownloadTrack(it) }

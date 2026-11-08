@@ -172,16 +172,14 @@ fun ArtistDetailScreen(
                         onClick = onClose,
                         modifier = Modifier
                             .statusBarsPadding()
-                            .padding(start = 16.dp, top = 8.dp)
-                            .size(38.dp)
-                            .clip(CircleShape)
-                            .background(Color.Black.copy(alpha = 0.50f))
+                            .padding(start = 8.dp, top = 4.dp)
+                            .size(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Back",
                             tint = Color.White,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
 

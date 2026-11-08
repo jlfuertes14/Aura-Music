@@ -56,6 +56,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyHorizontalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -76,6 +80,7 @@ import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.ArrowDropDown
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
@@ -107,8 +112,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.auramusic.app.domain.model.YtmMoodItem
+import com.auramusic.app.domain.model.YtmMoodItemType
+import com.auramusic.app.domain.model.YtmMoodShelf
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
@@ -116,6 +126,10 @@ import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.ui.components.AudioPlayingIndicator
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.domain.model.AuraChart
+import com.auramusic.app.domain.model.ChartSupportedCountries
+import com.auramusic.app.ui.components.AuraChartCountryPickerModal
+import com.auramusic.app.ui.components.ChartSectionSkeleton
 import com.auramusic.app.domain.model.MoodCategory
 import com.auramusic.app.domain.model.YtmChartSection
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
@@ -169,6 +183,7 @@ fun HomeScreen(
     activeCategory: String = "All",
     homeCategoryBackground: String? = null,
     categoryTracks: List<AuraTrack> = emptyList(),
+    categoryShelves: List<YtmMoodShelf> = emptyList(),
     isCategoryLoading: Boolean = false,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onPlayMusicVideo: (AuraTrack, List<AuraTrack>) -> Unit = { track, queue -> onPlayTrack(track, queue) },
@@ -176,6 +191,7 @@ fun HomeScreen(
     onOpenArtist: (YtmTopArtist) -> Unit = {},
     onPlayCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {},
     onOpenPlaylist: (YtmCommunityPlaylist) -> Unit = {},
+    onOpenAlbum: (AuraTrack) -> Unit = {},
     onOpenUserPlaylist: (AuraPlaylist) -> Unit = {},
     onSelectCategory: (String) -> Unit = {},
     onPlayMood: (MoodCategory) -> Unit,
@@ -184,12 +200,17 @@ fun HomeScreen(
     onRefresh: () -> Unit,
     onOpenArtistByName: (String, String) -> Unit = { _, _ -> },
     onAddTrackToPlaylist: (String, AuraTrack) -> Unit = { _, _ -> },
-    onCreatePlaylist: (String, String, String) -> Unit = { _, _, _ -> }
+    onCreatePlaylist: (String, String, String) -> Unit = { _, _, _ -> },
+    chartData: AuraChart? = null,
+    selectedChartCountry: String = "US",
+    isChartLoading: Boolean = false,
+    onSelectChartCountry: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     var selectedTrackForOptions by remember { mutableStateOf<AuraTrack?>(null) }
     var trackForAddToPlaylist by remember { mutableStateOf<AuraTrack?>(null) }
     var showCreatePlaylistModal by remember { mutableStateOf(false) }
+    var showCountryPickerModal by remember { mutableStateOf(false) }
     var isPullRefreshing by remember { mutableStateOf(false) }
     val isAnyLoading = isLoading || isCategoryLoading
     LaunchedEffect(isAnyLoading) {
@@ -376,6 +397,7 @@ fun HomeScreen(
                     Spacer(modifier = Modifier.height(uncollapsedHeaderHeight))
                 }
 
+                if (activeCategory == "All") {
                 // Quick picks: four compact rows per horizontal page, matching YouTube Music's shelf.
                 if (quickPickTracks.isNotEmpty() || (activeCategory != "All" && isCategoryLoading)) {
                     item(key = "quick_picks_shelf") {
@@ -655,161 +677,6 @@ fun HomeScreen(
             }
         }
 
-        // 3. Top Artists Carousel (Live YouTube Music Charts FEmusic_charts)
-        if (visibleTopArtists.isNotEmpty() || (activeCategory == "All" && isLoading)) {
-            item(key = "top_artists_shelf") {
-                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp).animateItem(fadeInSpec = tween(300, easing = EaseOutCubic), fadeOutSpec = tween(200, easing = EaseOutCubic), placementSpec = tween(300, easing = EaseOutCubic))) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Top Artists",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    if (visibleTopArtists.isEmpty() && isLoading) {
-                        com.auramusic.app.ui.components.ArtistCarouselSkeleton()
-                    } else {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(16.dp)
-                        ) {
-                            items(visibleTopArtists, key = { "artist_${it.id}" }) { artist ->
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier
-                                        .width(92.dp)
-                                        .clickable { onOpenArtist(artist) }
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(80.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF1E2028))
-                                    ) {
-                                        AsyncImage(
-                                            model = artist.highResAvatarUrl,
-                                            contentDescription = artist.name,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = artist.name,
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.sp),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = artist.subscribers,
-                                        color = TextSecondary,
-                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4b. Top Playlists / User-Uploaded Community Playlists
-        if (activeCategory == "All" && (communityPlaylists.isNotEmpty() || isLoading)) {
-            item(key = "community_playlists_shelf") {
-                Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp).animateItem(fadeInSpec = tween(300, easing = EaseOutCubic), fadeOutSpec = tween(200, easing = EaseOutCubic), placementSpec = tween(300, easing = EaseOutCubic))) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "Top Playlists",
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                        Text(
-                            text = "Community",
-                            color = TextSecondary,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(14.dp))
-                    if (communityPlaylists.isEmpty() && isLoading) {
-                        com.auramusic.app.ui.components.PlaylistCarouselSkeleton()
-                    } else {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            items(communityPlaylists, key = { "ytm_pl_${it.id}" }) { playlist ->
-                                Column(
-                                    modifier = Modifier
-                                        .width(135.dp)
-                                        .clickable { onOpenPlaylist(playlist) }
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(135.dp)
-                                            .clip(RoundedCornerShape(14.dp))
-                                            .background(Color(0xFF1E2028))
-                                    ) {
-                                        AsyncImage(
-                                            model = playlist.highResArtworkUrl,
-                                            contentDescription = playlist.title,
-                                            contentScale = ContentScale.Crop,
-                                            modifier = Modifier.fillMaxSize()
-                                        )
-                                        Surface(
-                                            shape = RoundedCornerShape(topStart = 8.dp),
-                                            color = Color.Black.copy(alpha = 0.70f),
-                                            modifier = Modifier.align(Alignment.BottomEnd)
-                                        ) {
-                                            Text(
-                                                text = playlist.trackCount,
-                                                color = Color.White.copy(alpha = 0.85f),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
-                                            )
-                                        }
-                                    }
-                                    Spacer(modifier = Modifier.height(8.dp))
-                                    Text(
-                                        text = playlist.title,
-                                        color = Color.White,
-                                        style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(modifier = Modifier.height(2.dp))
-                                    Text(
-                                        text = playlist.author,
-                                        color = TextSecondary,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
 
         // 4b. Recently Played Carousel (Real dynamically tracked history)
         if (visibleRecentlyPlayed.isNotEmpty()) {
@@ -1023,6 +890,7 @@ fun HomeScreen(
                                 currentPlayingId = currentPlayingId,
                                 isPlaying = isPlaying,
                                 onPlayTrack = onPlayTrack,
+                                onOpenAlbum = onOpenAlbum,
                                 titleForTrack = { track ->
                                     track.album.takeIf { it.isNotBlank() && !it.equals("YouTube Music", true) }
                                         ?: track.title
@@ -1035,8 +903,8 @@ fun HomeScreen(
             }
         }
 
-        // 5. Section: Top Tracks / Category Query Results
-        if (activeCategory == "All" || (!isCategoryLoading && displayedTracks.isNotEmpty())) {
+        // 5. Section: Category Filter Tracks (shown when a category pill like Workout or Relax is active)
+        if (activeCategory != "All" && (!isCategoryLoading && displayedTracks.isNotEmpty())) {
             item {
                 Row(
                     modifier = Modifier
@@ -1045,51 +913,35 @@ fun HomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    AnimatedContent(
-                        targetState = if (activeCategory == "All") "Top daily playlists" else "$activeCategory Tracks",
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(220, easing = EaseOutCubic)) togetherWith
-                            fadeOut(animationSpec = tween(160, easing = EaseOutCubic))
-                        },
-                        label = "bottomSectionTitle"
-                    ) { titleText ->
-                        Text(
-                            text = titleText,
-                            style = MaterialTheme.typography.headlineMedium,
-                            color = Color.White
-                        )
-                    }
+                    Text(
+                        text = "$activeCategory Tracks",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = Color.White
+                    )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
             }
 
-            // 6. Tracklist Items with Badges (LYRICS / E) - Paginated to avoid rate limits
-            if (activeCategory == "All" && isLoading && displayedTracks.isEmpty()) {
-                items(6) {
-                    com.auramusic.app.ui.components.TrackItemSkeleton()
-                }
-            } else {
-                val currentBatch = displayedTracks.take(visibleTrackCount)
-                items(currentBatch, key = { it.videoId }) { track ->
-                    val isFav = favorites.any { it.videoId == track.videoId }
-                    val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
-                    val isDownloading = downloadingIds.contains(track.videoId)
-                    val isCurrent = currentPlayingId == track.videoId
+            val currentBatch = displayedTracks.take(visibleTrackCount)
+            items(currentBatch, key = { it.videoId }) { track ->
+                val isFav = favorites.any { it.videoId == track.videoId }
+                val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
+                val isDownloading = downloadingIds.contains(track.videoId)
+                val isCurrent = currentPlayingId == track.videoId
 
-                    SpotifyTrackRowItem(
-                        track = track,
-                        isCurrent = isCurrent,
-                        isFavorite = isFav,
-                        isDownloaded = isDown,
-                        isDownloading = isDownloading,
-                        downloadProgress = downloadProgressMap[track.videoId],
-                        isPlaying = isPlaying,
-                        onClick = { onPlayTrack(track, displayedTracks) },
-                        onToggleFavorite = { onToggleFavorite(track) },
-                        onDownload = { onDownloadTrack(track) },
-                        onOptionsClick = { selectedTrackForOptions = track }
-                    )
-                }
+                SpotifyTrackRowItem(
+                    track = track,
+                    isCurrent = isCurrent,
+                    isFavorite = isFav,
+                    isDownloaded = isDown,
+                    isDownloading = isDownloading,
+                    downloadProgress = downloadProgressMap[track.videoId],
+                    isPlaying = isPlaying,
+                    onClick = { onPlayTrack(track, displayedTracks) },
+                    onToggleFavorite = { onToggleFavorite(track) },
+                    onDownload = { onDownloadTrack(track) },
+                    onOptionsClick = { selectedTrackForOptions = track }
+                )
             }
 
             // Pagination "See More" Button
@@ -1129,6 +981,594 @@ fun HomeScreen(
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 6. Bottom Chart Section (YouTube Music Charts with Country Selector, Video charts, Genres, Top artists, and Podcasts)
+        if (activeCategory == "All") {
+            item(key = "home_charts_section") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 20.dp, bottom = 28.dp)
+                ) {
+                    // Header: Subtitle + Title + Country Dropdown Button
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp)
+                    ) {
+                        Text(
+                            text = "WHAT IS BEST CHOICE TODAY",
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                letterSpacing = 1.2.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp
+                            ),
+                            color = TextSecondary
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Chart",
+                            style = MaterialTheme.typography.headlineMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 28.sp
+                            ),
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Country Dropdown Pill Button
+                        val countryName = remember(selectedChartCountry) {
+                            ChartSupportedCountries.getCountryName(selectedChartCountry)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(24.dp),
+                            color = Color(0xFF1E2028),
+                            border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(24.dp))
+                                .clickable { showCountryPickerModal = true }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = countryName,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.Rounded.ArrowDropDown,
+                                    contentDescription = "Select country",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Crossfade(
+                        targetState = isChartLoading,
+                        animationSpec = tween(durationMillis = 250, easing = EaseOutCubic),
+                        label = "chartLoadingCrossfade"
+                    ) { loading ->
+                        if (loading) {
+                            ChartSectionSkeleton()
+                        } else if (chartData != null) {
+                            val chart = chartData
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                // 1. Video charts, Genres, etc. (Playlists)
+                                chart.playlists.forEach { section ->
+                                    Text(
+                                        text = section.title,
+                                        style = MaterialTheme.typography.titleLarge.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 20.sp
+                                        ),
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                                    )
+                                    LazyRow(
+                                        contentPadding = PaddingValues(horizontal = 20.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                        modifier = Modifier.padding(bottom = 14.dp)
+                                    ) {
+                                        items(section.items, key = { "${section.title}_${it.id}" }) { playlist ->
+                                            Column(
+                                                modifier = Modifier
+                                                    .width(155.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .clickable { onOpenPlaylist(playlist) }
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(155.dp)
+                                                        .clip(RoundedCornerShape(12.dp))
+                                                        .background(Color(0xFF1E2028))
+                                                ) {
+                                                    AsyncImage(
+                                                        model = playlist.highResArtworkUrl,
+                                                        contentDescription = playlist.title,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Text(
+                                                    text = playlist.title,
+                                                    color = Color.White,
+                                                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                                    maxLines = 2,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Spacer(modifier = Modifier.height(3.dp))
+                                                Text(
+                                                    text = playlist.author.ifBlank { "Chart • YouTube Charts" },
+                                                    color = TextSecondary,
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 2. Top Artists (Ranked 1, 2, 3...)
+                                if (chart.topArtists.isNotEmpty()) {
+                                    Text(
+                                        text = "Top artists",
+                                        style = MaterialTheme.typography.titleLarge.copy(
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 20.sp
+                                        ),
+                                        color = Color.White,
+                                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                                    )
+                                    val configuration = LocalConfiguration.current
+                                    val columnWidth = remember(configuration.screenWidthDp) {
+                                        (configuration.screenWidthDp - 40).coerceAtMost(320).dp
+                                    }
+                                    LazyHorizontalGrid(
+                                        rows = GridCells.Fixed(3),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(234.dp)
+                                            .padding(bottom = 14.dp),
+                                        contentPadding = PaddingValues(horizontal = 20.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        items(chart.topArtists, key = { "chart_artist_${it.id}_${it.rank}" }) { artist ->
+                                            Row(
+                                                modifier = Modifier
+                                                    .width(columnWidth)
+                                                    .clip(RoundedCornerShape(10.dp))
+                                                    .clickable {
+                                                        onOpenArtist(
+                                                            YtmTopArtist(
+                                                                id = artist.id,
+                                                                name = artist.name,
+                                                                subscribers = artist.subscribers,
+                                                                avatarUrl = artist.avatarUrl
+                                                            )
+                                                        )
+                                                    }
+                                                    .padding(vertical = 4.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    text = artist.rank,
+                                                    style = MaterialTheme.typography.titleLarge.copy(
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 22.sp
+                                                    ),
+                                                    color = Color.White,
+                                                    textAlign = TextAlign.Center,
+                                                    modifier = Modifier.width(36.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(10.dp))
+                                                AsyncImage(
+                                                    model = artist.highResAvatarUrl,
+                                                    contentDescription = artist.name,
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(56.dp)
+                                                        .clip(CircleShape)
+                                                        .background(Color(0xFF1E2028))
+                                                )
+                                                Spacer(modifier = Modifier.width(14.dp))
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = artist.name,
+                                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                                        color = Color.White,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Spacer(modifier = Modifier.height(3.dp))
+                                                    Text(
+                                                        text = artist.subscribers,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = TextSecondary,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 3. Weekly top podcast shows (Ranked 1, 2, 3...)
+                                chart.podcasts?.let { podcasts ->
+                                    if (podcasts.shows.isNotEmpty()) {
+                                        Text(
+                                            text = podcasts.title,
+                                            style = MaterialTheme.typography.titleLarge.copy(
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 20.sp
+                                            ),
+                                            color = Color.White,
+                                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                                        )
+                                        val configuration = LocalConfiguration.current
+                                        val columnWidth = remember(configuration.screenWidthDp) {
+                                            (configuration.screenWidthDp - 40).coerceAtMost(320).dp
+                                        }
+                                        LazyHorizontalGrid(
+                                            rows = GridCells.Fixed(3),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(234.dp)
+                                                .padding(bottom = 14.dp),
+                                            contentPadding = PaddingValues(horizontal = 20.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            items(podcasts.shows, key = { "chart_podcast_${it.id}_${it.rank}" }) { show ->
+                                                Row(
+                                                    modifier = Modifier
+                                                        .width(columnWidth)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .clickable {
+                                                            onOpenPlaylist(
+                                                                YtmCommunityPlaylist(
+                                                                    id = show.id,
+                                                                    title = show.name,
+                                                                    author = show.subscribers,
+                                                                    trackCount = "",
+                                                                    artworkUrl = show.avatarUrl
+                                                                )
+                                                            )
+                                                        }
+                                                        .padding(vertical = 4.dp),
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text(
+                                                        text = show.rank,
+                                                        style = MaterialTheme.typography.titleLarge.copy(
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 22.sp
+                                                        ),
+                                                        color = Color.White,
+                                                        textAlign = TextAlign.Center,
+                                                        modifier = Modifier.width(36.dp)
+                                                    )
+                                                    Spacer(modifier = Modifier.width(10.dp))
+                                                    AsyncImage(
+                                                        model = show.highResAvatarUrl,
+                                                        contentDescription = show.name,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier
+                                                            .size(56.dp)
+                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .background(Color(0xFF1E2028))
+                                                    )
+                                                    Spacer(modifier = Modifier.width(14.dp))
+                                                    Column(modifier = Modifier.weight(1f)) {
+                                                        Text(
+                                                            text = show.name,
+                                                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                                                            color = Color.White,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        Spacer(modifier = Modifier.height(3.dp))
+                                                        Text(
+                                                            text = show.subscribers,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = TextSecondary,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        } else {
+            // Upgraded Mood Category Dynamic Shelves (YouTube Music InnerTube Browse)
+            if (isCategoryLoading && categoryShelves.isEmpty() && categoryTracks.isEmpty()) {
+                item(key = "mood_loading_skeleton_quick") {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .width(160.dp)
+                                .height(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .auraShimmer()
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        repeat(4) {
+                            com.auramusic.app.ui.components.TrackItemSkeleton()
+                            Spacer(modifier = Modifier.height(8.dp))
+                        }
+                    }
+                }
+                item(key = "mood_loading_skeleton_shelf") {
+                    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                        Box(
+                            modifier = Modifier
+                                .width(180.dp)
+                                .height(24.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .auraShimmer()
+                        )
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            repeat(3) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(132.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .auraShimmer()
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (categoryShelves.isNotEmpty()) {
+                    categoryShelves.forEachIndexed { index, shelf ->
+                        if (shelf.items.isNotEmpty()) {
+                            item(key = "mood_shelf_${index}_${shelf.title}") {
+                                MoodCarouselShelf(
+                                    shelf = shelf,
+                                    pageWidth = pageWidth,
+                                    currentPlayingId = currentPlayingId,
+                                    isPlaying = isPlaying,
+                                    onPlayTrack = onPlayTrack,
+                                    onPlayMusicVideo = onPlayMusicVideo,
+                                    onOpenPlaylist = onOpenPlaylist,
+                                    onOpenAlbum = onOpenAlbum,
+                                    onOptionsClick = { selectedTrackForOptions = it }
+                                )
+                            }
+                        }
+                    }
+                } else if (quickPickTracks.isNotEmpty()) {
+                    item(key = "mood_fallback_quick_picks") {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 14.dp, bottom = 26.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(start = 20.dp, end = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text(
+                                    text = "$activeCategory picks",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    color = Color.White
+                                )
+                                HomePlayAllButton {
+                                    quickPickTracks.firstOrNull()?.let { onPlayTrack(it, quickPickTracks) }
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(12.dp))
+                            val quickPickPages = remember(quickPickTracks) { quickPickTracks.chunked(4) }
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                items(quickPickPages, key = { page -> page.firstOrNull()?.videoId ?: page.hashCode() }) { page ->
+                                    Column(
+                                        modifier = Modifier.width(pageWidth),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        page.forEach { track ->
+                                            val isCurrent = currentPlayingId == track.videoId
+                                            val isTrackPlaying = isCurrent && isPlaying
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(68.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .size(60.dp)
+                                                        .clip(RoundedCornerShape(6.dp))
+                                                        .background(Color(0xFF202127))
+                                                        .clickable { onPlayTrack(track, quickPickTracks) },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    AsyncImage(
+                                                        model = track.highResArtworkUrl,
+                                                        contentDescription = track.title,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier.fillMaxSize()
+                                                    )
+                                                    if (isTrackPlaying) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .fillMaxSize()
+                                                                .background(Color.Black.copy(alpha = 0.55f)),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            AudioPlayingIndicator(
+                                                                modifier = Modifier.fillMaxSize(0.70f),
+                                                                color = AuraNeonLime
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                                Column(
+                                                    modifier = Modifier
+                                                        .weight(1f)
+                                                        .padding(start = 14.dp)
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .clickable { onPlayTrack(track, quickPickTracks) }
+                                                        .padding(vertical = 5.dp)
+                                                ) {
+                                                    Text(
+                                                        text = track.title,
+                                                        color = if (isCurrent) AuraNeonLime else Color.White,
+                                                        style = MaterialTheme.typography.titleSmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = track.artist,
+                                                        color = Color.White,
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                                IconButton(
+                                                    onClick = { selectedTrackForOptions = track },
+                                                    modifier = Modifier.size(42.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Rounded.MoreVert,
+                                                        contentDescription = "Options for ${track.title}",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(22.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (likedRecommendations.isNotEmpty()) {
+                    item(key = "mood_liked_shelf") {
+                        HomeRecommendationShelf(
+                            title = "From your library & likes",
+                            tracks = likedRecommendations,
+                            currentPlayingId = currentPlayingId,
+                            isPlaying = isPlaying,
+                            onPlayTrack = onPlayTrack,
+                            keyPrefix = "mood_liked"
+                        )
+                    }
+                }
+
+                if (displayedTracks.isNotEmpty()) {
+                    item(key = "mood_tracks_heading") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "$activeCategory Tracks",
+                                style = MaterialTheme.typography.headlineMedium,
+                                color = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+
+                    val currentBatch = displayedTracks.take(visibleTrackCount)
+                    items(currentBatch, key = { "mood_trk_${it.videoId}" }) { track ->
+                        val isFav = favorites.any { it.videoId == track.videoId }
+                        val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
+                        val isDownloading = downloadingIds.contains(track.videoId)
+                        val isCurrent = currentPlayingId == track.videoId
+
+                        SpotifyTrackRowItem(
+                            track = track,
+                            isCurrent = isCurrent,
+                            isFavorite = isFav,
+                            isDownloaded = isDown,
+                            isDownloading = isDownloading,
+                            downloadProgress = downloadProgressMap[track.videoId],
+                            isPlaying = isPlaying,
+                            onClick = { onPlayTrack(track, displayedTracks) },
+                            onToggleFavorite = { onToggleFavorite(track) },
+                            onDownload = { onDownloadTrack(track) },
+                            onOptionsClick = { selectedTrackForOptions = track }
+                        )
+                    }
+
+                    if (visibleTrackCount < displayedTracks.size) {
+                        item(key = "mood_see_more_btn") {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp, vertical = 12.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    shape = RoundedCornerShape(24.dp),
+                                    color = Color(0xFF1E2028),
+                                    border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .clickable {
+                                            visibleTrackCount = (visibleTrackCount + 20).coerceAtMost(displayedTracks.size)
+                                        }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.ArrowDownward,
+                                            contentDescription = "See More",
+                                            tint = AuraNeonLime,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "See More (${displayedTracks.size - visibleTrackCount} more tracks)",
+                                            color = Color.White,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -1300,6 +1740,18 @@ fun HomeScreen(
                 showCreatePlaylistModal = false
                 onCreatePlaylist(title, desc, coverUri)
                 Toast.makeText(context, "Created playlist: $title", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    // Modal: Select Chart Region / Country
+    if (showCountryPickerModal) {
+        AuraChartCountryPickerModal(
+            currentCountryCode = selectedChartCountry,
+            onDismiss = { showCountryPickerModal = false },
+            onSelectCountry = { code ->
+                showCountryPickerModal = false
+                onSelectChartCountry(code)
             }
         )
     }
@@ -1771,12 +2223,349 @@ fun formatDuration(seconds: Int): String {
 }
 
 @Composable
+private fun MoodCarouselShelf(
+    shelf: YtmMoodShelf,
+    pageWidth: Dp,
+    currentPlayingId: String?,
+    isPlaying: Boolean,
+    onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
+    onPlayMusicVideo: (AuraTrack, List<AuraTrack>) -> Unit,
+    onOpenPlaylist: (YtmCommunityPlaylist) -> Unit,
+    onOpenAlbum: (AuraTrack) -> Unit,
+    onOptionsClick: (AuraTrack) -> Unit
+) {
+    if (shelf.items.isEmpty()) return
+
+    val shelfTracks = remember(shelf.items) {
+        shelf.items.map { item ->
+            AuraTrack(
+                id = item.id,
+                videoId = item.id,
+                title = item.title,
+                artist = item.subtitle,
+                artworkUrl = item.artworkUrl
+            )
+        }
+    }
+
+    val isVideoShelf = shelf.items.firstOrNull()?.type == YtmMoodItemType.VIDEO
+    val isPlaylistShelf = shelf.items.firstOrNull()?.type == YtmMoodItemType.PLAYLIST
+    val isAlbumShelf = shelf.items.firstOrNull()?.type == YtmMoodItemType.ALBUM
+    val is4Row = shelf.is4RowGrid || (shelf.items.size >= 8 && shelf.items.all { it.type == YtmMoodItemType.TRACK })
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 26.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                if (!shelf.subtitle.isNullOrBlank()) {
+                    Text(
+                        text = shelf.subtitle.uppercase(),
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        letterSpacing = 0.8.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                }
+                Text(
+                    text = shelf.title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.headlineMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (is4Row || (!isVideoShelf && !isPlaylistShelf && !isAlbumShelf)) {
+                HomePlayAllButton {
+                    shelfTracks.firstOrNull()?.let { onPlayTrack(it, shelfTracks) }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (is4Row) {
+            val pages = remember(shelf.items) { shelf.items.chunked(4) }
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(pages, key = { page -> page.firstOrNull()?.id ?: page.hashCode() }) { page ->
+                    Column(
+                        modifier = Modifier.width(pageWidth),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        page.forEach { item ->
+                            val track = AuraTrack(
+                                id = item.id,
+                                videoId = item.id,
+                                title = item.title,
+                                artist = item.subtitle,
+                                artworkUrl = item.artworkUrl
+                            )
+                            val isCurrent = currentPlayingId == item.id
+                            val isTrackPlaying = isCurrent && isPlaying
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(68.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(60.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(Color(0xFF202127))
+                                        .clickable { onPlayTrack(track, shelfTracks) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AsyncImage(
+                                        model = track.highResArtworkUrl,
+                                        contentDescription = item.title,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                    if (isTrackPlaying) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(Color.Black.copy(alpha = 0.55f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            AudioPlayingIndicator(
+                                                modifier = Modifier.fillMaxSize(0.70f),
+                                                color = AuraNeonLime
+                                            )
+                                        }
+                                    }
+                                }
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 14.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .clickable { onPlayTrack(track, shelfTracks) }
+                                        .padding(vertical = 5.dp)
+                                ) {
+                                    Text(
+                                        text = item.title,
+                                        color = if (isCurrent) AuraNeonLime else Color.White,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = item.subtitle,
+                                        color = Color.White.copy(alpha = 0.70f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { onOptionsClick(track) },
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MoreVert,
+                                        contentDescription = "Options for ${item.title}",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else if (isVideoShelf) {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                items(shelf.items, key = { "mood_vid_${it.id}" }) { item ->
+                    val track = AuraTrack(
+                        id = item.id,
+                        videoId = item.id,
+                        title = item.title,
+                        artist = item.subtitle,
+                        artworkUrl = item.artworkUrl
+                    )
+                    val isCurrent = currentPlayingId == item.id
+                    Column(
+                        modifier = Modifier
+                            .width(260.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .clickable { onPlayMusicVideo(track, shelfTracks) }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(146.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF202127))
+                        ) {
+                            AsyncImage(
+                                model = track.highResArtworkUrl,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .align(Alignment.Center)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.65f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = if (isCurrent && isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = null,
+                                    tint = if (isCurrent) AuraNeonLime else Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = item.title,
+                            color = if (isCurrent) AuraNeonLime else Color.White,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (item.subtitle.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = item.subtitle,
+                                color = TextSecondary,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 20.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                items(shelf.items, key = { "mood_item_${it.id}" }) { item ->
+                    val isCurrent = currentPlayingId == item.id
+                    Column(
+                        modifier = Modifier
+                            .width(132.dp)
+                            .clickable {
+                                when {
+                                    isPlaylistShelf -> {
+                                        onOpenPlaylist(
+                                            YtmCommunityPlaylist(
+                                                id = item.id,
+                                                title = item.title,
+                                                author = item.subtitle,
+                                                artworkUrl = item.artworkUrl,
+                                                trackCount = ""
+                                            )
+                                        )
+                                    }
+                                    isAlbumShelf -> {
+                                        onOpenAlbum(
+                                            AuraTrack(
+                                                id = item.id,
+                                                videoId = item.id,
+                                                title = item.title,
+                                                artist = item.subtitle,
+                                                artworkUrl = item.artworkUrl
+                                            )
+                                        )
+                                    }
+                                    else -> {
+                                        val track = AuraTrack(
+                                            id = item.id,
+                                            videoId = item.id,
+                                            title = item.title,
+                                            artist = item.subtitle,
+                                            artworkUrl = item.artworkUrl
+                                        )
+                                        onPlayTrack(track, shelfTracks)
+                                    }
+                                }
+                            }
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(132.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF202127))
+                        ) {
+                            AsyncImage(
+                                model = item.artworkUrl,
+                                contentDescription = item.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (isCurrent) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.45f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                        contentDescription = null,
+                                        tint = AuraNeonLime,
+                                        modifier = Modifier.size(28.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(7.dp))
+                        Text(
+                            text = item.title,
+                            color = if (isCurrent) AuraNeonLime else Color.White,
+                            style = MaterialTheme.typography.titleSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (item.subtitle.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = item.subtitle,
+                                color = TextSecondary,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun HomeRecommendationShelf(
     title: String,
     tracks: List<AuraTrack>,
     currentPlayingId: String?,
     isPlaying: Boolean,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
+    onOpenAlbum: ((AuraTrack) -> Unit)? = null,
     titleForTrack: (AuraTrack) -> String = { it.title },
     keyPrefix: String
 ) {
@@ -1792,7 +2581,9 @@ private fun HomeRecommendationShelf(
                 color = Color.White,
                 style = MaterialTheme.typography.headlineMedium
             )
-            HomePlayAllButton { tracks.firstOrNull()?.let { onPlayTrack(it, tracks) } }
+            if (onOpenAlbum == null) {
+                HomePlayAllButton { tracks.firstOrNull()?.let { onPlayTrack(it, tracks) } }
+            }
         }
         Spacer(modifier = Modifier.height(12.dp))
         LazyRow(
@@ -1804,7 +2595,13 @@ private fun HomeRecommendationShelf(
                 Column(
                     modifier = Modifier
                         .width(132.dp)
-                        .clickable { onPlayTrack(track, tracks) }
+                        .clickable {
+                            if (onOpenAlbum != null) {
+                                onOpenAlbum(track)
+                            } else {
+                                onPlayTrack(track, tracks)
+                            }
+                        }
                 ) {
                     Box(
                         modifier = Modifier

@@ -12,6 +12,8 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -143,9 +146,21 @@ fun LibraryScreen(
     onRemoveTrackFromPlaylist: (playlistId: String, videoId: String) -> Unit = { _, _ -> },
     onCreatePlaylist: (name: String, description: String, coverUrl: String) -> Unit = { _, _, _ -> },
     onAddTrackToPlaylist: (playlistId: String, track: AuraTrack) -> Unit = { _, _ -> },
+    onRemoveFromRecentlyPlayed: (AuraTrack) -> Unit = {},
     onOpenArtist: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
+    val uniqueRecent = remember(recentlyPlayed) {
+        recentlyPlayed.distinctBy { it.videoId.ifBlank { it.id } }
+    }
+    val musicFavorites = remember(favorites) {
+        favorites.filterNot {
+            it.isPodcast ||
+            it.genre.equals("podcast", ignoreCase = true) ||
+            it.album.contains("podcast", ignoreCase = true) ||
+            it.musicVideoType == "PODCAST"
+        }
+    }
     var activeTab by rememberSaveable { mutableIntStateOf(0) }
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
     var selectedPlaylistId by rememberSaveable { mutableStateOf<String?>(initialPlaylistId) }
@@ -198,53 +213,39 @@ fun LibraryScreen(
         }
     }
 
-    // If a playlist is selected, show its full detailed view
+    // Track the active or last-displayed playlist so the slide-out exit animation retains its content
     val selectedPlaylist = playlists.firstOrNull { it.id == selectedPlaylistId }
+    var lastSelectedPlaylist by remember { mutableStateOf<AuraPlaylist?>(null) }
     if (selectedPlaylist != null) {
-        PlaylistDetailsScreen(
-            playlist = selectedPlaylist,
-            favorites = favorites,
-            downloads = downloads,
-            downloadingIds = downloadingIds,
-            downloadProgressMap = downloadProgressMap,
-            currentPlayingId = currentPlayingId,
-            isPlaying = isPlaying,
-            onBack = {
-                selectedPlaylistId = null
-                onClearInitialPlaylist()
-                if (openedFromHomeScreen) {
-                    onNavigateToHome()
-                }
-            },
-            onPlayTrack = onPlayTrack,
-            onToggleFavorite = onToggleFavorite,
-            onDownloadTrack = onDownloadTrack,
-            onRemoveDownload = onRemoveDownload,
-            onRemoveTrackFromPlaylist = { vId -> onRemoveTrackFromPlaylist(selectedPlaylist.id, vId) },
-            onUpdateCover = { newCover -> onUpdatePlaylistCover(selectedPlaylist.id, newCover) },
-            onUpdateTitle = { newTitle -> onUpdatePlaylistTitle(selectedPlaylist.id, newTitle) },
-            onDeletePlaylist = {
-                onDeletePlaylist(selectedPlaylist.id)
-                selectedPlaylistId = null
-                onClearInitialPlaylist()
-                if (openedFromHomeScreen) {
-                    onNavigateToHome()
-                }
-            },
-            playlists = playlists,
-            onAddTrackToPlaylist = onAddTrackToPlaylist,
-            onCreatePlaylist = onCreatePlaylist,
-            onOpenArtist = onOpenArtist
-        )
-        return
+        lastSelectedPlaylist = selectedPlaylist
     }
+    val playlistSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
 
-    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Downloaded")
+    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Podcasts", "Downloaded")
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(SpotifyPitchBlack)
+    ) {
+    // 1. My Music / Library Playlists Screen (slides out to the left when a playlist is opened, slides back in when closed)
+    AnimatedVisibility(
+        visible = selectedPlaylist == null,
+        enter = slideInHorizontally(
+            initialOffsetX = { fullWidth -> -fullWidth },
+            animationSpec = tween(durationMillis = 280, easing = playlistSlideEasing)
+        ) + fadeIn(animationSpec = tween(durationMillis = 200, easing = playlistSlideEasing)),
+        exit = slideOutHorizontally(
+            targetOffsetX = { fullWidth -> -fullWidth },
+            animationSpec = tween(durationMillis = 250, easing = playlistSlideEasing)
+        ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = playlistSlideEasing)),
+        modifier = Modifier.fillMaxSize()
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(SpotifyPitchBlack)
+            .statusBarsPadding()
             .padding(top = 2.dp)
     ) {
         // Top Bar: "My Music" + Flat Options Button (no arrow back, no circle fill container)
@@ -346,7 +347,7 @@ fun LibraryScreen(
                             decorationBox = { innerTextField ->
                                 if (linkInput.isEmpty()) {
                                     Text(
-                                        text = "Paste Spotify playlist or album URL…",
+                                        text = "Paste public Spotify playlist or album URL…",
                                         color = TextSecondary.copy(alpha = 0.7f),
                                         fontSize = 12.5.sp
                                     )
@@ -492,8 +493,8 @@ fun LibraryScreen(
                             Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                     LibraryOverviewTile(
-                                        title = "Liked songs", subtitle = "${favorites.size} songs",
-                                        tracks = favorites.take(3), modifier = Modifier.weight(1f).height(150.dp),
+                                        title = "Liked songs", subtitle = "${musicFavorites.size} songs",
+                                        tracks = musicFavorites.take(3), modifier = Modifier.weight(1f).height(150.dp),
                                         onClick = { activeTab = 2 }
                                     )
                                     val mostPlayed = stats.topTracks.firstOrNull()
@@ -509,7 +510,7 @@ fun LibraryScreen(
                                     LibraryOverviewTile(
                                         title = "Downloaded", subtitle = "${downloads.size} songs",
                                         tracks = downloads.take(3), modifier = Modifier.weight(1f).height(124.dp),
-                                        onClick = { activeTab = 3 }
+                                        onClick = { activeTab = 4 }
                                     )
                                     LibraryOverviewTile(
                                         title = "Playlists", subtitle = "${playlists.size} playlists",
@@ -522,11 +523,11 @@ fun LibraryScreen(
                                 Spacer(Modifier.height(6.dp))
                             }
                         }
-                        if (recentlyPlayed.isEmpty()) {
+                        if (uniqueRecent.isEmpty()) {
                             item(key = "empty_tracks") {
                                 EmptyVaultMessage("No recently played songs yet. Play tracks to see them here.")
                             }
-                        } else items(recentlyPlayed, key = { "recent_${it.videoId}" }) { track ->
+                        } else items(uniqueRecent, key = { "recent_${it.videoId.ifBlank { it.id }}" }) { track ->
                             val isFav = favorites.any { it.videoId == track.videoId }
                             val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
                             val isDownProgress = downloadingIds.contains(track.videoId)
@@ -538,7 +539,7 @@ fun LibraryScreen(
                                 isDownloading = isDownProgress,
                                 downloadProgress = downloadProgressMap[track.videoId],
                                 isPlaying = isPlaying,
-                                onClick = { onPlayTrack(track, recentlyPlayed) },
+                                onClick = { onPlayTrack(track, uniqueRecent) },
                                 onToggleFavorite = { onToggleFavorite(track) },
                                 onDownload = { onDownloadTrack(track) },
                                 onOptionsClick = { selectedModalTrack = track }
@@ -562,11 +563,11 @@ fun LibraryScreen(
                 }
             }
             2 -> {
-                if (favorites.isEmpty()) {
+                if (musicFavorites.isEmpty()) {
                     EmptyVaultMessage("No liked songs yet. Tap the heart on any song to save it here.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
-                        items(favorites, key = { it.videoId }) { track ->
+                        items(musicFavorites, key = { it.videoId }) { track ->
                             SpotifyTrackRowItem(
                                 track = track,
                                 isCurrent = currentPlayingId == track.videoId,
@@ -575,7 +576,7 @@ fun LibraryScreen(
                                 isDownloading = downloadingIds.contains(track.videoId),
                                 downloadProgress = downloadProgressMap[track.videoId],
                                 isPlaying = isPlaying,
-                                onClick = { onPlayTrack(track, favorites) },
+                                onClick = { onPlayTrack(track, musicFavorites) },
                                 onToggleFavorite = { onToggleFavorite(track) },
                                 onDownload = { onDownloadTrack(track) },
                                 onOptionsClick = { selectedModalTrack = track }
@@ -585,6 +586,69 @@ fun LibraryScreen(
                 }
             }
             3 -> {
+                // PODCASTS TAB: Liked podcast shows (playlists where isPodcast == true)
+                // and liked podcast episodes (favorites where isPodcast == true or genre/album indicates podcast)
+                val podcastShows = playlists.filter { it.isPodcast || it.id.startsWith("MPSP") || it.id.startsWith("MP_") || it.name.contains("podcast", ignoreCase = true) }
+                val podcastEpisodes = favorites.filter {
+                    it.isPodcast ||
+                    it.album.contains("podcast", ignoreCase = true) ||
+                    it.genre.equals("podcast", ignoreCase = true) ||
+                    it.musicVideoType == "PODCAST"
+                }
+
+                if (podcastShows.isEmpty() && podcastEpisodes.isEmpty()) {
+                    EmptyVaultMessage("No liked podcasts yet. Tap the heart on any podcast show or episode to save it here.")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
+                        if (podcastShows.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Shows (${podcastShows.size})",
+                                    color = Color.White,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                                )
+                            }
+                            items(podcastShows, key = { "pod_show_${it.id}" }) { playlist ->
+                                PlaylistItemRow(
+                                    playlist = playlist,
+                                    onClick = { selectedPlaylistId = playlist.id },
+                                    onLongClick = { selectedPlaylistForOptions = playlist }
+                                )
+                            }
+                        }
+
+                        if (podcastEpisodes.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Liked Episodes (${podcastEpisodes.size})",
+                                    color = Color.White,
+                                    fontSize = 17.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
+                                )
+                            }
+                            items(podcastEpisodes, key = { "pod_ep_${it.videoId}" }) { track ->
+                                SpotifyTrackRowItem(
+                                    track = track,
+                                    isCurrent = currentPlayingId == track.videoId,
+                                    isFavorite = true,
+                                    isDownloaded = downloads.any { it.videoId == track.videoId && it.isDownloaded },
+                                    isDownloading = downloadingIds.contains(track.videoId),
+                                    downloadProgress = downloadProgressMap[track.videoId],
+                                    isPlaying = isPlaying,
+                                    onClick = { onPlayTrack(track, podcastEpisodes) },
+                                    onToggleFavorite = { onToggleFavorite(track) },
+                                    onDownload = { onDownloadTrack(track) },
+                                    onOptionsClick = { selectedModalTrack = track }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            4 -> {
                 if (downloads.isEmpty()) {
                     EmptyVaultMessage("No downloaded songs yet. Tap download on any song for offline listening.")
                 } else {
@@ -611,12 +675,75 @@ fun LibraryScreen(
             }
         }
     }
+    }
+
+    // 2. Slide-in / Slide-out PlaylistDetailsScreen overlay
+    AnimatedVisibility(
+        visible = selectedPlaylist != null,
+        enter = slideInHorizontally(
+            initialOffsetX = { it },
+            animationSpec = tween(durationMillis = 280, easing = playlistSlideEasing)
+        ) + fadeIn(animationSpec = tween(durationMillis = 200, easing = playlistSlideEasing)),
+        exit = slideOutHorizontally(
+            targetOffsetX = { it },
+            animationSpec = tween(durationMillis = 250, easing = playlistSlideEasing)
+        ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = playlistSlideEasing)),
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(5f)
+    ) {
+        val displayPlaylist = selectedPlaylist ?: lastSelectedPlaylist
+        if (displayPlaylist != null) {
+            PlaylistDetailsScreen(
+                playlist = displayPlaylist,
+                favorites = favorites,
+                downloads = downloads,
+                downloadingIds = downloadingIds,
+                downloadProgressMap = downloadProgressMap,
+                currentPlayingId = currentPlayingId,
+                isPlaying = isPlaying,
+                onBack = {
+                    selectedPlaylistId = null
+                    onClearInitialPlaylist()
+                    if (openedFromHomeScreen) {
+                        onNavigateToHome()
+                    }
+                },
+                onPlayTrack = onPlayTrack,
+                onToggleFavorite = onToggleFavorite,
+                onDownloadTrack = onDownloadTrack,
+                onRemoveDownload = onRemoveDownload,
+                onRemoveTrackFromPlaylist = { vId -> onRemoveTrackFromPlaylist(displayPlaylist.id, vId) },
+                onUpdateCover = { newCover -> onUpdatePlaylistCover(displayPlaylist.id, newCover) },
+                onUpdateTitle = { newTitle -> onUpdatePlaylistTitle(displayPlaylist.id, newTitle) },
+                onDeletePlaylist = {
+                    onDeletePlaylist(displayPlaylist.id)
+                    selectedPlaylistId = null
+                    onClearInitialPlaylist()
+                    if (openedFromHomeScreen) {
+                        onNavigateToHome()
+                    }
+                },
+                playlists = playlists,
+                onAddTrackToPlaylist = onAddTrackToPlaylist,
+                onCreatePlaylist = onCreatePlaylist,
+                onOpenArtist = onOpenArtist
+            )
+        }
+    }
+    }
 
     selectedModalTrack?.let { modalTrack ->
         AuraTrackOptionsModal(
             track = modalTrack,
             isFavorite = favorites.any { it.videoId == modalTrack.videoId },
             onDismiss = { selectedModalTrack = null },
+            onRemoveFromRecent = if (recentlyPlayed.any { it.videoId == modalTrack.videoId || it.id == modalTrack.id }) {
+                {
+                    onRemoveFromRecentlyPlayed(modalTrack)
+                    selectedModalTrack = null
+                }
+            } else null,
             onPlayNext = {
                 AuraPlayerManager.playNext(modalTrack)
                 Toast.makeText(context, "Playing next: ${modalTrack.title}", Toast.LENGTH_SHORT).show()

@@ -225,12 +225,16 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val activeCategory by viewModel.activeCategory.collectAsState()
     val homeCategoryBackground by viewModel.homeCategoryBackground.collectAsState()
     val categoryTracks by viewModel.categoryTracks.collectAsState()
+    val categoryShelves by viewModel.categoryShelves.collectAsState()
     val homeRecommendations by viewModel.homeRecommendations.collectAsState()
     val homeAlbumRecommendations by viewModel.homeAlbumRecommendations.collectAsState()
     val homeLikedRecommendations by viewModel.homeLikedRecommendations.collectAsState()
     val isCategoryLoading by viewModel.isCategoryLoading.collectAsState()
     val moodCategories by viewModel.moodCategories.collectAsState()
     val isLoadingHome by viewModel.isLoadingHome.collectAsState()
+    val selectedChartCountry by viewModel.selectedChartCountry.collectAsState()
+    val chartData by viewModel.chartData.collectAsState()
+    val isChartLoading by viewModel.isChartLoading.collectAsState()
 
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchFilter by viewModel.searchFilter.collectAsState()
@@ -337,6 +341,11 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         // 1. Screens Content (full screen underneath floating controls) with directional slide transitions
         val saveableStateHolder = rememberSaveableStateHolder()
         val navSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
+        val mainContentOffsetX by animateFloatAsState(
+            targetValue = if (selectedPlaylistDetail != null) -1f else 0f,
+            animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
+            label = "MainContentPlaylistSlideOffset"
+        )
         AnimatedContent(
             targetState = selectedTab,
             transitionSpec = {
@@ -356,7 +365,11 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 ).using(SizeTransform(clip = false))
             },
             label = "MainNavigationSlideTransition",
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    translationX = size.width * mainContentOffsetX
+                }
         ) { tab ->
             saveableStateHolder.SaveableStateProvider(key = tab) {
                 when (tab) {
@@ -382,6 +395,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         activeCategory = activeCategory,
                         homeCategoryBackground = homeCategoryBackground,
                         categoryTracks = categoryTracks,
+                        categoryShelves = categoryShelves,
                         isCategoryLoading = isCategoryLoading,
                         onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
                         onPlayMusicVideo = { track, queue -> viewModel.playHomeMusicVideo(track, queue) },
@@ -389,6 +403,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         onOpenArtist = { artist -> viewModel.openArtistDetail(artist) },
                         onPlayCommunityPlaylist = { playlist -> viewModel.playCommunityPlaylist(playlist) },
                         onOpenPlaylist = { playlist -> viewModel.openPlaylistDetail(playlist) },
+                        onOpenAlbum = { track -> viewModel.openAlbum(track) },
                         onOpenUserPlaylist = { pl ->
                             openedPlaylistFromHome = true
                             selectedTab = 2
@@ -401,7 +416,11 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         onRefresh = { viewModel.refreshHome() },
                         onOpenArtistByName = { artistName, songTitle -> viewModel.openArtistByName(artistName, songTitle) },
                         onAddTrackToPlaylist = { plId, track -> viewModel.addTrackToPlaylist(plId, track) },
-                        onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) }
+                        onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) },
+                        chartData = chartData,
+                        selectedChartCountry = selectedChartCountry,
+                        isChartLoading = isChartLoading,
+                        onSelectChartCountry = { countryCode -> viewModel.selectChartCountry(countryCode) }
                     )
                     1 -> Box(
                         modifier = Modifier
@@ -441,9 +460,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         )
                     }
                     2 -> Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .statusBarsPadding()
+                        modifier = Modifier.fillMaxSize()
                     ) {
                         LibraryScreen(
                             favorites = favorites,
@@ -477,6 +494,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             onRemoveTrackFromPlaylist = { plId, vId -> viewModel.removeTrackFromPlaylist(plId, vId) },
                             onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) },
                             onAddTrackToPlaylist = { plId, track -> viewModel.addTrackToPlaylist(plId, track) },
+                            onRemoveFromRecentlyPlayed = { viewModel.removeFromRecentlyPlayed(it) },
                             onOpenArtist = { artistName -> viewModel.openArtistByName(artistName) }
                         )
                     }
@@ -528,6 +546,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
 
         // 1c. Full-Screen Slide-in Playlist Detail Screen
+        var cachedPlaylistDetail by remember { mutableStateOf<com.auramusic.app.domain.model.PlaylistDetail?>(null) }
+        if (selectedPlaylistDetail != null) {
+            cachedPlaylistDetail = selectedPlaylistDetail
+        }
         AnimatedVisibility(
             visible = selectedPlaylistDetail != null,
             enter = slideInHorizontally(
@@ -540,7 +562,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
             modifier = Modifier.fillMaxSize()
         ) {
-            selectedPlaylistDetail?.let { detail ->
+            (selectedPlaylistDetail ?: cachedPlaylistDetail)?.let { detail ->
                 PlaylistDetailScreen(
                     playlistDetail = detail,
                     isLoading = isPlaylistLoading,

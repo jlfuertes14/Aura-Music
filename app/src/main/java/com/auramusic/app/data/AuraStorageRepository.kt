@@ -50,7 +50,8 @@ class AuraStorageRepository(context: Context) {
                         name = obj.optString("name"),
                         description = obj.optString("description"),
                         coverUrl = obj.optString("coverUrl"),
-                        tracks = parseTrackArray(tracksArr.toString())
+                        tracks = parseTrackArray(tracksArr.toString()),
+                        isPodcast = obj.optBoolean("isPodcast", false)
                     )
                 )
             }
@@ -69,6 +70,7 @@ class AuraStorageRepository(context: Context) {
                 put("description", pl.description)
                 put("coverUrl", pl.coverUrl)
                 put("tracks", serializeTrackArray(pl.tracks))
+                put("isPodcast", pl.isPodcast)
             })
         }
         prefs.edit().putString("playlists_json", arr.toString()).apply()
@@ -180,9 +182,10 @@ class AuraStorageRepository(context: Context) {
 
     fun recordRecentlyPlayed(track: AuraTrack) {
         val current = loadRecentlyPlayed().toMutableList()
-        current.removeAll { it.videoId == track.videoId }
+        val targetId = track.videoId.ifBlank { track.id }
+        current.removeAll { it.videoId == track.videoId || (it.videoId.isBlank() && it.id == track.id) || (targetId.isNotBlank() && (it.videoId == targetId || it.id == targetId)) }
         current.add(0, track)
-        val capped = current.take(30)
+        val capped = current.distinctBy { it.videoId.ifBlank { it.id } }.take(30)
         prefs.edit().putString("recently_played_tracks", serializeTrackArray(capped).toString()).apply()
     }
 
@@ -194,7 +197,7 @@ class AuraStorageRepository(context: Context) {
 
     fun loadRecentlyPlayed(): List<AuraTrack> {
         val raw = prefs.getString("recently_played_tracks", null) ?: return emptyList()
-        return parseTrackArray(raw)
+        return parseTrackArray(raw).distinctBy { it.videoId.ifBlank { it.id } }
     }
 
     fun recordRecommendationSignal(track: AuraTrack, signal: String) {
@@ -308,8 +311,10 @@ class AuraStorageRepository(context: Context) {
                 put("durationSeconds", t.durationSeconds)
                 put("artworkUrl", t.artworkUrl)
                 put("genre", t.genre)
+                put("source", t.source)
                 put("isDownloaded", t.isDownloaded)
                 put("localFilePath", t.localFilePath ?: "")
+                put("isPodcast", t.isPodcast)
             })
         }
         return arr
@@ -322,25 +327,66 @@ class AuraStorageRepository(context: Context) {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val vid = o.optString("videoId")
-                if (vid.isBlank()) continue
+                val title = o.optString("title", "Unknown Track")
+                if (title.isBlank() && vid.isBlank()) continue
+                val trackId = o.optString("id", if (vid.isNotBlank()) "yt_$vid" else "spot_${System.currentTimeMillis()}_$i")
                 out.add(
                     AuraTrack(
-                        id = o.optString("id", "yt_$vid"),
+                        id = trackId,
                         videoId = vid,
-                        title = o.optString("title", "Unknown Track"),
+                        title = title,
                         artist = o.optString("artist", "Unknown Artist"),
                         album = o.optString("album", "YouTube Music"),
                         durationSeconds = o.optInt("durationSeconds", 210),
                         artworkUrl = o.optString("artworkUrl"),
+                        source = o.optString("source", if (vid.startsWith("spotify_pending")) "spotify" else "youtube"),
                         genre = o.optString("genre", "Pop"),
                         isDownloaded = o.optBoolean("isDownloaded", false),
-                        localFilePath = o.optString("localFilePath").takeIf { it.isNotBlank() }
+                        localFilePath = o.optString("localFilePath").takeIf { it.isNotBlank() },
+                        isPodcast = o.optBoolean("isPodcast", false)
                     )
                 )
             }
             out
         } catch (e: Exception) {
             emptyList()
+        }
+    }
+
+    fun cacheSpotifyResolvedTrack(title: String, artist: String, track: AuraTrack) {
+        val cleanKey = "spot_res_" + "${title.trim().lowercase()}_${artist.trim().lowercase()}".replace(Regex("[^a-z0-9_]"), "_")
+        val obj = JSONObject().apply {
+            put("id", track.id)
+            put("videoId", track.videoId)
+            put("title", track.title)
+            put("artist", track.artist)
+            put("album", track.album)
+            put("durationSeconds", track.durationSeconds)
+            put("artworkUrl", track.artworkUrl)
+            put("source", track.source)
+        }
+        prefs.edit().putString(cleanKey, obj.toString()).apply()
+    }
+
+    fun getCachedSpotifyResolvedTrack(title: String, artist: String): AuraTrack? {
+        val cleanKey = "spot_res_" + "${title.trim().lowercase()}_${artist.trim().lowercase()}".replace(Regex("[^a-z0-9_]"), "_")
+        val raw = prefs.getString(cleanKey, null) ?: return null
+        return try {
+            val o = JSONObject(raw)
+            val vid = o.optString("videoId")
+            if (vid.isBlank() || vid.startsWith("spotify_pending")) return null
+            AuraTrack(
+                id = o.optString("id", "yt_$vid"),
+                videoId = vid,
+                title = o.optString("title", title),
+                artist = o.optString("artist", artist),
+                album = o.optString("album", "YouTube Music"),
+                durationSeconds = o.optInt("durationSeconds", 210),
+                artworkUrl = o.optString("artworkUrl"),
+                source = o.optString("source", "youtube")
+            )
+        } catch (_: Exception) {
+            null
         }
     }
 
@@ -401,5 +447,10 @@ class AuraStorageRepository(context: Context) {
     fun loadEqualizerPreset(): String = prefs.getString("setting_eq_preset", "Flat") ?: "Flat"
     fun saveEqualizerPreset(name: String) {
         prefs.edit().putString("setting_eq_preset", name).apply()
+    }
+
+    fun loadChartCountry(): String = prefs.getString("setting_chart_country", "US") ?: "US"
+    fun saveChartCountry(code: String) {
+        prefs.edit().putString("setting_chart_country", code).apply()
     }
 }

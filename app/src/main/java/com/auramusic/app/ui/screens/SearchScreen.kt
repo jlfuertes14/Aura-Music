@@ -714,6 +714,9 @@ private fun DedicatedSearchingView(
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val uniqueRecent = remember(recentlyPlayed) {
+        recentlyPlayed.distinctBy { it.videoId.ifBlank { it.id } }
+    }
 
     // Request keyboard focus when dedicated search screen is mounted
     LaunchedEffect(Unit) {
@@ -923,7 +926,7 @@ private fun DedicatedSearchingView(
                         }
                     }
                 } else {
-                    items(recentlyPlayed, key = { "recent_${it.videoId}" }) { track ->
+                    items(uniqueRecent, key = { "recent_${it.videoId.ifBlank { it.id }}" }) { track ->
                         val isFav = favorites.any { it.videoId == track.videoId }
                         val isCurrent = currentPlayingId == track.videoId
                         RecentPlayedTrackRow(
@@ -931,7 +934,7 @@ private fun DedicatedSearchingView(
                             isCurrent = isCurrent,
                             isPlaying = isPlaying,
                             isFavorite = isFav,
-                            onClick = { onPlayTrack(track, recentlyPlayed) },
+                            onClick = { onPlayTrack(track, uniqueRecent) },
                             onOptionsClick = { onOptionsClick(track) },
                             onToggleFavorite = { onToggleFavorite(track) },
                             onRemove = { onRemoveRecentlyPlayed(track) }

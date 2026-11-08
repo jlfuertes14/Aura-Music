@@ -234,3 +234,116 @@ fun AlbumCarouselSkeleton(modifier: Modifier = Modifier) {
         }
     }
 }
+
+/**
+ * Skeleton for Home Charts section (Video charts / genres carousel + Top artists list)
+ */
+@Composable
+fun ChartSectionSkeleton(modifier: Modifier = Modifier) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        // Shelf 1: Video charts / playlists carousel
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .width(130.dp)
+                .height(18.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .auraShimmer()
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            repeat(3) {
+                Column(modifier = Modifier.width(155.dp)) {
+                    Box(
+                        modifier = Modifier
+                            .size(155.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .auraShimmer()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.85f)
+                            .height(13.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .auraShimmer()
+                    )
+                    Spacer(modifier = Modifier.height(5.dp))
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(0.55f)
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .auraShimmer()
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Shelf 2: Top artists header + 3 rows
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .width(110.dp)
+                .height(18.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .auraShimmer()
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            repeat(3) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .width(28.dp)
+                            .height(20.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .auraShimmer()
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .auraShimmer()
+                    )
+                    Spacer(modifier = Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.6f)
+                                .height(14.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .auraShimmer()
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(0.35f)
+                                .height(10.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .auraShimmer()
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+

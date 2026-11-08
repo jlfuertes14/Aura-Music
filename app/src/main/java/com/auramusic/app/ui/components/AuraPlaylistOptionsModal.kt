@@ -18,6 +18,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -49,7 +50,8 @@ fun AuraPlaylistOptionsModal(
     onChangeCover: () -> Unit,
     onResetCover: (() -> Unit)? = null,
     onRename: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onFindInPlaylist: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -113,6 +115,19 @@ fun AuraPlaylistOptionsModal(
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
+
+            // 0. Find in Playlist (if enabled)
+            if (onFindInPlaylist != null) {
+                TrackOptionRow(
+                    icon = Icons.Rounded.Search,
+                    label = "Find in playlist",
+                    iconTint = Color.White,
+                    onClick = {
+                        onDismiss()
+                        onFindInPlaylist()
+                    }
+                )
+            }
 
             // 1. Download All Songs
             TrackOptionRow(

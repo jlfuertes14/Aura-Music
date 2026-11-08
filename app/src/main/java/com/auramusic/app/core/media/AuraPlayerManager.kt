@@ -32,6 +32,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.domain.model.isPendingResolution
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.PlaybackMode
 import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
@@ -216,11 +217,25 @@ object AuraPlayerManager {
         val resolvingFactory = ResolvingDataSource.Factory(cacheDataSourceFactory) { dataSpec: DataSpec ->
             val uri = dataSpec.uri
             if (uri.scheme == "aura" && uri.host == "track") {
-                val videoId = uri.lastPathSegment ?: throw PlaybackException(
+                var videoId = uri.lastPathSegment ?: throw PlaybackException(
                     "Missing videoId",
                     null,
                     PlaybackException.ERROR_CODE_IO_UNSPECIFIED
                 )
+
+                // Safety fallback for lazy-imported Spotify tracks transitioning in queue
+                if (videoId.startsWith("spotify_pending")) {
+                    val pendingTrack = _queue.value.firstOrNull { it.videoId == videoId }
+                    if (pendingTrack != null) {
+                        val resolved = runBlocking(Dispatchers.IO) {
+                            SimpMusicExtractorEngine.resolveSpotifyPendingTrack(pendingTrack)
+                        }
+                        if (resolved.videoId.isNotBlank() && !resolved.videoId.startsWith("spotify_pending")) {
+                            videoId = resolved.videoId
+                            onTrackResolvedCallback?.invoke(resolved)
+                        }
+                    }
+                }
 
                 // Check offline downloaded file first
                 val offlineFile = getOfflineFile(ctx, videoId)
@@ -358,6 +373,7 @@ object AuraPlayerManager {
         startProgressTicker()
     }
 
+    var onTrackResolvedCallback: ((AuraTrack) -> Unit)? = null
     var activeQueueTag: String? = null
         private set
 
@@ -370,6 +386,21 @@ object AuraPlayerManager {
         val player = exoPlayer ?: return
         radioFetchJob?.cancel()
         activeQueueTag = queueTag
+
+        // Handle Lazy Resolution for Spotify tracks: Instant UI response + background YouTube match
+        if (track.isPendingResolution) {
+            _currentTrack.value = track
+            _isBuffering.value = true
+            scope.launch {
+                val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(track)
+                val updatedQ = (newQueue ?: _queue.value).map { if (it.id == track.id) resolved else it }
+                withContext(Dispatchers.Main) {
+                    playTrack(resolved, updatedQ, allowRadioQueue, queueTag)
+                    onTrackResolvedCallback?.invoke(resolved)
+                }
+            }
+            return
+        }
 
         // Clean slate for new audio playback
         originalAudioTrack = null
@@ -1185,8 +1216,34 @@ object AuraPlayerManager {
         val list = _queue.value
         val idx = list.indexOfFirst { it.videoId == currentVideoId }
         if (idx >= 0) {
-            list.getOrNull(idx + 1)?.let { SimpMusicExtractorEngine.prefetchStream(it.videoId) }
-            list.getOrNull(idx + 2)?.let { SimpMusicExtractorEngine.prefetchStream(it.videoId) }
+            val nextTrack = list.getOrNull(idx + 1)
+            if (nextTrack != null) {
+                if (nextTrack.isPendingResolution) {
+                    // Auto-prefetch: Silently resolve the next track's YouTube ID in background
+                    scope.launch {
+                        val resolvedNext = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(nextTrack)
+                        if (!resolvedNext.isPendingResolution) {
+                            withContext(Dispatchers.Main) {
+                                val currentQ = _queue.value.toMutableList()
+                                val qIdx = currentQ.indexOfFirst { it.id == nextTrack.id }
+                                if (qIdx >= 0) {
+                                    currentQ[qIdx] = resolvedNext
+                                    _queue.value = currentQ
+                                }
+                                onTrackResolvedCallback?.invoke(resolvedNext)
+                            }
+                            SimpMusicExtractorEngine.prefetchStream(resolvedNext.videoId)
+                        }
+                    }
+                } else {
+                    SimpMusicExtractorEngine.prefetchStream(nextTrack.videoId)
+                }
+            }
+
+            val nextNextTrack = list.getOrNull(idx + 2)
+            if (nextNextTrack != null && !nextNextTrack.isPendingResolution) {
+                SimpMusicExtractorEngine.prefetchStream(nextNextTrack.videoId)
+            }
         }
     }
 

@@ -42,11 +42,16 @@ data class AuraTrack(
     /** YouTube InnerTube's MUSIC_VIDEO_TYPE_* value when the response provides it. */
     val musicVideoType: String? = null,
     /** Approximate count from the InnerTube search subtitle, when available. */
-    val viewCount: Long? = null
+    val viewCount: Long? = null,
+    /** Whether this track is an episode of a podcast show */
+    val isPodcast: Boolean = false
 ) {
     val highResArtworkUrl: String
         get() = toHighResArtwork(artworkUrl, videoId)
 }
+
+val AuraTrack.isPendingResolution: Boolean
+    get() = videoId.isBlank() || videoId.startsWith("spotify_pending") || source == "spotify"
 
 /**
  * Normalizes artwork URLs from YouTube Music, Google User Content, and YouTube CDN
@@ -54,7 +59,7 @@ data class AuraTrack(
  */
 fun toHighResArtwork(url: String, videoId: String = ""): String {
     val cleanUrl = if (url.startsWith("//")) "https:$url" else url.trim()
-    if (cleanUrl.isBlank() && videoId.isNotBlank()) {
+    if (cleanUrl.isBlank() && videoId.isNotBlank() && !videoId.startsWith("spotify_pending")) {
         return "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
     }
     if (cleanUrl.isBlank()) return ""
@@ -73,12 +78,14 @@ fun toHighResArtwork(url: String, videoId: String = ""): String {
         }
         // Spotify CDN (already native crisp 640x640)
         cleanUrl.contains("i.scdn.co") -> cleanUrl
-        // YouTube video thumbnails (img.youtube.com or i.ytimg.com)
-        cleanUrl.contains("youtube.com") || cleanUrl.contains("ytimg.com") -> {
+        // YouTube video thumbnails (img.youtube.com/vi/ or i.ytimg.com/vi/)
+        (cleanUrl.contains("youtube.com") || cleanUrl.contains("ytimg.com")) && cleanUrl.contains("/vi/") -> {
             // Keep hqdefault.jpg as it is guaranteed to exist on YouTube servers for 100% of videos
             // (hq720.jpg causes 404 and black screen for videos that were not uploaded in HD)
             cleanUrl.substringBefore("?")
         }
+        // YouTube studio square playlist/podcast thumbnails (pl_c) or channel avatars require their signed tokens
+        cleanUrl.contains("youtube.com") || cleanUrl.contains("ytimg.com") -> cleanUrl
         else -> cleanUrl
     }
 }
@@ -238,10 +245,35 @@ object YtmMoodBrowseParams {
     )
 }
 
+enum class YtmMoodItemType {
+    TRACK,
+    PLAYLIST,
+    ALBUM,
+    VIDEO
+}
+
+data class YtmMoodItem(
+    val id: String,
+    val title: String,
+    val subtitle: String = "",
+    val artworkUrl: String = "",
+    val type: YtmMoodItemType = YtmMoodItemType.TRACK,
+    val track: AuraTrack? = null,
+    val playlist: YtmCommunityPlaylist? = null
+)
+
+data class YtmMoodShelf(
+    val title: String,
+    val subtitle: String? = null,
+    val is4RowGrid: Boolean = false,
+    val items: List<YtmMoodItem> = emptyList()
+)
+
 data class MoodBrowseResult(
     val backgroundUrl: String?,
     val tracks: List<AuraTrack>,
-    val albums: List<AuraTrack> = emptyList()
+    val albums: List<AuraTrack> = emptyList(),
+    val shelves: List<YtmMoodShelf> = emptyList()
 )
 
 data class YtmChartSection(
@@ -256,7 +288,8 @@ data class AuraPlaylist(
     val name: String,
     val description: String,
     val coverUrl: String,
-    val tracks: List<AuraTrack>
+    val tracks: List<AuraTrack>,
+    val isPodcast: Boolean = false
 )
 
 data class ListeningStats(
@@ -377,7 +410,8 @@ data class AuraCommentsPage(
 data class PlaylistTrackItem(
     val rank: Int,
     val track: AuraTrack,
-    val viewCount: String = ""
+    val viewCount: String = "",
+    val description: String = ""
 )
 
 data class PlaylistDetail(
@@ -387,7 +421,10 @@ data class PlaylistDetail(
     val trackCount: String,
     val bannerUrl: String,
     val tracks: List<PlaylistTrackItem>,
-    val totalViews: String = ""
+    val totalViews: String = "",
+    val description: String = "",
+    val authorAvatarUrl: String = "",
+    val isPodcast: Boolean = false
 )
 
 data class ResolvedVideoStream(
@@ -398,5 +435,64 @@ data class ResolvedVideoStream(
     val isLive: Boolean = false,
     val audioUrl: String? = null
 )
+
+object ChartSupportedCountries {
+    val items = arrayOf(
+        "US", "ZZ", "AR", "AU", "AT", "BE", "BO", "BR", "CA", "CL", "CO", "CR", "CZ", "DK", "DO", "EC",
+        "EG", "SV", "EE", "FI", "FR", "DE", "GT", "HN", "HK", "HU", "IS", "IN", "ID", "IE", "IL", "IT",
+        "JP", "KE", "LU", "MY", "MX", "NL", "NZ", "NI", "NG", "NO", "PA", "PY", "PE", "PH", "PL", "PT",
+        "RO", "RU", "SA", "RS", "SG", "ZA", "KR", "ES", "SE", "CH", "TW", "TZ", "TH", "TR", "UG", "UA",
+        "AE", "GB", "UY", "VN", "ZW"
+    )
+    val itemsData = arrayOf(
+        "United States", "Global", "Argentina", "Australia", "Austria", "Belgium", "Bolivia", "Brazil", "Canada",
+        "Chile", "Colombia", "Costa Rica", "Czech Republic", "Denmark", "Dominican Republic", "Ecuador", "Egypt",
+        "El Salvador", "Estonia", "Finland", "France", "Germany", "Guatemala", "Honduras", "Hong Kong", "Hungary",
+        "Iceland", "India", "Indonesia", "Ireland", "Israel", "Italy", "Japan", "Kenya", "Luxembourg", "Malaysia",
+        "Mexico", "Netherlands", "New Zealand", "Nicaragua", "Nigeria", "Norway", "Panama", "Paraguay", "Peru",
+        "Philippines", "Poland", "Portugal", "Romania", "Russia", "Saudi Arabia", "Serbia", "Singapore", "South Africa",
+        "South Korea", "Spain", "Sweden", "Switzerland", "Taiwan", "Tanzania", "Thailand", "Turkey", "Uganda",
+        "Ukraine", "United Arab Emirates", "United Kingdom", "Uruguay", "Vietnam", "Zimbabwe"
+    )
+
+    fun getCountryName(code: String): String {
+        val idx = items.indexOf(code)
+        return if (idx >= 0) itemsData[idx] else "United States"
+    }
+
+    fun getCountryCode(name: String): String {
+        val idx = itemsData.indexOf(name)
+        return if (idx >= 0) items[idx] else "US"
+    }
+}
+
+data class AuraChart(
+    val countryCode: String,
+    val playlists: List<AuraChartPlaylistSection>,
+    val topArtists: List<AuraChartArtistItem>,
+    val podcasts: AuraChartPodcastSection? = null
+)
+
+data class AuraChartPlaylistSection(
+    val title: String,
+    val items: List<YtmCommunityPlaylist>
+)
+
+data class AuraChartArtistItem(
+    val id: String,
+    val rank: String,
+    val name: String,
+    val subscribers: String,
+    val avatarUrl: String
+) {
+    val highResAvatarUrl: String
+        get() = toHighResArtwork(avatarUrl)
+}
+
+data class AuraChartPodcastSection(
+    val title: String,
+    val shows: List<AuraChartArtistItem>
+)
+
 
 

@@ -21,6 +21,8 @@ class AuraApplication : Application() {
         createNotificationChannel()
         com.auramusic.app.core.notifications.AuraNotificationManager.createChannels(this)
         SimpMusicExtractorEngine.initExtractors()
+        val storage = com.auramusic.app.data.AuraStorageRepository(this)
+        SimpMusicExtractorEngine.setStorageRepository(storage)
         AuraPlayerManager.initialize(this)
     }
 
