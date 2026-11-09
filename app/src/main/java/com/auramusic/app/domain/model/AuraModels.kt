@@ -51,7 +51,7 @@ data class AuraTrack(
 }
 
 val AuraTrack.isPendingResolution: Boolean
-    get() = videoId.isBlank() || videoId.startsWith("spotify_pending") || source == "spotify"
+    get() = videoId.isBlank() || videoId.startsWith("spotify_pending")
 
 /**
  * Normalizes artwork URLs from YouTube Music, Google User Content, and YouTube CDN

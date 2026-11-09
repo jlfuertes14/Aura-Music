@@ -217,22 +217,48 @@ object AuraPlayerManager {
         val resolvingFactory = ResolvingDataSource.Factory(cacheDataSourceFactory) { dataSpec: DataSpec ->
             val uri = dataSpec.uri
             if (uri.scheme == "aura" && uri.host == "track") {
-                var videoId = uri.lastPathSegment ?: throw PlaybackException(
+                val rawId = uri.lastPathSegment ?: throw PlaybackException(
                     "Missing videoId",
                     null,
                     PlaybackException.ERROR_CODE_IO_UNSPECIFIED
                 )
 
-                // Safety fallback for lazy-imported Spotify tracks transitioning in queue
-                if (videoId.startsWith("spotify_pending")) {
-                    val pendingTrack = _queue.value.firstOrNull { it.videoId == videoId }
-                    if (pendingTrack != null) {
+                var videoId = rawId
+
+                // Locate track in queue by unique id or videoId
+                val trackInQueue = _queue.value.firstOrNull {
+                    it.id == rawId || it.videoId == rawId || (rawId.startsWith("spotify_pending") && it.id.endsWith(rawId.substringAfter("spotify_pending")))
+                }
+
+                if (trackInQueue != null && !trackInQueue.isPendingResolution) {
+                    videoId = trackInQueue.videoId
+                } else if (rawId.startsWith("spotify_pending") || trackInQueue?.isPendingResolution == true) {
+                    val trackToResolve = trackInQueue ?: _queue.value.firstOrNull { it.isPendingResolution }
+                    if (trackToResolve != null) {
                         val resolved = runBlocking(Dispatchers.IO) {
-                            SimpMusicExtractorEngine.resolveSpotifyPendingTrack(pendingTrack)
+                            SimpMusicExtractorEngine.resolveSpotifyPendingTrack(trackToResolve)
                         }
                         if (resolved.videoId.isNotBlank() && !resolved.videoId.startsWith("spotify_pending")) {
                             videoId = resolved.videoId
-                            onTrackResolvedCallback?.invoke(resolved)
+                            scope.launch(Dispatchers.Main) {
+                                val currentQ = _queue.value.toMutableList()
+                                val qIdx = currentQ.indexOfFirst { it.id == trackToResolve.id }
+                                if (qIdx >= 0) {
+                                    currentQ[qIdx] = resolved
+                                    _queue.value = currentQ
+                                }
+                                val origIdx = originalQueue.indexOfFirst { it.id == trackToResolve.id }
+                                if (origIdx >= 0 && origIdx < originalQueue.size) {
+                                    val origList = originalQueue.toMutableList()
+                                    origList[origIdx] = resolved
+                                    originalQueue = origList
+                                }
+                                if (_currentTrack.value?.id == trackToResolve.id) {
+                                    _currentTrack.value = resolved
+                                    _durationSec.value = resolved.durationSeconds.toFloat().coerceAtLeast(1f)
+                                }
+                                onTrackResolvedCallback?.invoke(resolved)
+                            }
                         }
                     }
                 }
@@ -341,11 +367,33 @@ object AuraPlayerManager {
                 fadeJob?.cancel()
                 player.volume = baseVolume
                 val mediaId = mediaItem?.mediaId ?: return
-                val matched = _queue.value.firstOrNull { it.videoId == mediaId }
+                val matched = _queue.value.firstOrNull { it.videoId == mediaId || it.id == mediaId }
                 if (matched != null) {
                     _currentTrack.value = matched
                     _durationSec.value = matched.durationSeconds.toFloat().coerceAtLeast(1f)
-                    prefetchUpcomingTracks(matched.videoId)
+                    if (matched.isPendingResolution) {
+                        scope.launch {
+                            val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(matched)
+                            if (!resolved.isPendingResolution) {
+                                withContext(Dispatchers.Main) {
+                                    val currentQ = _queue.value.toMutableList()
+                                    val qIdx = currentQ.indexOfFirst { it.id == matched.id }
+                                    if (qIdx >= 0) {
+                                        currentQ[qIdx] = resolved
+                                        _queue.value = currentQ
+                                    }
+                                    if (_currentTrack.value?.id == matched.id) {
+                                        _currentTrack.value = resolved
+                                        _durationSec.value = resolved.durationSeconds.toFloat().coerceAtLeast(1f)
+                                    }
+                                    onTrackResolvedCallback?.invoke(resolved)
+                                }
+                                prefetchUpcomingTracks(resolved.videoId)
+                            }
+                        }
+                    } else {
+                        prefetchUpcomingTracks(matched.videoId)
+                    }
                 }
             }
 
@@ -359,6 +407,23 @@ object AuraPlayerManager {
                     return
                 }
                 val failedVid = _currentTrack.value?.videoId ?: return
+                if (failedVid.startsWith("spotify_pending") || _currentTrack.value?.isPendingResolution == true) {
+                    _currentTrack.value?.let { pending ->
+                        scope.launch {
+                            val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(pending)
+                            if (!resolved.isPendingResolution) {
+                                withContext(Dispatchers.Main) {
+                                    playTrack(resolved, _queue.value)
+                                }
+                            } else {
+                                withContext(Dispatchers.Main) {
+                                    skipToNext(recordSkip = false)
+                                }
+                            }
+                        }
+                    }
+                    return
+                }
                 SimpMusicExtractorEngine.invalidateStream(failedVid)
                 // Automatic SimpMusic stream recovery
                 scope.launch {
@@ -408,7 +473,7 @@ object AuraPlayerManager {
         originalAudioIndex = -1
         _isVideoMode.value = false
 
-        val dedupedNewQueue = newQueue?.distinctBy { it.videoId }
+        val dedupedNewQueue = newQueue?.distinctBy { if (it.id.isNotBlank()) it.id else it.videoId }
         if (!dedupedNewQueue.isNullOrEmpty()) {
             originalQueue = dedupedNewQueue
         } else if (originalQueue.isEmpty()) {
@@ -417,15 +482,15 @@ object AuraPlayerManager {
 
         val baseQueue = when {
             !dedupedNewQueue.isNullOrEmpty() -> dedupedNewQueue
-            _queue.value.any { it.videoId == track.videoId } -> _queue.value
+            _queue.value.any { it.id == track.id || it.videoId == track.videoId } -> _queue.value
             else -> listOf(track) + _queue.value
         }
 
         val updatedQueue = if (_isShuffleEnabled.value) {
-            val others = baseQueue.filterNot { it.videoId == track.videoId }.shuffled()
+            val others = baseQueue.filterNot { it.id == track.id || it.videoId == track.videoId }.shuffled()
             listOf(track) + others
         } else {
-            val idx = baseQueue.indexOfFirst { it.videoId == track.videoId }
+            val idx = baseQueue.indexOfFirst { it.id == track.id || it.videoId == track.videoId }
             if (idx >= 0) {
                 baseQueue.subList(idx, baseQueue.size) + baseQueue.subList(0, idx)
             } else {
@@ -440,7 +505,7 @@ object AuraPlayerManager {
         _isBuffering.value = true
 
         val mediaItems = updatedQueue.map { item -> buildMediaItem(item) }
-        val startIndex = updatedQueue.indexOfFirst { it.videoId == track.videoId }.coerceAtLeast(0)
+        val startIndex = updatedQueue.indexOfFirst { it.id == track.id || it.videoId == track.videoId }.coerceAtLeast(0)
 
         fadeJob?.cancel()
         player.volume = baseVolume
@@ -641,9 +706,9 @@ object AuraPlayerManager {
         if (originalQueue.isEmpty() || originalQueue.size != list.size) {
             originalQueue = list
         }
-        val curIdx = list.indexOfFirst { it.videoId == cur.videoId }
+        val curIdx = list.indexOfFirst { it.id == cur.id || it.videoId == cur.videoId }
         val before = if (curIdx >= 0) list.take(curIdx + 1) else listOf(cur)
-        val after = if (curIdx >= 0) list.drop(curIdx + 1).shuffled() else list.filterNot { it.videoId == cur.videoId }.shuffled()
+        val after = if (curIdx >= 0) list.drop(curIdx + 1).shuffled() else list.filterNot { it.id == cur.id || it.videoId == cur.videoId }.shuffled()
         _queue.value = before + after
         syncUpcomingItemsInPlayer(after)
     }
@@ -651,7 +716,7 @@ object AuraPlayerManager {
     fun restoreOriginalQueue() {
         if (originalQueue.isEmpty()) return
         val cur = _currentTrack.value ?: return
-        val origIdx = originalQueue.indexOfFirst { it.videoId == cur.videoId }
+        val origIdx = originalQueue.indexOfFirst { it.id == cur.id || it.videoId == cur.videoId }
         if (origIdx >= 0) {
             val before = originalQueue.take(origIdx + 1)
             val after = originalQueue.drop(origIdx + 1)
@@ -663,7 +728,7 @@ object AuraPlayerManager {
     fun updateUpcomingQueue(newUpcomingList: List<AuraTrack>) {
         val cur = _currentTrack.value ?: return
         val list = _queue.value
-        val curIdx = list.indexOfFirst { it.videoId == cur.videoId }
+        val curIdx = list.indexOfFirst { it.id == cur.id || it.videoId == cur.videoId }
         val before = if (curIdx >= 0) list.take(curIdx + 1) else listOf(cur)
         val updated = before + newUpcomingList
         _queue.value = updated
@@ -728,8 +793,8 @@ object AuraPlayerManager {
             player.play()
         } else {
             val list = _queue.value
-            val currentId = _currentTrack.value?.videoId
-            val idx = list.indexOfFirst { it.videoId == currentId }
+            val cur = _currentTrack.value
+            val idx = list.indexOfFirst { it.id == cur?.id || it.videoId == cur?.videoId }
             if (idx in 0 until list.lastIndex) {
                 playTrack(list[idx + 1], list, allowRadioQueue = _isShuffleEnabled.value)
             } else if (list.isNotEmpty() && player.repeatMode == Player.REPEAT_MODE_ALL) {
@@ -748,7 +813,7 @@ object AuraPlayerManager {
         }
         if (_isVideoMode.value && originalAudioTrack != null) {
             val list = originalAudioQueue ?: _queue.value
-            val index = list.indexOfFirst { it.videoId == originalAudioTrack?.videoId }
+            val index = list.indexOfFirst { it.id == originalAudioTrack?.id || it.videoId == originalAudioTrack?.videoId }
             val previousAudio = list.getOrNull(index - 1) ?: run {
                 seekToSeconds(0f)
                 return
@@ -761,7 +826,7 @@ object AuraPlayerManager {
                 _isVideoLoading.value = false
                 if (video != null) {
                     originalAudioTrack = previousAudio
-                    originalAudioIndex = list.indexOfFirst { it.videoId == previousAudio.videoId }
+                    originalAudioIndex = list.indexOfFirst { it.id == previousAudio.id || it.videoId == previousAudio.videoId }
                     playVideoForTrack(video, previousAudio)
                 } else {
                     onVideoUnavailableCallback?.invoke(previousAudio)
@@ -777,8 +842,8 @@ object AuraPlayerManager {
             player.play()
         } else {
             val list = _queue.value
-            val currentId = _currentTrack.value?.videoId
-            val idx = list.indexOfFirst { it.videoId == currentId }
+            val cur = _currentTrack.value
+            val idx = list.indexOfFirst { it.id == cur?.id || it.videoId == cur?.videoId }
             if (_isVideoMode.value) {
                 list.getOrNull(idx - 1)?.let { playStandaloneVideo(it, list) } ?: seekToSeconds(0f)
                 return
@@ -1204,17 +1269,21 @@ object AuraPlayerManager {
             .setIsPlayable(true)
             .build()
 
+        val stableId = if (track.id.isNotBlank()) track.id else track.videoId
         val schemeHost = if (_isVideoMode.value) "aura://video/" else "aura://track/"
         return MediaItem.Builder()
-            .setMediaId(track.videoId)
-            .setUri(Uri.parse("$schemeHost${track.videoId}"))
+            .setMediaId(stableId)
+            .setUri(Uri.parse("$schemeHost$stableId"))
             .setMediaMetadata(metadata)
             .build()
     }
 
     private fun prefetchUpcomingTracks(currentVideoId: String) {
         val list = _queue.value
-        val idx = list.indexOfFirst { it.videoId == currentVideoId }
+        val curTrack = _currentTrack.value
+        val idx = list.indexOfFirst {
+            (curTrack != null && it.id == curTrack.id) || it.videoId == currentVideoId
+        }
         if (idx >= 0) {
             val nextTrack = list.getOrNull(idx + 1)
             if (nextTrack != null) {
@@ -1230,6 +1299,12 @@ object AuraPlayerManager {
                                     currentQ[qIdx] = resolvedNext
                                     _queue.value = currentQ
                                 }
+                                val origIdx = originalQueue.indexOfFirst { it.id == nextTrack.id }
+                                if (origIdx >= 0 && origIdx < originalQueue.size) {
+                                    val origList = originalQueue.toMutableList()
+                                    origList[origIdx] = resolvedNext
+                                    originalQueue = origList
+                                }
                                 onTrackResolvedCallback?.invoke(resolvedNext)
                             }
                             SimpMusicExtractorEngine.prefetchStream(resolvedNext.videoId)
@@ -1241,8 +1316,32 @@ object AuraPlayerManager {
             }
 
             val nextNextTrack = list.getOrNull(idx + 2)
-            if (nextNextTrack != null && !nextNextTrack.isPendingResolution) {
-                SimpMusicExtractorEngine.prefetchStream(nextNextTrack.videoId)
+            if (nextNextTrack != null) {
+                if (nextNextTrack.isPendingResolution) {
+                    scope.launch {
+                        val resolvedNextNext = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(nextNextTrack)
+                        if (!resolvedNextNext.isPendingResolution) {
+                            withContext(Dispatchers.Main) {
+                                val currentQ = _queue.value.toMutableList()
+                                val qIdx = currentQ.indexOfFirst { it.id == nextNextTrack.id }
+                                if (qIdx >= 0) {
+                                    currentQ[qIdx] = resolvedNextNext
+                                    _queue.value = currentQ
+                                }
+                                val origIdx = originalQueue.indexOfFirst { it.id == nextNextTrack.id }
+                                if (origIdx >= 0 && origIdx < originalQueue.size) {
+                                    val origList = originalQueue.toMutableList()
+                                    origList[origIdx] = resolvedNextNext
+                                    originalQueue = origList
+                                }
+                                onTrackResolvedCallback?.invoke(resolvedNextNext)
+                            }
+                            SimpMusicExtractorEngine.prefetchStream(resolvedNextNext.videoId)
+                        }
+                    }
+                } else {
+                    SimpMusicExtractorEngine.prefetchStream(nextNextTrack.videoId)
+                }
             }
         }
     }

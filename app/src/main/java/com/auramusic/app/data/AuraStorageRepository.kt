@@ -81,7 +81,7 @@ class AuraStorageRepository(context: Context) {
     }
 
     fun setLyricsOffsetMs(videoId: String, offsetMs: Int) {
-        prefs.edit().putInt("lyric_offset_$videoId", offsetMs.coerceIn(-5000, 5000)).apply()
+        prefs.edit().putInt("lyric_offset_$videoId", offsetMs.coerceIn(-120000, 120000)).apply()
     }
 
     fun saveOfflineLyrics(videoId: String, lyrics: LyricsData) {

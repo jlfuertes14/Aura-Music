@@ -21,6 +21,8 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.expandHorizontally
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
@@ -60,6 +62,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -75,6 +78,7 @@ import androidx.compose.material.icons.automirrored.rounded.Comment
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Close
@@ -94,13 +98,16 @@ import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlayCircle
 import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Star
 import androidx.compose.material.icons.rounded.StarBorder
+import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.CircularProgressIndicator
@@ -184,6 +191,18 @@ import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
 
 private inline fun lerpFloat(start: Float, stop: Float, fraction: Float): Float = start + (stop - start) * fraction
+
+private val LyricsEaseOutCubic = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
+private val LyricsEaseInCubic = CubicBezierEasing(0.32f, 0f, 0.67f, 0f)
+
+private fun formatLyricsOffsetDisplay(offsetMs: Int): String {
+    if (offsetMs == 0) return "0.0s"
+    val sign = if (offsetMs > 0) "+" else "-"
+    val absMs = kotlin.math.abs(offsetMs)
+    val s = absMs / 1000
+    val tenths = (absMs % 1000) / 100
+    return "$sign$s.${tenths}s"
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -389,6 +408,7 @@ fun AuraNowPlayingSheet(
                             },
                             onOptionsClick = { isOptionsModalVisible = true },
                             onOpenLyrics = openLyrics,
+                            onAdjustLyricsOffset = onAdjustLyricsOffset,
                             onOpenComments = { isCommentsVisible = true; onLoadComments(track.videoId) },
                             onOpenQueue = { isQueueSheetVisible = true },
                             onCardPositioned = { lyricsCardBounds = it },
@@ -428,6 +448,7 @@ fun AuraNowPlayingSheet(
                             },
                             onOptionsClick = { isOptionsModalVisible = true },
                             onOpenLyrics = openLyrics,
+                            onAdjustLyricsOffset = onAdjustLyricsOffset,
                             onOpenComments = { isCommentsVisible = true; onLoadComments(track.videoId) },
                             onOpenQueue = { isQueueSheetVisible = true },
                             onCardPositioned = { lyricsCardBounds = it },
@@ -644,6 +665,8 @@ fun AuraNowPlayingSheet(
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     showRomanized = showRomanized,
+                    lyricsOffsetMs = lyricsOffsetMs,
+                    onAdjustLyricsOffset = onAdjustLyricsOffset,
                     artworkExpansionProgress = coverFlightProgress,
                     statusBarHeightPx = statusBarHeightPx,
                     headerColor = lerp(Color.Black, palette.primary, 0.08f),
@@ -1658,6 +1681,7 @@ private fun LiquidGlassPlayerView(
     onOpenArtist: () -> Unit,
     onOptionsClick: () -> Unit,
     onOpenLyrics: () -> Unit,
+    onAdjustLyricsOffset: (Int) -> Unit = {},
     onOpenComments: () -> Unit,
     onOpenQueue: () -> Unit,
     onCardPositioned: (Rect) -> Unit = {},
@@ -2157,6 +2181,7 @@ private fun SpotifyEncorePlayerView(
     onOpenArtist: () -> Unit,
     onOptionsClick: () -> Unit,
     onOpenLyrics: () -> Unit,
+    onAdjustLyricsOffset: (Int) -> Unit = {},
     onOpenComments: () -> Unit,
     onOpenQueue: () -> Unit,
     onCardPositioned: (Rect) -> Unit = {},
@@ -2171,6 +2196,7 @@ private fun SpotifyEncorePlayerView(
     val scrollState = rememberScrollState()
     var playerViewportCenterPx by remember(track.videoId) { mutableFloatStateOf(Float.NaN) }
     var showArtistPlaybackHeader by remember(track.videoId) { mutableStateOf(false) }
+    var showLyricsOffsetControl by remember(track.videoId) { mutableStateOf(false) }
     val density = LocalDensity.current
     val headerHysteresisPx = with(density) { 48.dp.toPx() }
     val miniPlayerProgressColor = lerp(palette.primary, Color.White, 0.65f)
@@ -2583,19 +2609,94 @@ private fun SpotifyEncorePlayerView(
                             color = Color.White
                         )
 
-                        Surface(
-                            shape = CircleShape,
-                            color = Color.Black.copy(alpha = 0.35f),
-                            modifier = Modifier
-                                .size(32.dp)
-                                .clip(CircleShape)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Box(contentAlignment = Alignment.Center) {
+                            // Animated timing bar (SimpMusic LyricsOffsetBar)
+                            AnimatedVisibility(
+                                visible = showLyricsOffsetControl,
+                                enter = fadeIn(tween(180, easing = LyricsEaseOutCubic)) + expandHorizontally(tween(220, easing = LyricsEaseOutCubic)),
+                                exit = fadeOut(tween(140, easing = LyricsEaseInCubic)) + shrinkHorizontally(tween(180, easing = LyricsEaseInCubic))
+                            ) {
+                                val signedOffset = formatLyricsOffsetDisplay(lyricsOffsetMs)
+                                Row(
+                                    modifier = Modifier
+                                        .clip(CircleShape)
+                                        .background(Color.Black.copy(alpha = 0.45f))
+                                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    IconButton(
+                                        onClick = { onAdjustLyricsOffset(-100) },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Remove,
+                                            contentDescription = "Delay -0.1s",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = signedOffset,
+                                        fontSize = 11.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (lyricsOffsetMs != 0) AuraNeonLime else Color.White,
+                                        textAlign = TextAlign.Center,
+                                        maxLines = 1,
+                                        modifier = Modifier.widthIn(min = 52.dp)
+                                    )
+                                    IconButton(
+                                        onClick = { onAdjustLyricsOffset(100) },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Add,
+                                            contentDescription = "Advance +100ms",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(15.dp)
+                                        )
+                                    }
+                                    if (lyricsOffsetMs != 0) {
+                                        IconButton(
+                                            onClick = { onAdjustLyricsOffset(-lyricsOffsetMs) },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.RestartAlt,
+                                                contentDescription = "Reset offset",
+                                                tint = Color.White.copy(alpha = 0.8f),
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Lyrics Delayer / Time Setter Toggle Button (SimpMusic)
+                            IconButton(
+                                onClick = { showLyricsOffsetControl = !showLyricsOffsetControl },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Timer,
+                                    contentDescription = "Lyrics Timing Offset",
+                                    tint = if (lyricsOffsetMs != 0 || showLyricsOffsetControl) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(19.dp)
+                                )
+                            }
+
+                            // Expand Lyrics Button (Circle gray fill removed as requested!)
+                            IconButton(
+                                onClick = onOpenLyrics,
+                                modifier = Modifier.size(36.dp)
+                            ) {
                                 Icon(
                                     imageVector = Icons.Rounded.OpenInFull,
                                     contentDescription = "Expand Lyrics",
                                     tint = Color.White,
-                                    modifier = Modifier.size(15.dp)
+                                    modifier = Modifier.size(17.dp)
                                 )
                             }
                         }
@@ -2728,6 +2829,8 @@ private fun FullScreenLyricsCompactHeader(
     isPlaying: Boolean,
     isBuffering: Boolean,
     showRomanized: Boolean,
+    lyricsOffsetMs: Int = 0,
+    onAdjustLyricsOffset: ((Int) -> Unit)? = null,
     artworkExpansionProgress: Float,
     statusBarHeightPx: Int,
     headerColor: Color,
@@ -2822,27 +2925,71 @@ private fun FullScreenLyricsCompactHeader(
                     )
                 }
 
-                Row(
+                IconButton(
+                    onClick = onToggleRomanized,
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
+                        .size(36.dp)
                         .graphicsLayer { alpha = compactContentProgress }
-                        .clickable(onClick = onToggleRomanized)
-                        .padding(horizontal = 6.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Translate,
-                        contentDescription = if (showRomanized) "Romaji lyrics" else "Original lyrics",
+                        contentDescription = if (showRomanized) "Romaji lyrics active (tap for original)" else "Original lyrics active (tap for romaji)",
                         tint = if (showRomanized) AuraPlayGreen else Color.White.copy(alpha = 0.82f),
-                        modifier = Modifier.size(17.dp)
+                        modifier = Modifier.size(19.dp)
                     )
-                    Text(
-                        text = if (showRomanized) "Romaji" else "Original",
-                        color = if (showRomanized) AuraPlayGreen else Color.White.copy(alpha = 0.82f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                }
+
+                if (onAdjustLyricsOffset != null) {
+                    var showOffsetControl by remember(track.videoId) { mutableStateOf(false) }
+
+                    AnimatedVisibility(
+                        visible = showOffsetControl,
+                        enter = fadeIn(tween(160, easing = LyricsEaseOutCubic)) + expandHorizontally(tween(200, easing = LyricsEaseOutCubic)),
+                        exit = fadeOut(tween(140, easing = LyricsEaseInCubic)) + shrinkHorizontally(tween(180, easing = LyricsEaseInCubic))
+                    ) {
+                        val signedOffset = formatLyricsOffsetDisplay(lyricsOffsetMs)
+                        Row(
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(Color.Black.copy(alpha = 0.45f))
+                                .padding(horizontal = 2.dp, vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(onClick = { onAdjustLyricsOffset(-100) }, modifier = Modifier.size(26.dp)) {
+                                Icon(Icons.Rounded.Remove, contentDescription = "Delay -0.1s", tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                            Text(
+                                text = signedOffset,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (lyricsOffsetMs != 0) AuraNeonLime else Color.White,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.widthIn(min = 40.dp)
+                            )
+                            IconButton(onClick = { onAdjustLyricsOffset(100) }, modifier = Modifier.size(26.dp)) {
+                                Icon(Icons.Rounded.Add, contentDescription = "Advance +0.1s", tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                            if (lyricsOffsetMs != 0) {
+                                IconButton(onClick = { onAdjustLyricsOffset(-lyricsOffsetMs) }, modifier = Modifier.size(26.dp)) {
+                                    Icon(Icons.Rounded.RestartAlt, contentDescription = "Reset offset", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(13.dp))
+                                }
+                            }
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { showOffsetControl = !showOffsetControl },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .graphicsLayer { alpha = compactContentProgress }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Timer,
+                            contentDescription = "Lyrics Timing Offset",
+                            tint = if (lyricsOffsetMs != 0 || showOffsetControl) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
 
                 IconButton(
@@ -2893,7 +3040,8 @@ private fun FullScreenSongLyricsView(
     onAdjustLyricsOffset: (Int) -> Unit
 ) {
     val lines = lyrics?.syncedLines ?: emptyList()
-    val activeIdx = lines.indexOfLast { positionSec >= it.timeSec }.coerceAtLeast(0)
+    val effectiveSec = positionSec + (lyricsOffsetMs / 1000f)
+    val activeIdx = lines.indexOfLast { effectiveSec >= it.timeSec }.coerceAtLeast(0)
     // Pre-calculate initial index on frame 1 so the active line is already placed in the center immediately
     val initialIdx = remember { (activeIdx - 1).coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIdx)

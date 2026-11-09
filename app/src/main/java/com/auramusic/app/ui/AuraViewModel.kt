@@ -46,6 +46,8 @@ import com.auramusic.app.ui.theme.extractAuraPaletteFromUrl
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -421,12 +423,42 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                         filter = "videos"
                     ).take(16)
                 }
+                val playedArtists = (_recentlyPlayed.value + _favorites.value)
+                    .flatMap { track ->
+                        track.artist.split(Regex("\\s*(?:,|;|\\bfeat\\.?\\b|\\bft\\.?\\b)\\s*"))
+                            .map(String::trim)
+                            .filter { it.isNotBlank() && !it.equals("YouTube Artist", true) && it.length > 1 }
+                    }
+                    .groupingBy { it }
+                    .eachCount()
+                    .entries
+                    .sortedByDescending { it.value }
+                    .map { it.key }
+                    .take(4)
+
                 val albumsDeferred = async {
-                    SimpMusicExtractorEngine.searchYouTubeMusic(
-                        if (artistQuery.isBlank()) "popular new albums"
-                        else "$artistQuery albums",
-                        filter = "albums"
-                    ).take(16)
+                    if (playedArtists.isNotEmpty()) {
+                        coroutineScope {
+                            val perArtist = playedArtists.map { artist ->
+                                async {
+                                    runCatching {
+                                        SimpMusicExtractorEngine.searchYouTubeMusic(artist, filter = "albums").take(4)
+                                    }.getOrDefault(emptyList())
+                                }
+                            }.awaitAll().flatten()
+
+                            val fallbackGeneral = if (perArtist.size < 6) {
+                                runCatching {
+                                    SimpMusicExtractorEngine.searchYouTubeMusic("popular new albums", filter = "albums").take(10)
+                                }.getOrDefault(emptyList())
+                            } else emptyList()
+
+                            (perArtist + fallbackGeneral)
+                                .distinctBy { "${it.artist.lowercase()}_${it.title.lowercase()}" }
+                        }
+                    } else {
+                        SimpMusicExtractorEngine.searchYouTubeMusic("popular new albums", filter = "albums").take(16)
+                    }
                 }
 
                 val (sections, moods) = chartsDeferred.await()
@@ -444,11 +476,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _topArtists.value = artistsList
                 _visibleTopArtists.value = artistsList
                 _communityPlaylists.value = playlistsDeferred.await()
-                rawHomeTracks = (sections.flatMap { it.tracks } + _favorites.value + _recentlyPlayed.value +
-                    SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS).distinctBy { it.videoId }
+                rawHomeTracks = (_recentlyPlayed.value + _favorites.value + sections.flatMap { it.tracks } +
+                    SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS).distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
                 rawHomeVideos = videosDeferred.await()
-                rawHomeAlbums = (albumsDeferred.await() + albumCandidatesFromTracks(rawHomeTracks))
-                    .distinctBy { "${it.artist.lowercase()}_${it.album.takeUnless { name -> name.equals("YouTube Music", true) }.orEmpty().ifBlank { it.title }.lowercase()}" }
+                rawHomeAlbums = albumsDeferred.await()
                 applyLocalRecommendations()
 
                 val topTracks = sections.firstOrNull()?.tracks ?: emptyList()
@@ -677,11 +708,12 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openAlbum(track: AuraTrack) {
         viewModelScope.launch {
+            val cleanVid = track.videoId.removePrefix("album_").removePrefix("yt_album_").trim()
             val albumName = track.album.takeIf { it.isNotBlank() && !it.equals("YouTube Music", true) } ?: track.title
-            val targetId = if (track.videoId.startsWith("MPREb_") || track.videoId.startsWith("OLAK5uy_")) {
-                track.videoId
+            val targetId = if (cleanVid.startsWith("MPREb_") || cleanVid.startsWith("OLAK5uy_")) {
+                cleanVid
             } else {
-                SimpMusicExtractorEngine.findAlbumBrowseId(albumName, track.artist) ?: track.videoId
+                SimpMusicExtractorEngine.findAlbumBrowseId(albumName, track.artist) ?: cleanVid
             }
             openAlbumOrPlaylist(
                 id = targetId,
@@ -753,7 +785,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         categoryJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 // 1. Directly call YouTube Music InnerTube browse endpoint (FEmusic_home with params)
-                val moodResult = SimpMusicExtractorEngine.fetchYtmMoodBrowse(category)
+                val moodDeferred = async { SimpMusicExtractorEngine.fetchYtmMoodBrowse(category) }
 
                 // 2. Fetch category-tailored official music videos in parallel
                 val videosDeferred = async {
@@ -762,7 +794,20 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     }.getOrDefault(emptyList())
                 }
 
-                rawCategoryTracks = moodResult.tracks
+                // 3. Fetch popular tracks for this category so the bottom tracks section has rich, distinct songs
+                val categoryTracksDeferred = async {
+                    runCatching {
+                        SimpMusicExtractorEngine.searchYouTubeMusic("$category hits songs", "songs").take(30)
+                    }.getOrDefault(emptyList())
+                }
+
+                val moodResult = moodDeferred.await()
+                val popularSongs = categoryTracksDeferred.await()
+                val shelfTrackIds = moodResult.tracks.map { it.videoId }.toSet()
+
+                // Filter out any songs that already appear in the top Quick picks / carousel shelves
+                val distinctCategoryTracks = popularSongs.filterNot { shelfTrackIds.contains(it.videoId) }
+                rawCategoryTracks = if (distinctCategoryTracks.isNotEmpty()) distinctCategoryTracks else moodResult.tracks
                 rawCategoryAlbums = moodResult.albums
                 rawCategoryVideos = videosDeferred.await()
                 _categoryShelves.value = moodResult.shelves
@@ -1430,7 +1475,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun adjustLyricsOffset(deltaMs: Int) {
         val vid = AuraPlayerManager.currentTrack.value?.videoId ?: return
-        val next = (_lyricsOffsetMs.value + deltaMs).coerceIn(-5000, 5000)
+        val next = (_lyricsOffsetMs.value + deltaMs).coerceIn(-120000, 120000)
         _lyricsOffsetMs.value = next
         storage.setLyricsOffsetMs(vid, next)
     }

@@ -231,8 +231,31 @@ fun HomeScreen(
     val heroTrack = liveTopTracks.firstOrNull()
     val playlistTracks = liveTopTracks
     val personalizedHomeTracks = homeRecommendations.ifEmpty { playlistTracks }
-    val quickPickTracks = (if (activeCategory != "All") categoryTracks else personalizedHomeTracks).take(20)
-    val displayedTracks = if (activeCategory != "All") categoryTracks else personalizedHomeTracks
+    val shelfTrackIds = remember(categoryShelves) {
+        categoryShelves.flatMap { shelf ->
+            shelf.items.map { item ->
+                item.track?.videoId ?: item.id.removePrefix("track_").removePrefix("yt_")
+            }
+        }.toSet()
+    }
+    val quickPickTracks = remember(activeCategory, categoryTracks, personalizedHomeTracks) {
+        val source = if (activeCategory != "All") categoryTracks else personalizedHomeTracks
+        val seen = mutableSetOf<String>()
+        source.filter { track ->
+            val key = com.auramusic.app.core.recommendations.LocalRecommendationEngine.songIdentityKey(track)
+            seen.add(key)
+        }.take(20)
+    }
+    val displayedTracks = remember(activeCategory, categoryTracks, shelfTrackIds, personalizedHomeTracks) {
+        val base = if (activeCategory != "All") {
+            categoryTracks.filterNot { shelfTrackIds.contains(it.videoId) }.ifEmpty { categoryTracks }
+        } else personalizedHomeTracks
+        val seen = mutableSetOf<String>()
+        base.filter { track ->
+            val key = com.auramusic.app.core.recommendations.LocalRecommendationEngine.songIdentityKey(track)
+            seen.add(key)
+        }
+    }
     val visibleTopArtists = topArtists
     val visibleRecentlyPlayed = recentlyPlayed
     val visibleUserPlaylists = userPlaylists
@@ -892,8 +915,8 @@ fun HomeScreen(
                                 onPlayTrack = onPlayTrack,
                                 onOpenAlbum = onOpenAlbum,
                                 titleForTrack = { track ->
-                                    track.album.takeIf { it.isNotBlank() && !it.equals("YouTube Music", true) }
-                                        ?: track.title
+                                    track.title.takeIf { it.isNotBlank() && !it.equals("YouTube Music", true) }
+                                        ?: track.album
                                 },
                                 keyPrefix = "album_pick"
                             )
@@ -2238,9 +2261,9 @@ private fun MoodCarouselShelf(
 
     val shelfTracks = remember(shelf.items) {
         shelf.items.map { item ->
-            AuraTrack(
+            item.track ?: AuraTrack(
                 id = item.id,
-                videoId = item.id,
+                videoId = item.id.removePrefix("track_").removePrefix("yt_"),
                 title = item.title,
                 artist = item.subtitle,
                 artworkUrl = item.artworkUrl
@@ -2306,9 +2329,9 @@ private fun MoodCarouselShelf(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         page.forEach { item ->
-                            val track = AuraTrack(
+                            val track = item.track ?: AuraTrack(
                                 id = item.id,
-                                videoId = item.id,
+                                videoId = item.id.removePrefix("track_").removePrefix("yt_"),
                                 title = item.title,
                                 artist = item.subtitle,
                                 artworkUrl = item.artworkUrl
@@ -2394,9 +2417,9 @@ private fun MoodCarouselShelf(
                 horizontalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(shelf.items, key = { "mood_vid_${it.id}" }) { item ->
-                    val track = AuraTrack(
+                    val track = item.track ?: AuraTrack(
                         id = item.id,
-                        videoId = item.id,
+                        videoId = item.id.removePrefix("yt_"),
                         title = item.title,
                         artist = item.subtitle,
                         artworkUrl = item.artworkUrl
@@ -2469,38 +2492,68 @@ private fun MoodCarouselShelf(
                         modifier = Modifier
                             .width(132.dp)
                             .clickable {
-                                when {
-                                    isPlaylistShelf -> {
-                                        onOpenPlaylist(
-                                            YtmCommunityPlaylist(
-                                                id = item.id,
+                                when (item.type) {
+                                    YtmMoodItemType.PLAYLIST -> {
+                                        val playlist = item.playlist ?: YtmCommunityPlaylist(
+                                            id = item.id.removePrefix("pl_").removePrefix("pod_"),
+                                            title = item.title,
+                                            author = item.subtitle,
+                                            artworkUrl = item.artworkUrl,
+                                            trackCount = ""
+                                        )
+                                        onOpenPlaylist(playlist)
+                                    }
+                                    YtmMoodItemType.ALBUM -> {
+                                        val albumTrack = item.track ?: AuraTrack(
+                                            id = item.id.removePrefix("album_").removePrefix("yt_album_"),
+                                            videoId = item.id.removePrefix("album_").removePrefix("yt_album_"),
+                                            title = item.title,
+                                            artist = item.subtitle,
+                                            album = item.title,
+                                            artworkUrl = item.artworkUrl
+                                        )
+                                        onOpenAlbum(albumTrack)
+                                    }
+                                    YtmMoodItemType.VIDEO -> {
+                                        val track = item.track ?: AuraTrack(
+                                            id = item.id,
+                                            videoId = item.id.removePrefix("yt_"),
+                                            title = item.title,
+                                            artist = item.subtitle,
+                                            artworkUrl = item.artworkUrl
+                                        )
+                                        onPlayMusicVideo(track, shelfTracks)
+                                    }
+                                    else -> {
+                                        if (isPlaylistShelf) {
+                                            val playlist = item.playlist ?: YtmCommunityPlaylist(
+                                                id = item.id.removePrefix("pl_").removePrefix("pod_"),
                                                 title = item.title,
                                                 author = item.subtitle,
                                                 artworkUrl = item.artworkUrl,
                                                 trackCount = ""
                                             )
-                                        )
-                                    }
-                                    isAlbumShelf -> {
-                                        onOpenAlbum(
-                                            AuraTrack(
+                                            onOpenPlaylist(playlist)
+                                        } else if (isAlbumShelf) {
+                                            val albumTrack = item.track ?: AuraTrack(
+                                                id = item.id.removePrefix("album_").removePrefix("yt_album_"),
+                                                videoId = item.id.removePrefix("album_").removePrefix("yt_album_"),
+                                                title = item.title,
+                                                artist = item.subtitle,
+                                                album = item.title,
+                                                artworkUrl = item.artworkUrl
+                                            )
+                                            onOpenAlbum(albumTrack)
+                                        } else {
+                                            val track = item.track ?: AuraTrack(
                                                 id = item.id,
-                                                videoId = item.id,
+                                                videoId = item.id.removePrefix("track_").removePrefix("yt_"),
                                                 title = item.title,
                                                 artist = item.subtitle,
                                                 artworkUrl = item.artworkUrl
                                             )
-                                        )
-                                    }
-                                    else -> {
-                                        val track = AuraTrack(
-                                            id = item.id,
-                                            videoId = item.id,
-                                            title = item.title,
-                                            artist = item.subtitle,
-                                            artworkUrl = item.artworkUrl
-                                        )
-                                        onPlayTrack(track, shelfTracks)
+                                            onPlayTrack(track, shelfTracks)
+                                        }
                                     }
                                 }
                             }

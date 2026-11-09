@@ -2001,13 +2001,14 @@ object SimpMusicExtractorEngine {
      */
     suspend fun fetchPlaylistDetail(playlist: YtmCommunityPlaylist): PlaylistDetail = withContext(Dispatchers.IO) {
         val playCountRegex = Regex("""([,\d]+(?:\.\d+)?\s*[KkMmBb]?\s*(?:plays|views))""", RegexOption.IGNORE_CASE)
-        val isPodcastShow = playlist.id.startsWith("MPSP") || playlist.id.startsWith("MP_") || playlist.id.contains("podcast", ignoreCase = true)
+        val rawId = playlist.id.removePrefix("album_").removePrefix("pl_").removePrefix("track_").removePrefix("yt_album_").removePrefix("pod_").trim()
+        val isPodcastShow = rawId.startsWith("MPSP") || rawId.startsWith("MP_") || rawId.contains("podcast", ignoreCase = true)
         try {
             val actualBrowseId = when {
-                isPodcastShow -> playlist.id
-                playlist.id.startsWith("VL") || playlist.id.startsWith("MPREb_") || playlist.id.startsWith("FEmusic_") -> playlist.id
-                playlist.id.startsWith("OLAK5uy_") || playlist.id.startsWith("PL") || playlist.id.startsWith("RD") -> "VL${playlist.id}"
-                else -> if (playlist.id.startsWith("VL")) playlist.id else "VL${playlist.id}"
+                isPodcastShow -> rawId
+                rawId.startsWith("VL") || rawId.startsWith("MPREb_") || rawId.startsWith("FEmusic_") -> rawId
+                rawId.startsWith("OLAK5uy_") || rawId.startsWith("PL") || rawId.startsWith("RD") -> "VL$rawId"
+                else -> if (rawId.startsWith("VL")) rawId else "VL$rawId"
             }
             val payload = JSONObject().apply {
                 put("context", JSONObject().apply {
@@ -2032,7 +2033,9 @@ object SimpMusicExtractorEngine {
             httpClient.newCall(req).execute().use { resp ->
                 if (resp.isSuccessful) {
                     val root = JSONObject(resp.body?.string() ?: "{}")
-                    val twoCol = root.optJSONObject("contents")?.optJSONObject("twoColumnBrowseResultsRenderer")
+                    val contentsObj = root.optJSONObject("contents")
+                    val twoCol = contentsObj?.optJSONObject("twoColumnBrowseResultsRenderer")
+                    val singleCol = contentsObj?.optJSONObject("singleColumnBrowseResultsRenderer")
 
                     var bannerUrl = playlist.artworkUrl
                     var title = playlist.title
@@ -2041,20 +2044,26 @@ object SimpMusicExtractorEngine {
                     var description = ""
                     var authorAvatarUrl = ""
 
-                    // 1. Extract header renderer (tabs[0] section 0)
-                    val tab0Contents = twoCol?.optJSONArray("tabs")?.optJSONObject(0)
+                    // 1. Extract header renderer (tabs[0] section 0, or root header)
+                    val tab0Contents = (twoCol ?: singleCol)?.optJSONArray("tabs")?.optJSONObject(0)
                         ?.optJSONObject("tabRenderer")?.optJSONObject("content")
                         ?.optJSONObject("sectionListRenderer")?.optJSONArray("contents")
+                        ?: singleCol?.optJSONObject("sectionListRenderer")?.optJSONArray("contents")
 
                     var headerRenderer: JSONObject? = null
                     if (tab0Contents != null) {
                         for (s in 0 until tab0Contents.length()) {
                             val candidate = tab0Contents.optJSONObject(s)?.optJSONObject("musicResponsiveHeaderRenderer")
+                                ?: tab0Contents.optJSONObject(s)?.optJSONObject("musicDetailHeaderRenderer")
                             if (candidate != null) {
                                 headerRenderer = candidate
                                 break
                             }
                         }
+                    }
+                    if (headerRenderer == null) {
+                        headerRenderer = root.optJSONObject("header")?.optJSONObject("musicResponsiveHeaderRenderer")
+                            ?: root.optJSONObject("header")?.optJSONObject("musicDetailHeaderRenderer")
                     }
 
                     if (headerRenderer != null) {
@@ -3715,8 +3724,13 @@ object SimpMusicExtractorEngine {
                                 texts.add(txt)
                             }
                         }
+                        val isAlbumOrSingle = texts.isNotEmpty() && (
+                            texts[0].equals("Album", ignoreCase = true) ||
+                            texts[0].equals("EP", ignoreCase = true) ||
+                            texts[0].equals("Single", ignoreCase = true)
+                        )
                         if (texts.isNotEmpty()) {
-                            artist = if (texts[0].equals("Song", ignoreCase = true) || texts[0].equals("Video", ignoreCase = true)) {
+                            artist = if (texts[0].equals("Song", ignoreCase = true) || texts[0].equals("Video", ignoreCase = true) || isAlbumOrSingle) {
                                 texts.getOrNull(1) ?: "YouTube Artist"
                             } else {
                                 texts[0]
@@ -3726,16 +3740,20 @@ object SimpMusicExtractorEngine {
                         texts.firstOrNull { it.matches(Regex("^\\d+:\\d{2}(:\\d{2})?$")) }?.let {
                             durationSec = parseDurationText(it)
                         }
-                        val albumCandidate = texts.drop(1).firstOrNull { candidate ->
-                            !candidate.equals(artist, ignoreCase = true) &&
-                                !candidate.equals("Song", ignoreCase = true) &&
-                                !candidate.equals("Video", ignoreCase = true) &&
-                                !candidate.matches(Regex("^\\d+:\\d{2}(:\\d{2})?$")) &&
-                                !candidate.endsWith("views", ignoreCase = true) &&
-                                !candidate.endsWith("plays", ignoreCase = true)
-                        }
-                        if (albumCandidate != null) {
-                            album = albumCandidate
+                        if (isAlbumOrSingle || videoId.startsWith("MPREb_") || videoId.startsWith("OLAK5uy_")) {
+                            album = title
+                        } else {
+                            val albumCandidate = texts.drop(1).firstOrNull { candidate ->
+                                !candidate.equals(artist, ignoreCase = true) &&
+                                    !candidate.equals("Song", ignoreCase = true) &&
+                                    !candidate.equals("Video", ignoreCase = true) &&
+                                    !candidate.matches(Regex("^\\d+:\\d{2}(:\\d{2})?$")) &&
+                                    !candidate.endsWith("views", ignoreCase = true) &&
+                                    !candidate.endsWith("plays", ignoreCase = true)
+                            }
+                            if (albumCandidate != null) {
+                                album = albumCandidate
+                            }
                         }
                     }
 

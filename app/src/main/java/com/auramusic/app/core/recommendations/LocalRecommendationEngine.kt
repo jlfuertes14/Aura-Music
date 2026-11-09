@@ -32,35 +32,61 @@ object LocalRecommendationEngine {
         val likedIds = favorites.mapTo(mutableSetOf()) { it.videoId }
         val recentIds = recentlyPlayed.take(5).mapTo(mutableSetOf()) { it.videoId }
 
-        val scored = candidates.distinctBy { it.videoId }.mapIndexed { index, track ->
-            var score = index * -0.001f
-            splitArtists(track.artist).forEach { artist -> score += artistWeights[artist] ?: 0f }
-            score += (genreWeights[normalize(track.genre)] ?: 0f) * 0.65f
-            score += (albumWeights[normalize(track.album)] ?: 0f) * 0.35f
-            score += interactionScores[track.videoId] ?: 0f
-            if (track.videoId in likedIds) score += 12f
-            if (track.videoId in recentIds) score -= 1.4f
-            if (favorOfficialVideos) score += videoQualityScore(track.title)
-            ScoredTrack(track, score)
-        }.sortedByDescending { it.score }
+        val scored = candidates
+            .distinctBy { songIdentityKey(it) }
+            .mapIndexed { index, track ->
+                var score = index * -0.001f
+                splitArtists(track.artist).forEach { artist -> score += artistWeights[artist] ?: 0f }
+                score += (genreWeights[normalize(track.genre)] ?: 0f) * 0.65f
+                score += (albumWeights[normalize(track.album)] ?: 0f) * 0.35f
+                score += interactionScores[track.videoId] ?: 0f
+                if (track.videoId in likedIds) score += 12f
+                if (track.videoId in recentIds) score -= 1.4f
+                if (favorOfficialVideos) score += videoQualityScore(track.title)
+                ScoredTrack(track, score)
+            }.sortedByDescending { it.score }
 
-        // Keep the shelf from becoming a row of near-identical artists, then fill any remaining slots.
+        // Keep the shelf from becoming a row of near-identical artists, and never duplicate songs.
         val selected = mutableListOf<ScoredTrack>()
+        val selectedKeys = mutableSetOf<String>()
         val artistCounts = mutableMapOf<String, Int>()
         scored.forEach { item ->
             if (selected.size >= limit) return@forEach
+            val songKey = songIdentityKey(item.track)
+            if (songKey in selectedKeys) return@forEach
+
             val leadArtist = splitArtists(item.track.artist).firstOrNull().orEmpty()
             if ((artistCounts[leadArtist] ?: 0) < 2) {
                 selected += item
+                selectedKeys += songKey
                 artistCounts[leadArtist] = (artistCounts[leadArtist] ?: 0) + 1
             }
         }
         if (selected.size < limit) {
-            val selectedIds = selected.mapTo(mutableSetOf()) { it.track.videoId }
-            scored.asSequence().filter { it.track.videoId !in selectedIds }
-                .take(limit - selected.size).forEach(selected::add)
+            scored.forEach { item ->
+                if (selected.size >= limit) return@forEach
+                val songKey = songIdentityKey(item.track)
+                if (songKey !in selectedKeys) {
+                    selected += item
+                    selectedKeys += songKey
+                }
+            }
         }
         return selected.take(limit).map { it.track }
+    }
+
+    fun songIdentityKey(track: AuraTrack): String {
+        val leadArtist = splitArtists(track.artist).firstOrNull().orEmpty()
+        val cleanTitle = track.title.lowercase()
+            .replace(Regex("(?i)\\s*[\\[\\(]?(?:official\\s+)?(?:music\\s+)?(?:video|audio|visualizer|lyric video|lyrics|hd|4k|remastered)[\\]\\)]?"), "")
+            .replace(Regex("(?i)\\s*[\\[\\(](?:feat\\.?|ft\\.?|with)\\s+[^\\)\\]]+[\\]\\)]"), "")
+            .replace(Regex("[^\\p{L}\\p{N}]"), "")
+            .trim()
+        return if (leadArtist.isNotBlank() && cleanTitle.isNotBlank()) {
+            "${leadArtist}_${cleanTitle}"
+        } else {
+            track.videoId.ifBlank { track.id }
+        }
     }
 
     fun buildCategoryFilterContext(categoryCandidates: List<AuraTrack>): Pair<Set<String>, Set<String>> {
@@ -109,7 +135,7 @@ object LocalRecommendationEngine {
 
     private fun splitArtists(value: String): List<String> = value
         .lowercase()
-        .split(Regex("\\s*(?:,|;|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bx\\b)\\s*"))
+        .split(Regex("\\s*(?:,|;|/|&|\\bfeat\\.?\\b|\\bft\\.?\\b|\\bx\\b|\\bwith\\b)\\s*"))
         .map(::normalize)
         .filter(String::isNotBlank)
 
