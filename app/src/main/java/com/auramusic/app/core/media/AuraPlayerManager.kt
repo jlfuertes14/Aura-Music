@@ -90,6 +90,9 @@ object AuraPlayerManager {
     private val _positionSec = MutableStateFlow(0f)
     val positionSec: StateFlow<Float> = _positionSec.asStateFlow()
 
+    private val _bufferedSec = MutableStateFlow(0f)
+    val bufferedSec: StateFlow<Float> = _bufferedSec.asStateFlow()
+
     private val _durationSec = MutableStateFlow(210f)
     val durationSec: StateFlow<Float> = _durationSec.asStateFlow()
 
@@ -501,6 +504,7 @@ object AuraPlayerManager {
         _queue.value = updatedQueue
         _currentTrack.value = track
         _positionSec.value = 0f
+        _bufferedSec.value = 0f
         _durationSec.value = track.durationSeconds.toFloat().coerceAtLeast(1f)
         _isBuffering.value = true
 
@@ -1154,6 +1158,7 @@ object AuraPlayerManager {
         originalQueue = videoQueue
         _queue.value = videoQueue
         _positionSec.value = 0f
+        _bufferedSec.value = 0f
         _durationSec.value = videoTrack.durationSeconds.toFloat().coerceAtLeast(1f)
         _isVideoMode.value = true
         _currentTrack.value = videoTrack.copy(
@@ -1403,9 +1408,11 @@ object AuraPlayerManager {
         progressJob = scope.launch {
             while (isActive) {
                 val player = exoPlayer
-                if (player != null && player.isPlaying) {
+                if (player != null) {
                     val posSec = (player.currentPosition / 1000f).coerceAtLeast(0f)
+                    val bufSec = (player.bufferedPosition / 1000f).coerceAtLeast(0f)
                     _positionSec.value = posSec
+                    _bufferedSec.value = bufSec
 
                     val durMs = player.duration
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
@@ -1413,7 +1420,7 @@ object AuraPlayerManager {
 
                         // Smooth audio fade out effect when the song is finishing (last 2 seconds)
                         val remainingMs = durMs - player.currentPosition
-                        if (remainingMs in 50L..2000L && fadeJob?.isActive != true) {
+                        if (player.isPlaying && remainingMs in 50L..2000L && fadeJob?.isActive != true) {
                             val fadeFactor = (remainingMs / 2000f).coerceIn(0f, 1f)
                             player.volume = (baseVolume * fadeFactor).coerceIn(0f, 1f)
                         } else if (remainingMs > 2000L && fadeJob?.isActive != true && player.volume < baseVolume) {
@@ -1422,7 +1429,7 @@ object AuraPlayerManager {
                     }
 
                     // SponsorBlock real-time auto-skip check
-                    if (_sponsorBlockEnabled.value) {
+                    if (player.isPlaying && _sponsorBlockEnabled.value) {
                         val segments = _sponsorSegments.value
                         val hit = segments.firstOrNull { seg ->
                             posSec >= seg.startTimeSec && posSec < seg.endTimeSec - 0.35f

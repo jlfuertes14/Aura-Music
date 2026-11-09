@@ -212,6 +212,7 @@ fun AuraNowPlayingSheet(
     isBuffering: Boolean,
     positionSec: Float,
     durationSec: Float,
+    bufferedSec: Float = 0f,
     palette: AuraPalette,
     lyrics: LyricsData?,
     lyricsOffsetMs: Int,
@@ -380,6 +381,7 @@ fun AuraNowPlayingSheet(
                             isBuffering = isBuffering,
                             positionSec = positionSec,
                             durationSec = durationSec,
+                            bufferedSec = bufferedSec,
                             palette = palette,
                             lyrics = lyrics,
                             lyricsOffsetMs = lyricsOffsetMs,
@@ -426,6 +428,7 @@ fun AuraNowPlayingSheet(
                             isBuffering = isBuffering,
                             positionSec = positionSec,
                             durationSec = durationSec,
+                            bufferedSec = bufferedSec,
                             isFavorite = isFavorite,
                             isShuffleEnabled = isShuffleEnabled,
                             lyricsExpansionProgress = lyricsExpansionProgress,
@@ -527,6 +530,7 @@ fun AuraNowPlayingSheet(
                     lyrics = lyrics,
                     positionSec = positionSec + (lyricsOffsetMs / 1000f),
                     durationSec = durationSec,
+                    bufferedSec = bufferedSec,
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     lyricsOffsetMs = lyricsOffsetMs,
@@ -1083,6 +1087,9 @@ fun AuraVideoPlayerSurface(
     modifier: Modifier = Modifier,
     track: AuraTrack,
     isLoading: Boolean,
+    positionSec: Float = 0f,
+    durationSec: Float = 1f,
+    bufferedSec: Float = 0f,
     onSwitchToAudio: () -> Unit
 ) {
     Box(
@@ -1157,6 +1164,38 @@ fun AuraVideoPlayerSurface(
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // Slim edge timeline at the bottom of the video surface (shows buffer bar and played progress)
+        if (!isLoading) {
+            val progressFrac = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            val bufferFrac = (bufferedSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .height(2.5.dp)
+                    .background(Color.White.copy(alpha = 0.20f))
+            ) {
+                // Buffer bar (pre-filled, lighter line indicating downloaded video in temporary memory)
+                if (bufferFrac > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(bufferFrac)
+                            .background(Color.White.copy(alpha = 0.45f))
+                    )
+                }
+                // Played progress bar
+                if (progressFrac > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(progressFrac)
+                            .background(Color.White)
                     )
                 }
             }
@@ -1344,14 +1383,17 @@ private fun CompactPointSlider(
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier,
+    bufferedValue: Float = 0f,
     pointColor: Color = Color.White,
     activeTrackColor: Color = Color.White,
-    inactiveTrackColor: Color = Color.White.copy(alpha = 0.22f),
+    bufferTrackColor: Color = Color.White.copy(alpha = 0.45f),
+    inactiveTrackColor: Color = Color.White.copy(alpha = 0.20f),
     trackHeight: Dp = 2.5.dp,
     thumbRadius: Dp = 5.dp
 ) {
     val totalRange = (valueRange.endInclusive - valueRange.start).coerceAtLeast(0.001f)
     val currentFraction = ((value - valueRange.start) / totalRange).coerceIn(0f, 1f)
+    val bufferedFraction = ((bufferedValue - valueRange.start) / totalRange).coerceIn(0f, 1f)
 
     var isDragging by remember { mutableStateOf(false) }
     var dragFraction by remember { mutableFloatStateOf(0f) }
@@ -1411,6 +1453,7 @@ private fun CompactPointSlider(
             val endX = width - thumbRadiusPx
             val trackSpan = (endX - startX).coerceAtLeast(1f)
             val thumbX = startX + displayFraction * trackSpan
+            val bufferX = startX + bufferedFraction * trackSpan
 
             // 1. Inactive full-width background slim line
             drawLine(
@@ -1421,7 +1464,18 @@ private fun CompactPointSlider(
                 cap = StrokeCap.Round
             )
 
-            // 2. Active played slim line (continuous, no gap!)
+            // 2. Buffer bar / buffering indicator (pre-filled, lighter line indicating downloaded memory)
+            if (bufferX > startX) {
+                drawLine(
+                    color = bufferTrackColor,
+                    start = Offset(startX, centerY),
+                    end = Offset(bufferX, centerY),
+                    strokeWidth = trackHeightPx,
+                    cap = StrokeCap.Round
+                )
+            }
+
+            // 3. Active played slim line (continuous, no gap!)
             if (thumbX > startX) {
                 drawLine(
                     color = activeTrackColor,
@@ -1432,7 +1486,7 @@ private fun CompactPointSlider(
                 )
             }
 
-            // 3. Circular point thumb (dead-center on the line, perfectly bisecting it)
+            // 4. Circular point thumb (dead-center on the line, perfectly bisecting it)
             drawCircle(
                 color = pointColor,
                 radius = if (isDragging) thumbRadiusPx * 1.35f else thumbRadiusPx,
@@ -1664,6 +1718,7 @@ private fun LiquidGlassPlayerView(
     isBuffering: Boolean,
     positionSec: Float,
     durationSec: Float,
+    bufferedSec: Float = 0f,
     isFavorite: Boolean,
     isShuffleEnabled: Boolean,
     lyricsExpansionProgress: Float = 0f,
@@ -1809,9 +1864,13 @@ private fun LiquidGlassPlayerView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(12.dp)),
+                            .clip(RoundedCornerShape(12.dp))
+                            .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
                         track = track,
                         isLoading = isVideoLoading,
+                        positionSec = positionSec,
+                        durationSec = durationSec,
+                        bufferedSec = bufferedSec,
                         onSwitchToAudio = onToggleVideoMode
                     )
                 }
@@ -1936,6 +1995,7 @@ private fun LiquidGlassPlayerView(
                     // Horizontal Point Scrubber Slider
                     CompactPointSlider(
                         value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
+                        bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
                         onValueChange = onSeekTo,
                         valueRange = 0f..durationSec.coerceAtLeast(1f),
                         pointColor = Color.White,
@@ -2158,6 +2218,7 @@ private fun SpotifyEncorePlayerView(
     isBuffering: Boolean,
     positionSec: Float,
     durationSec: Float,
+    bufferedSec: Float = 0f,
     palette: AuraPalette,
     lyrics: LyricsData?,
     lyricsOffsetMs: Int,
@@ -2342,13 +2403,17 @@ private fun SpotifyEncorePlayerView(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
-                            .background(Color.Black),
+                            .background(Color.Black)
+                            .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
                         contentAlignment = Alignment.Center
                     ) {
                         AuraVideoPlayerSurface(
                             modifier = Modifier.fillMaxSize(),
                             track = track,
                             isLoading = isVideoLoading,
+                            positionSec = positionSec,
+                            durationSec = durationSec,
+                            bufferedSec = bufferedSec,
                             onSwitchToAudio = onToggleVideoMode
                         )
                     }
@@ -2434,6 +2499,7 @@ private fun SpotifyEncorePlayerView(
             Column(modifier = Modifier.fillMaxWidth()) {
                 CompactPointSlider(
                     value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
+                    bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
                     onValueChange = onSeekTo,
                     valueRange = 0f..durationSec.coerceAtLeast(1f),
                     pointColor = Color.White,
@@ -3025,6 +3091,7 @@ private fun FullScreenSongLyricsView(
     lyrics: LyricsData?,
     positionSec: Float,
     durationSec: Float,
+    bufferedSec: Float = 0f,
     isPlaying: Boolean,
     isBuffering: Boolean,
     lyricsOffsetMs: Int,
@@ -3209,6 +3276,7 @@ private fun FullScreenSongLyricsView(
                     ) {
                         CompactPointSlider(
                             value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
+                            bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
                             onValueChange = onSeekTo,
                             valueRange = 0f..durationSec.coerceAtLeast(1f),
                             pointColor = Color.White,

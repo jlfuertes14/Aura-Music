@@ -155,6 +155,7 @@ fun SearchScreen(
     onFilterChange: (String) -> Unit,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onPlaySearchTrack: (AuraTrack, List<AuraTrack>) -> Unit = onPlayTrack,
+    onPlayMusicVideo: (AuraTrack, List<AuraTrack>) -> Unit = onPlayTrack,
     onToggleFavorite: (AuraTrack) -> Unit,
     onDownloadTrack: (AuraTrack) -> Unit,
     playlists: List<AuraPlaylist> = emptyList(),
@@ -241,6 +242,7 @@ fun SearchScreen(
                 onFilterChange = onFilterChange,
                 onPlayTrack = onPlayTrack,
                 onPlaySearchTrack = onPlaySearchTrack,
+                onPlayMusicVideo = onPlayMusicVideo,
                 onToggleFavorite = onToggleFavorite,
                 onRemoveRecentlyPlayed = onRemoveRecentlyPlayed,
                 onOptionsClick = { selectedModalTrack = it },
@@ -702,6 +704,7 @@ private fun DedicatedSearchingView(
     onFilterChange: (String) -> Unit,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onPlaySearchTrack: (AuraTrack, List<AuraTrack>) -> Unit = onPlayTrack,
+    onPlayMusicVideo: (AuraTrack, List<AuraTrack>) -> Unit = onPlayTrack,
     onToggleFavorite: (AuraTrack) -> Unit,
     onRemoveRecentlyPlayed: (AuraTrack) -> Unit,
     onOptionsClick: (AuraTrack) -> Unit,
@@ -1051,16 +1054,22 @@ private fun DedicatedSearchingView(
                     items(results.distinctBy { it.videoId }, key = { "res_${it.videoId}" }) { track ->
                         val isFav = favorites.any { it.videoId == track.videoId }
                         val isCurrent = currentPlayingId == track.videoId
+                        val isVideoItem = filter == "videos" || (track.musicVideoType != null && track.musicVideoType != "PODCAST")
 
                         SearchResultSongTile(
                             track = track,
                             isCurrent = isCurrent,
                             isPlaying = isPlaying,
                             isFavorite = isFav,
+                            isVideo = isVideoItem,
                             onClick = {
                                 focusManager.clearFocus()
                                 keyboardController?.hide()
-                                onPlaySearchTrack(track, results)
+                                if (isVideoItem) {
+                                    onPlayMusicVideo(track, results)
+                                } else {
+                                    onPlaySearchTrack(track, results)
+                                }
                             },
                             onToggleFavorite = { onToggleFavorite(track) },
                             onOptionsClick = {
@@ -1391,6 +1400,7 @@ private fun SearchResultSongTile(
     isCurrent: Boolean,
     isPlaying: Boolean = false,
     isFavorite: Boolean,
+    isVideo: Boolean = false,
     onClick: () -> Unit,
     onToggleFavorite: () -> Unit,
     onOptionsClick: () -> Unit,
@@ -1451,8 +1461,14 @@ private fun SearchResultSongTile(
 
             Spacer(modifier = Modifier.height(3.dp))
 
+            val typeTag = when {
+                isVideo || (track.musicVideoType != null && track.musicVideoType != "PODCAST") -> "Video"
+                track.isPodcast || track.musicVideoType == "PODCAST" -> "Podcast"
+                else -> "Song"
+            }
+
             Text(
-                text = "Song • ${track.artist}",
+                text = "$typeTag • ${track.artist}",
                 fontSize = 12.5.sp,
                 color = Color(0xFFA0A5B5),
                 maxLines = 1,

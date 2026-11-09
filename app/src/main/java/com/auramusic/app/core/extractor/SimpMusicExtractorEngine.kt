@@ -886,10 +886,11 @@ object SimpMusicExtractorEngine {
                     .build()
 
                 val tracks = mutableListOf<AuraTrack>()
+                val defaultVideoType = if (normFilter == "videos") "MUSIC_VIDEO_TYPE_OMV" else null
                 httpClient.newCall(req).execute().use { resp ->
                     if (resp.isSuccessful) {
                         val bodyStr = resp.body?.string() ?: ""
-                        parseYtmSearchTracks(JSONObject(bodyStr), tracks)
+                        parseYtmSearchTracks(JSONObject(bodyStr), tracks, defaultVideoType)
                     }
                 }
 
@@ -916,7 +917,7 @@ object SimpMusicExtractorEngine {
                     httpClient.newCall(retryReq).execute().use { resp ->
                         if (resp.isSuccessful) {
                             val bodyStr = resp.body?.string() ?: ""
-                            parseYtmSearchTracks(JSONObject(bodyStr), tracks)
+                            parseYtmSearchTracks(JSONObject(bodyStr), tracks, defaultVideoType)
                         }
                     }
                 }
@@ -3647,7 +3648,11 @@ object SimpMusicExtractorEngine {
         return null
     }
 
-    private fun parseYtmSearchTracks(root: JSONObject, out: MutableList<AuraTrack>) {
+    private fun parseYtmSearchTracks(
+        root: JSONObject,
+        out: MutableList<AuraTrack>,
+        defaultMusicVideoType: String? = null
+    ) {
         val tabs = root.optJSONObject("contents")
             ?.optJSONObject("tabbedSearchResultsRenderer")
             ?.optJSONArray("tabs") ?: return
@@ -3773,7 +3778,7 @@ object SimpMusicExtractorEngine {
                             album = album,
                             durationSeconds = durationSec,
                             artworkUrl = rawThumb,
-                            musicVideoType = innerTubeMusicVideoType(item),
+                            musicVideoType = innerTubeMusicVideoType(item) ?: defaultMusicVideoType,
                             viewCount = viewCount
                         )
                     )

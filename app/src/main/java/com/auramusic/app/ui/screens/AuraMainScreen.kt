@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -137,7 +138,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     var miniPlayerArtworkBounds by remember { mutableStateOf<Rect?>(null) }
     var fullPlayerContainerBounds by remember { mutableStateOf<Rect?>(null) }
     var miniPlayerContainerBounds by remember { mutableStateOf<Rect?>(null) }
-    val collapseProgress = remember { Animatable(0f) }
+    val collapseProgress = remember { Animatable(1f) }
+    val isVideoMode by viewModel.isVideoMode.collectAsState()
     val playerChromePushProgress = when {
         isPlayerCollapseTransition || isPlayerExpandTransition -> 1f - collapseProgress.value
         isPlayerExpanded -> 1f
@@ -146,6 +148,15 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val screenScope = rememberCoroutineScope()
     var openedPlaylistFromHome by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
+
+    val expandFullPlayer: () -> Unit = {
+        screenScope.launch {
+            collapseProgress.snapTo(1f)
+            isPlayerCollapseTransition = false
+            isPlayerExpandTransition = true
+            isPlayerExpanded = true
+        }
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -174,14 +185,40 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     LaunchedEffect(
         isPlayerExpandTransition,
         fullPlayerContainerBounds != null,
-        fullPlayerArtworkBounds != null
+        fullPlayerArtworkBounds != null,
+        isVideoMode
     ) {
-        if (isPlayerExpandTransition && fullPlayerContainerBounds != null && fullPlayerArtworkBounds != null) {
-            collapseProgress.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(440, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
-            )
-            isPlayerExpandTransition = false
+        if (isPlayerExpandTransition) {
+            val isReady = if (isVideoMode) {
+                fullPlayerContainerBounds != null
+            } else {
+                fullPlayerContainerBounds != null && fullPlayerArtworkBounds != null
+            }
+            if (isReady) {
+                collapseProgress.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(440, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
+                )
+                isPlayerExpandTransition = false
+            } else if (fullPlayerContainerBounds != null) {
+                // Safety fallback: if artwork bounds measurement is delayed (e.g. video transition or quick tap),
+                // proceed with expansion so the player NEVER deadlocks
+                kotlinx.coroutines.delay(120)
+                if (isPlayerExpandTransition) {
+                    collapseProgress.animateTo(
+                        targetValue = 0f,
+                        animationSpec = tween(440, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
+                    )
+                    isPlayerExpandTransition = false
+                }
+            } else {
+                // Fallback: if container measurement takes longer than 250ms, snap open
+                kotlinx.coroutines.delay(250)
+                if (isPlayerExpandTransition) {
+                    collapseProgress.snapTo(0f)
+                    isPlayerExpandTransition = false
+                }
+            }
         }
     }
 
@@ -267,6 +304,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val isPlaying by AuraPlayerManager.isPlaying.collectAsState()
     val isBuffering by AuraPlayerManager.isBuffering.collectAsState()
     val positionSec by AuraPlayerManager.positionSec.collectAsState()
+    val bufferedSec by AuraPlayerManager.bufferedSec.collectAsState()
     val durationSec by AuraPlayerManager.durationSec.collectAsState()
     val isShuffleEnabled by AuraPlayerManager.isShuffleEnabled.collectAsState()
     val queue by AuraPlayerManager.queue.collectAsState()
@@ -284,7 +322,6 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val rydData by viewModel.rydData.collectAsState()
     val nowPlayingStyle by viewModel.nowPlayingStyle.collectAsState()
-    val isVideoMode by viewModel.isVideoMode.collectAsState()
     val isVideoLoading by viewModel.isVideoLoading.collectAsState()
     val livePerformances by viewModel.livePerformances.collectAsState()
     val isLoadingLivePerformances by viewModel.isLoadingLivePerformances.collectAsState()
@@ -398,7 +435,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         categoryShelves = categoryShelves,
                         isCategoryLoading = isCategoryLoading,
                         onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
-                        onPlayMusicVideo = { track, queue -> viewModel.playHomeMusicVideo(track, queue) },
+                        onPlayMusicVideo = { track, queue ->
+                            viewModel.playHomeMusicVideo(track, queue)
+                            expandFullPlayer()
+                        },
                         onPlayArtist = { artist -> viewModel.playArtist(artist) },
                         onOpenArtist = { artist -> viewModel.openArtistDetail(artist) },
                         onPlayCommunityPlaylist = { playlist -> viewModel.playCommunityPlaylist(playlist) },
@@ -447,6 +487,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             onFilterChange = { viewModel.setSearchFilter(it) },
                             onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
                             onPlaySearchTrack = { track, results -> viewModel.playSearchTrack(track, results) },
+                            onPlayMusicVideo = { track, queue ->
+                                viewModel.playHomeMusicVideo(track, queue)
+                                expandFullPlayer()
+                            },
                             onToggleFavorite = { viewModel.toggleFavorite(it) },
                             onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
                             playlists = playlists,
@@ -529,7 +573,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     currentPlayingId = currentTrack?.videoId,
                     onClose = { viewModel.closeArtistDetail() },
                     onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
-                    onPlayMusicVideo = { track, queue -> viewModel.playHomeMusicVideo(track, queue) },
+                    onPlayMusicVideo = { track, queue ->
+                        viewModel.playHomeMusicVideo(track, queue)
+                        expandFullPlayer()
+                    },
                     onToggleFavorite = { viewModel.toggleFavorite(it) },
                     onOpenArtist = { artistName -> viewModel.openArtistByName(artistName) },
                     onOpenPlaylist = { item ->
@@ -629,6 +676,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     progress = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
+                    bufferProgress = (bufferedSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
                     backgroundColor = palette.primary,
                     previousTrack = previousTrack,
                     nextTrack = nextTrack,
@@ -637,14 +685,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     collapseProgress = collapseProgress.value,
                     onArtworkPositioned = { miniPlayerArtworkBounds = it },
                     onPlayerBoundsPositioned = { miniPlayerContainerBounds = it },
-                    onExpand = {
-                        screenScope.launch {
-                            collapseProgress.snapTo(1f)
-                            isPlayerCollapseTransition = false
-                            isPlayerExpandTransition = true
-                            isPlayerExpanded = true
-                        }
-                    },
+                    onExpand = expandFullPlayer,
                     onTogglePlayPause = { AuraPlayerManager.togglePlayPause() },
                     onSkipPrevious = { AuraPlayerManager.skipToPrevious() },
                     onSkipNext = { AuraPlayerManager.skipToNext() }
@@ -820,6 +861,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     isBuffering = isBuffering,
                     positionSec = positionSec,
                     durationSec = durationSec,
+                    bufferedSec = bufferedSec,
                     palette = palette,
                     lyrics = lyrics,
                     lyricsOffsetMs = lyricsOffsetMs,
@@ -954,6 +996,7 @@ private fun AuraMiniPlayer(
     isPlaying: Boolean,
     isBuffering: Boolean,
     progress: Float,
+    bufferProgress: Float = 0f,
     backgroundColor: Color,
     previousTrack: AuraTrack? = null,
     nextTrack: AuraTrack? = null,
@@ -1240,14 +1283,29 @@ private fun AuraMiniPlayer(
                 }
             }
 
-            LinearProgressIndicator(
-                progress = { progress },
-                color = lighterProgressColor,
-                trackColor = animatedBgColor.copy(alpha = 0.35f),
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(2.dp)
-            )
+                    .background(animatedBgColor.copy(alpha = 0.35f))
+            ) {
+                if (bufferProgress > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(bufferProgress)
+                            .background(Color.White.copy(alpha = 0.38f))
+                    )
+                }
+                if (progress > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(progress)
+                            .background(lighterProgressColor)
+                    )
+                }
+            }
         }
     }
 }
