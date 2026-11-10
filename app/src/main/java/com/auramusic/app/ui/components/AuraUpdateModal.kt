@@ -57,6 +57,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -101,6 +102,7 @@ fun AuraUpdateModal(
     updateState: UpdateState,
     downloadProgress: UpdateDownloadProgress,
     errorMessage: String? = null,
+    modifier: Modifier = Modifier,
     onDismiss: () -> Unit,
     onSnooze: (String) -> Unit,
     onUpdateNow: (AuraReleaseInfo) -> Unit,
@@ -119,7 +121,8 @@ fun AuraUpdateModal(
         exit = slideOutVertically(
             targetOffsetY = { it },
             animationSpec = tween(durationMillis = 300, easing = FluidEasing)
-        ) + fadeOut(animationSpec = tween(200))
+        ) + fadeOut(animationSpec = tween(200)),
+        modifier = modifier.zIndex(100f)
     ) {
         if (release == null) return@AnimatedVisibility
 

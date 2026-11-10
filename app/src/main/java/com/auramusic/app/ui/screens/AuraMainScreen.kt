@@ -1016,6 +1016,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             updateState = updateState,
             downloadProgress = updateDownloadProgress,
             errorMessage = updateErrorMessage,
+            modifier = Modifier.zIndex(100f),
             onDismiss = { viewModel.dismissUpdateModal() },
             onSnooze = { version -> viewModel.snoozeUpdate(version) },
             onUpdateNow = { release -> viewModel.downloadAndInstallUpdate(release) },
