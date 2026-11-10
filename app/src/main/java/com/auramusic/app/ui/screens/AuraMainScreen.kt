@@ -686,7 +686,6 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     progress = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
-                    bufferProgress = (bufferedSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
                     backgroundColor = palette.primary,
                     previousTrack = previousTrack,
                     nextTrack = nextTrack,
@@ -1031,7 +1030,6 @@ private fun AuraMiniPlayer(
     isPlaying: Boolean,
     isBuffering: Boolean,
     progress: Float,
-    bufferProgress: Float = 0f,
     backgroundColor: Color,
     previousTrack: AuraTrack? = null,
     nextTrack: AuraTrack? = null,
@@ -1324,14 +1322,6 @@ private fun AuraMiniPlayer(
                     .height(2.dp)
                     .background(animatedBgColor.copy(alpha = 0.35f))
             ) {
-                if (bufferProgress > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(bufferProgress)
-                            .background(Color.White.copy(alpha = 0.38f))
-                    )
-                }
                 if (progress > 0f) {
                     Box(
                         modifier = Modifier
