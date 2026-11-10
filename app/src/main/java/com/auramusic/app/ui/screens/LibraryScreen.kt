@@ -131,6 +131,9 @@ fun LibraryScreen(
     spotifyImportStatus: String? = null,
     importedPlaylistSuccess: AuraPlaylist? = null,
     initialPlaylistId: String? = null,
+    initialScrollToTrackId: String? = null,
+    onClearScrollTarget: () -> Unit = {},
+    onSetActiveUserPlaylist: (AuraPlaylist) -> Unit = {},
     openedFromHomeScreen: Boolean = false,
     onNavigateToHome: () -> Unit = {},
     onClearInitialPlaylist: () -> Unit = {},
@@ -151,7 +154,11 @@ fun LibraryScreen(
 ) {
     val context = LocalContext.current
     val uniqueRecent = remember(recentlyPlayed) {
-        recentlyPlayed.distinctBy { it.videoId.ifBlank { it.id } }
+        val seen = mutableSetOf<String>()
+        recentlyPlayed.filter { track ->
+            val key = com.auramusic.app.core.recommendations.LocalRecommendationEngine.songIdentityKey(track)
+            seen.add(key)
+        }
     }
     val musicFavorites = remember(favorites) {
         favorites.filterNot {
@@ -702,6 +709,8 @@ fun LibraryScreen(
                 downloadProgressMap = downloadProgressMap,
                 currentPlayingId = currentPlayingId,
                 isPlaying = isPlaying,
+                initialScrollToTrackId = initialScrollToTrackId,
+                onClearScrollTarget = onClearScrollTarget,
                 onBack = {
                     selectedPlaylistId = null
                     onClearInitialPlaylist()
@@ -709,7 +718,10 @@ fun LibraryScreen(
                         onNavigateToHome()
                     }
                 },
-                onPlayTrack = onPlayTrack,
+                onPlayTrack = { track, queue ->
+                    onSetActiveUserPlaylist(displayPlaylist)
+                    onPlayTrack(track, queue)
+                },
                 onToggleFavorite = onToggleFavorite,
                 onDownloadTrack = onDownloadTrack,
                 onRemoveDownload = onRemoveDownload,

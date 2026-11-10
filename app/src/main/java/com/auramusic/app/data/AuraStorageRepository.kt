@@ -11,6 +11,7 @@ import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.ListeningStats
 import com.auramusic.app.domain.model.NowPlayingStyle
+import com.auramusic.app.core.recommendations.LocalRecommendationEngine
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -44,11 +45,13 @@ class AuraStorageRepository(context: Context) {
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val tracksArr = obj.optJSONArray("tracks") ?: JSONArray()
+                val rawDesc = obj.optString("description")
+                val cleanDesc = if (rawDesc.startsWith("Imported from Spotify", ignoreCase = true)) "" else rawDesc
                 list.add(
                     AuraPlaylist(
                         id = obj.optString("id"),
                         name = obj.optString("name"),
-                        description = obj.optString("description"),
+                        description = cleanDesc,
                         coverUrl = obj.optString("coverUrl"),
                         tracks = parseTrackArray(tracksArr.toString()),
                         isPodcast = obj.optBoolean("isPodcast", false)
@@ -183,21 +186,31 @@ class AuraStorageRepository(context: Context) {
     fun recordRecentlyPlayed(track: AuraTrack) {
         val current = loadRecentlyPlayed().toMutableList()
         val targetId = track.videoId.ifBlank { track.id }
-        current.removeAll { it.videoId == track.videoId || (it.videoId.isBlank() && it.id == track.id) || (targetId.isNotBlank() && (it.videoId == targetId || it.id == targetId)) }
+        val targetKey = LocalRecommendationEngine.songIdentityKey(track)
+        current.removeAll {
+            (targetId.isNotBlank() && (it.videoId == targetId || it.id == targetId)) ||
+            it.videoId == track.videoId ||
+            (it.videoId.isBlank() && it.id == track.id) ||
+            (targetKey.isNotBlank() && LocalRecommendationEngine.songIdentityKey(it) == targetKey)
+        }
         current.add(0, track)
-        val capped = current.distinctBy { it.videoId.ifBlank { it.id } }.take(30)
+        val capped = current.distinctBy { LocalRecommendationEngine.songIdentityKey(it) }.take(30)
         prefs.edit().putString("recently_played_tracks", serializeTrackArray(capped).toString()).apply()
     }
 
-    fun removeRecentlyPlayed(videoId: String) {
+    fun removeRecentlyPlayed(videoId: String, trackKey: String? = null) {
         val current = loadRecentlyPlayed().toMutableList()
-        current.removeAll { it.videoId == videoId }
+        current.removeAll {
+            it.videoId == videoId ||
+            it.id == videoId ||
+            (trackKey != null && LocalRecommendationEngine.songIdentityKey(it) == trackKey)
+        }
         prefs.edit().putString("recently_played_tracks", serializeTrackArray(current).toString()).apply()
     }
 
     fun loadRecentlyPlayed(): List<AuraTrack> {
         val raw = prefs.getString("recently_played_tracks", null) ?: return emptyList()
-        return parseTrackArray(raw).distinctBy { it.videoId.ifBlank { it.id } }
+        return parseTrackArray(raw).distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
     }
 
     fun recordRecommendationSignal(track: AuraTrack, signal: String) {

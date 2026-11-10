@@ -3548,7 +3548,7 @@ object SimpMusicExtractorEngine {
         AuraPlaylist(
             id = "spotify_$playlistId",
             name = playlistName,
-            description = "Imported from Spotify • ${resolvedTracks.size} tracks",
+            description = "",
             coverUrl = coverUrl.ifBlank { resolvedTracks.firstOrNull()?.highResArtworkUrl ?: "" },
             tracks = resolvedTracks
         )

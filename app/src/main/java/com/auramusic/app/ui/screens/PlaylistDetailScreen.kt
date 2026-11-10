@@ -4,6 +4,7 @@ import android.content.Intent
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
@@ -15,11 +16,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -60,6 +64,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -69,6 +74,7 @@ import coil.compose.AsyncImage
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.PlaylistDetail
+import com.auramusic.app.ui.components.AudioPlayingIndicator
 import com.auramusic.app.ui.components.LazyColumnScrollbar
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
@@ -80,6 +86,9 @@ fun PlaylistDetailScreen(
     playlistDetail: PlaylistDetail,
     isLoading: Boolean,
     currentPlayingId: String?,
+    isPlaying: Boolean = false,
+    initialScrollToTrackId: String? = null,
+    onClearScrollTarget: () -> Unit = {},
     isSaved: Boolean = false,
     onClose: () -> Unit,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
@@ -95,6 +104,28 @@ fun PlaylistDetailScreen(
 
     val allTracks = remember(playlistDetail.tracks, playlistDetail.title) {
         playlistDetail.tracks.map { it.track.copy(album = playlistDetail.title) }
+    }
+
+    val density = LocalDensity.current
+    val topBarOffsetPx = with(density) {
+        (WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 52.dp).roundToPx()
+    }
+
+    // Auto-scroll to currently playing track when navigated from full-screen now playing
+    androidx.compose.runtime.LaunchedEffect(initialScrollToTrackId, playlistDetail.tracks) {
+        if (!initialScrollToTrackId.isNullOrBlank() && playlistDetail.tracks.isNotEmpty()) {
+            val trackIdx = playlistDetail.tracks.indexOfFirst {
+                it.track.videoId == initialScrollToTrackId || it.track.id == initialScrollToTrackId
+            }
+            if (trackIdx >= 0) {
+                val targetIndex = if (playlistDetail.isPodcast) trackIdx + 1 else trackIdx + 2
+                // Wait for the playlist screen slide-in transition (280ms) to finish and settle first,
+                // then gracefully scroll down to the song location
+                kotlinx.coroutines.delay(340)
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = -topBarOffsetPx)
+                onClearScrollTarget()
+            }
+        }
     }
 
     BackHandler {
@@ -352,7 +383,8 @@ fun PlaylistDetailScreen(
 
                 // Podcast Episodes List
                 items(playlistDetail.tracks, key = { "pod_ep_${it.rank}_${it.track.videoId}" }) { item ->
-                    val isCurrent = item.track.videoId == currentPlayingId
+                    val isCurrent = item.track.videoId == currentPlayingId || (currentPlayingId != null && item.track.id == currentPlayingId)
+                    val isTrackPlaying = isCurrent && isPlaying
 
                     Row(
                         modifier = Modifier
@@ -361,12 +393,13 @@ fun PlaylistDetailScreen(
                             .padding(horizontal = 20.dp, vertical = 9.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Video / Episode Thumbnail
+                        // Video / Episode Thumbnail with Beat Indicator Overlay
                         Box(
                             modifier = Modifier
                                 .size(width = 66.dp, height = 44.dp)
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF1E2028))
+                                .background(Color(0xFF1E2028)),
+                            contentAlignment = Alignment.Center
                         ) {
                             AsyncImage(
                                 model = item.track.artworkUrl.ifBlank { item.track.highResArtworkUrl },
@@ -374,6 +407,19 @@ fun PlaylistDetailScreen(
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier.fillMaxSize()
                             )
+                            if (isTrackPlaying) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.55f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AudioPlayingIndicator(
+                                        modifier = Modifier.fillMaxSize(0.65f),
+                                        color = AuraNeonLime
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.width(14.dp))
@@ -625,7 +671,8 @@ fun PlaylistDetailScreen(
 
                 // 4. Ranked Song List (1..N) with Album Art, Title, Views/Duration, and 3-Dot options (All tracks without artificial cap)
                 items(playlistDetail.tracks, key = { "pl_song_${it.rank}_${it.track.videoId}" }) { item ->
-                    val isCurrent = item.track.videoId == currentPlayingId
+                    val isCurrent = item.track.videoId == currentPlayingId || (currentPlayingId != null && item.track.id == currentPlayingId)
+                    val isTrackPlaying = isCurrent && isPlaying
 
                     Row(
                         modifier = Modifier
@@ -644,15 +691,33 @@ fun PlaylistDetailScreen(
                             textAlign = TextAlign.Start
                         )
 
-                        // Album Art
-                        AsyncImage(
-                            model = item.track.artworkUrl.ifBlank { item.track.highResArtworkUrl },
-                            contentDescription = item.track.title,
-                            contentScale = ContentScale.Crop,
+                        // Album Art with Beat Indicator Overlay
+                        Box(
                             modifier = Modifier
                                 .size(46.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                        )
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = item.track.artworkUrl.ifBlank { item.track.highResArtworkUrl },
+                                contentDescription = item.track.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (isTrackPlaying) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color.Black.copy(alpha = 0.55f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    AudioPlayingIndicator(
+                                        modifier = Modifier.fillMaxSize(0.65f),
+                                        color = AuraNeonLime
+                                    )
+                                }
+                            }
+                        }
 
                         Spacer(modifier = Modifier.width(12.dp))
 
@@ -719,6 +784,31 @@ fun PlaylistDetailScreen(
             modifier = Modifier.align(Alignment.CenterEnd),
             onlyWhenTrackScrolling = playlistDetail.isPodcast
         )
+
+        // Pinned floating back button so it's always accessible when scrolled down into tracks
+        AnimatedVisibility(
+            visible = listState.firstVisibleItemIndex > 0,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(200)),
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .statusBarsPadding()
+                .padding(start = 12.dp, top = 6.dp)
+        ) {
+            IconButton(
+                onClick = onClose,
+                modifier = Modifier
+                    .size(40.dp)
+                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                    contentDescription = "Back",
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+        }
 
         // 5. Options Modal Bottom Sheet
         selectedModalTrack?.let { track ->

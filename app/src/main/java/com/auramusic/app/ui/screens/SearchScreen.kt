@@ -383,7 +383,7 @@ private fun SearchExploreView(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // White Search Bar matching Image 1
+                // Gray Search Bar matching active search bar design
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -391,7 +391,7 @@ private fun SearchExploreView(
                         .clip(RoundedCornerShape(8.dp))
                         .clickable(onClick = onSearchFieldClick),
                     shape = RoundedCornerShape(8.dp),
-                    color = Color.White
+                    color = Color(0xFF262832)
                 ) {
                     Row(
                         modifier = Modifier
@@ -402,17 +402,17 @@ private fun SearchExploreView(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = "Search",
-                            tint = Color(0xFF191414),
-                            modifier = Modifier.size(24.dp)
+                            tint = Color(0xFFB0B4C0),
+                            modifier = Modifier.size(22.dp)
                         )
 
                         Spacer(modifier = Modifier.width(10.dp))
 
                         Text(
                             text = "What do you want to listen to?",
-                            fontSize = 14.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF555555)
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF8E929E)
                         )
                     }
                 }

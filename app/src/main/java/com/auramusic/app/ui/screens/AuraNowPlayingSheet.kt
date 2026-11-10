@@ -244,6 +244,7 @@ fun AuraNowPlayingSheet(
     onLoadLivePerformances: () -> Unit = {},
     onPlayLivePerformance: (AuraTrack) -> Unit = {},
     onOpenArtist: (String) -> Unit = {},
+    onOpenCurrentPlaylist: () -> Unit = {},
     onPlayQueueTrack: (AuraTrack) -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit,
     onToggleRomanized: () -> Unit,
@@ -404,10 +405,8 @@ fun AuraNowPlayingSheet(
                             onToggleFavorite = onToggleFavorite,
                             onToggleShuffle = onToggleShuffle,
                             onToggleVideoMode = onToggleVideoMode,
-                            onOpenArtist = {
-                                onCollapse()
-                                onOpenArtist(track.artist)
-                            },
+                            onOpenArtist = { onOpenArtist(track.artist) },
+                            onOpenCurrentPlaylist = onOpenCurrentPlaylist,
                             onOptionsClick = { isOptionsModalVisible = true },
                             onOpenLyrics = openLyrics,
                             onAdjustLyricsOffset = onAdjustLyricsOffset,
@@ -445,10 +444,8 @@ fun AuraNowPlayingSheet(
                             onToggleFavorite = onToggleFavorite,
                             onToggleShuffle = onToggleShuffle,
                             onToggleVideoMode = onToggleVideoMode,
-                            onOpenArtist = {
-                                onCollapse()
-                                onOpenArtist(track.artist)
-                            },
+                            onOpenArtist = { onOpenArtist(track.artist) },
+                            onOpenCurrentPlaylist = onOpenCurrentPlaylist,
                             onOptionsClick = { isOptionsModalVisible = true },
                             onOpenLyrics = openLyrics,
                             onAdjustLyricsOffset = onAdjustLyricsOffset,
@@ -1087,9 +1084,6 @@ fun AuraVideoPlayerSurface(
     modifier: Modifier = Modifier,
     track: AuraTrack,
     isLoading: Boolean,
-    positionSec: Float = 0f,
-    durationSec: Float = 1f,
-    bufferedSec: Float = 0f,
     onSwitchToAudio: () -> Unit
 ) {
     Box(
@@ -1164,38 +1158,6 @@ fun AuraVideoPlayerSurface(
                         color = Color.White.copy(alpha = 0.9f),
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-        }
-
-        // Slim edge timeline at the bottom of the video surface (shows buffer bar and played progress)
-        if (!isLoading) {
-            val progressFrac = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f)
-            val bufferFrac = (bufferedSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .height(2.5.dp)
-                    .background(Color.White.copy(alpha = 0.20f))
-            ) {
-                // Buffer bar (pre-filled, lighter line indicating downloaded video in temporary memory)
-                if (bufferFrac > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(bufferFrac)
-                            .background(Color.White.copy(alpha = 0.45f))
-                    )
-                }
-                // Played progress bar
-                if (progressFrac > 0f) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxHeight()
-                            .fillMaxWidth(progressFrac)
-                            .background(Color.White)
                     )
                 }
             }
@@ -1734,6 +1696,7 @@ private fun LiquidGlassPlayerView(
     onToggleShuffle: () -> Unit,
     onToggleVideoMode: () -> Unit = {},
     onOpenArtist: () -> Unit,
+    onOpenCurrentPlaylist: () -> Unit = {},
     onOptionsClick: () -> Unit,
     onOpenLyrics: () -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit = {},
@@ -1810,6 +1773,8 @@ private fun LiquidGlassPlayerView(
                     modifier = Modifier
                         .weight(1f)
                         .padding(horizontal = 8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = onOpenCurrentPlaylist)
                 ) {
                     val cleanAlbum = track.album.trim()
                     val isValidSource = cleanAlbum.isNotBlank() &&
@@ -1868,9 +1833,6 @@ private fun LiquidGlassPlayerView(
                             .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
                         track = track,
                         isLoading = isVideoLoading,
-                        positionSec = positionSec,
-                        durationSec = durationSec,
-                        bufferedSec = bufferedSec,
                         onSwitchToAudio = onToggleVideoMode
                     )
                 }
@@ -1942,7 +1904,10 @@ private fun LiquidGlassPlayerView(
                                 color = Color.White,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
-                                letterSpacing = 0.5.sp
+                                letterSpacing = 0.5.sp,
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .clickable(onClick = onOpenCurrentPlaylist)
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
@@ -2240,6 +2205,7 @@ private fun SpotifyEncorePlayerView(
     onToggleShuffle: () -> Unit,
     onToggleVideoMode: () -> Unit = {},
     onOpenArtist: () -> Unit,
+    onOpenCurrentPlaylist: () -> Unit = {},
     onOptionsClick: () -> Unit,
     onOpenLyrics: () -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit = {},
@@ -2326,7 +2292,11 @@ private fun SpotifyEncorePlayerView(
                     }
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(horizontal = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable(onClick = onOpenCurrentPlaylist)
                     ) {
                         val cleanAlbum = track.album.trim()
                         val isValidSource = cleanAlbum.isNotBlank() &&
@@ -2411,9 +2381,6 @@ private fun SpotifyEncorePlayerView(
                             modifier = Modifier.fillMaxSize(),
                             track = track,
                             isLoading = isVideoLoading,
-                            positionSec = positionSec,
-                            durationSec = durationSec,
-                            bufferedSec = bufferedSec,
                             onSwitchToAudio = onToggleVideoMode
                         )
                     }
@@ -2457,7 +2424,10 @@ private fun SpotifyEncorePlayerView(
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .clickable(onClick = onOpenCurrentPlaylist)
                     )
                     Spacer(modifier = Modifier.height(3.dp))
                     Text(

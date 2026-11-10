@@ -60,7 +60,7 @@ jobs:
         run: |
           RAW_VERSION=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | cut -d'"' -f2 || true)
           if [ -z "$RAW_VERSION" ]; then
-            RAW_VERSION="1.4.7"
+            RAW_VERSION="1.5.1"
           fi
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
             TAG_VERSION="${GITHUB_REF#refs/tags/}"

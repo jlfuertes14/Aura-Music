@@ -149,6 +149,15 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedPlaylistDetail = MutableStateFlow<PlaylistDetail?>(null)
     val selectedPlaylistDetail: StateFlow<PlaylistDetail?> = _selectedPlaylistDetail.asStateFlow()
 
+    private val _activePlayingPlaylistDetail = MutableStateFlow<PlaylistDetail?>(null)
+    val activePlayingPlaylistDetail: StateFlow<PlaylistDetail?> = _activePlayingPlaylistDetail.asStateFlow()
+
+    private val _activePlayingUserPlaylist = MutableStateFlow<AuraPlaylist?>(null)
+    val activePlayingUserPlaylist: StateFlow<AuraPlaylist?> = _activePlayingUserPlaylist.asStateFlow()
+
+    private val _playlistScrollTargetTrackId = MutableStateFlow<String?>(null)
+    val playlistScrollTargetTrackId: StateFlow<String?> = _playlistScrollTargetTrackId.asStateFlow()
+
     private val _isPlaylistLoading = MutableStateFlow(false)
     val isPlaylistLoading: StateFlow<Boolean> = _isPlaylistLoading.asStateFlow()
 
@@ -341,7 +350,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 _listeningStats.value = storage.recordTrackPlay(track)
                 storage.recordRecommendationSignal(track, "play")
-                _recentlyPlayed.value = storage.loadRecentlyPlayed()
+                val updatedRecent = storage.loadRecentlyPlayed()
+                _recentlyPlayed.value = updatedRecent
+                if (_activeCategory.value == "All") {
+                    _visibleRecentlyPlayed.value = updatedRecent
+                }
                 applyLocalRecommendations()
                 _lyricsOffsetMs.value = storage.getLyricsOffsetMs(track.videoId)
                 _nowPlayingVideoInfo.value = null
@@ -524,7 +537,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playCommunityPlaylist(playlist: YtmCommunityPlaylist) {
         viewModelScope.launch {
-            val tracks = SimpMusicExtractorEngine.fetchPlaylistTracks(playlist.id)
+            _isPlaylistLoading.value = true
+            val fullDetail = SimpMusicExtractorEngine.fetchPlaylistDetail(playlist)
+            _isPlaylistLoading.value = false
+            _activePlayingPlaylistDetail.value = fullDetail
+            _activePlayingUserPlaylist.value = null
+            val taggedTracks = fullDetail.tracks.map { it.track.copy(album = fullDetail.title) }
+            val tracks = if (taggedTracks.isNotEmpty()) taggedTracks else SimpMusicExtractorEngine.fetchPlaylistTracks(playlist.id).map { it.copy(album = playlist.title) }
             if (tracks.isNotEmpty()) {
                 playTrack(tracks.first(), tracks)
             }
@@ -726,6 +745,87 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closePlaylistDetail() {
         _selectedPlaylistDetail.value = null
+    }
+
+    fun setActivePlaylistDetail(detail: PlaylistDetail) {
+        _activePlayingPlaylistDetail.value = detail
+        _activePlayingUserPlaylist.value = null
+    }
+
+    fun setActiveUserPlaylist(playlist: AuraPlaylist) {
+        _activePlayingUserPlaylist.value = playlist
+        _activePlayingPlaylistDetail.value = null
+    }
+
+    fun clearPlaylistScrollTarget() {
+        _playlistScrollTargetTrackId.value = null
+    }
+
+    fun openCurrentPlaylistScreen(): Boolean {
+        val track = AuraPlayerManager.currentTrack.value ?: return false
+        val targetTrackId = track.videoId.ifBlank { track.id }
+        _playlistScrollTargetTrackId.value = targetTrackId
+
+        // 1. Check active Community / YTM PlaylistDetail
+        val activeCommunity = _activePlayingPlaylistDetail.value
+        if (activeCommunity != null &&
+            (activeCommunity.title.equals(track.album, ignoreCase = true) ||
+             activeCommunity.tracks.any { it.track.videoId == track.videoId || it.track.id == track.id })) {
+            _selectedPlaylistDetail.value = activeCommunity
+            return true
+        }
+
+        // 2. Check active UserPlaylist
+        val activeUser = _activePlayingUserPlaylist.value
+        if (activeUser != null &&
+            (activeUser.name.equals(track.album, ignoreCase = true) ||
+             activeUser.tracks.any { it.videoId == track.videoId || it.id == track.id })) {
+            _selectedUserPlaylist.value = activeUser
+            return true
+        }
+
+        // 3. Search saved user playlists
+        val matchingUserPl = _playlists.value.firstOrNull { pl ->
+            pl.name.equals(track.album, ignoreCase = true) ||
+            pl.tracks.any { it.videoId == track.videoId || (track.id.isNotBlank() && it.id == track.id) }
+        }
+        if (matchingUserPl != null) {
+            _activePlayingUserPlaylist.value = matchingUserPl
+            _selectedUserPlaylist.value = matchingUserPl
+            return true
+        }
+
+        // 4. Check currently selected PlaylistDetail if available
+        val currentDetail = _selectedPlaylistDetail.value
+        if (currentDetail != null &&
+            (currentDetail.title.equals(track.album, ignoreCase = true) ||
+             currentDetail.tracks.any { it.track.videoId == track.videoId || it.track.id == track.id })) {
+            _activePlayingPlaylistDetail.value = currentDetail
+            return true
+        }
+
+        // 5. If album represents a playlist/album name, load it
+        val cleanAlbum = track.album.trim()
+        if (cleanAlbum.isNotBlank() &&
+            !cleanAlbum.equals("YouTube Music", ignoreCase = true) &&
+            !cleanAlbum.matches(Regex("^\\d+:\\d{2}(:\\d{2})?$")) &&
+            !cleanAlbum.endsWith("views", ignoreCase = true)
+        ) {
+            val matchingCommunity = _communityPlaylists.value.firstOrNull {
+                it.title.equals(cleanAlbum, ignoreCase = true) ||
+                it.title.contains(cleanAlbum, ignoreCase = true) ||
+                cleanAlbum.contains(it.title, ignoreCase = true)
+            }
+            if (matchingCommunity != null) {
+                openPlaylistDetail(matchingCommunity)
+                return true
+            }
+
+            openAlbum(track)
+            return true
+        }
+
+        return false
     }
 
     fun playArtist(artist: YtmTopArtist) {
@@ -949,8 +1049,12 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 val artistLower = artist.name.lowercase().trim()
                 candidateArtists.any { it.contains(artistLower) || artistLower.contains(it) }
             }
-            val matchingRecent = if (isAll) recent else if (tracks.isEmpty()) emptyList() else recent.filter {
-                LocalRecommendationEngine.categoryMatches(it, candidateArtists, candidateGenres)
+            val matchingRecent = if (isAll) {
+                recent.distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
+            } else if (tracks.isEmpty()) emptyList() else {
+                recent.filter {
+                    LocalRecommendationEngine.categoryMatches(it, candidateArtists, candidateGenres)
+                }.distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
             }
             val matchingPlaylists = if (isAll) allPlaylists else if (tracks.isEmpty()) emptyList() else allPlaylists.filter { playlist ->
                 playlist.tracks.any { LocalRecommendationEngine.categoryMatches(it, candidateArtists, candidateGenres) }
@@ -1054,8 +1158,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun removeFromRecentlyPlayed(track: AuraTrack) {
-        storage.removeRecentlyPlayed(track.videoId)
-        _recentlyPlayed.value = storage.loadRecentlyPlayed()
+        val trackKey = LocalRecommendationEngine.songIdentityKey(track)
+        storage.removeRecentlyPlayed(track.videoId, trackKey)
+        val updatedRecent = storage.loadRecentlyPlayed()
+        _recentlyPlayed.value = updatedRecent
+        if (_activeCategory.value == "All") {
+            _visibleRecentlyPlayed.value = updatedRecent
+        }
+        applyLocalRecommendations()
         Toast.makeText(getApplication(), "Removed '${track.title}' from recently played", Toast.LENGTH_SHORT).show()
     }
 
@@ -1078,6 +1188,16 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playTrack(track: AuraTrack, queue: List<AuraTrack>? = null) {
+        val currentCommunity = _selectedPlaylistDetail.value
+        if (currentCommunity != null && currentCommunity.tracks.any { it.track.videoId == track.videoId || it.track.id == track.id }) {
+            _activePlayingPlaylistDetail.value = currentCommunity
+            _activePlayingUserPlaylist.value = null
+        }
+        val currentUserPl = _selectedUserPlaylist.value
+        if (currentUserPl != null && currentUserPl.tracks.any { it.videoId == track.videoId || it.id == track.id }) {
+            _activePlayingUserPlaylist.value = currentUserPl
+            _activePlayingPlaylistDetail.value = null
+        }
         val isSameCurrentTrack = AuraPlayerManager.currentTrack.value == track
         AuraPlayerManager.playTrack(track, queue)
         if (isSameCurrentTrack) _listeningStats.value = storage.recordTrackPlay(track)

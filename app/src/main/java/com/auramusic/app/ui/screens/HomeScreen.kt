@@ -257,7 +257,13 @@ fun HomeScreen(
         }
     }
     val visibleTopArtists = topArtists
-    val visibleRecentlyPlayed = recentlyPlayed
+    val visibleRecentlyPlayed = remember(recentlyPlayed) {
+        val seen = mutableSetOf<String>()
+        recentlyPlayed.filter { track ->
+            val key = com.auramusic.app.core.recommendations.LocalRecommendationEngine.songIdentityKey(track)
+            seen.add(key)
+        }
+    }
     val visibleUserPlaylists = userPlaylists
     val configuration = LocalConfiguration.current
     val screenWidth = configuration.screenWidthDp.dp
@@ -716,7 +722,7 @@ fun HomeScreen(
                         contentPadding = PaddingValues(horizontal = 20.dp),
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        items(visibleRecentlyPlayed.take(15), key = { "recent_${it.videoId}" }) { track ->
+                        items(visibleRecentlyPlayed.take(15), key = { "recent_${it.videoId.ifBlank { it.id }}_${com.auramusic.app.core.recommendations.LocalRecommendationEngine.songIdentityKey(it)}" }) { track ->
                             val isTrackCurrent = currentPlayingId == track.videoId
                             Column(
                                 modifier = Modifier

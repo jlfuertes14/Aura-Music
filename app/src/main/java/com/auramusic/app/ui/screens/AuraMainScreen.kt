@@ -246,6 +246,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val areCommentsLoading by viewModel.areCommentsLoading.collectAsState()
     val commentsError by viewModel.commentsError.collectAsState()
     val selectedPlaylistDetail by viewModel.selectedPlaylistDetail.collectAsState()
+    val playlistScrollTargetTrackId by viewModel.playlistScrollTargetTrackId.collectAsState()
 
     BackHandler(enabled = !isPlayerExpanded && selectedArtistDetail != null) {
         viewModel.closeArtistDetail()
@@ -519,6 +520,9 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             spotifyImportStatus = spotifyImportStatus,
                             importedPlaylistSuccess = importedPlaylistSuccess,
                             initialPlaylistId = selectedUserPlaylist?.id,
+                            initialScrollToTrackId = playlistScrollTargetTrackId,
+                            onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
+                            onSetActiveUserPlaylist = { viewModel.setActiveUserPlaylist(it) },
                             openedFromHomeScreen = openedPlaylistFromHome,
                             onNavigateToHome = {
                                 openedPlaylistFromHome = false
@@ -614,9 +618,15 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     playlistDetail = detail,
                     isLoading = isPlaylistLoading,
                     currentPlayingId = currentTrack?.videoId,
+                    isPlaying = isPlaying,
+                    initialScrollToTrackId = playlistScrollTargetTrackId,
+                    onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
                     isSaved = viewModel.isPlaylistSaved(detail.id),
                     onClose = { viewModel.closePlaylistDetail() },
-                    onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
+                    onPlayTrack = { track, queue ->
+                        viewModel.setActivePlaylistDetail(detail)
+                        viewModel.playTrack(track, queue)
+                    },
                     onToggleFavorite = { viewModel.toggleFavorite(it) },
                     onToggleSave = { viewModel.toggleSavePlaylistDetail(detail) }
                 )
@@ -905,8 +915,32 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         viewModel.setNowPlayingStyle(styles[next])
                     },
                     onOpenArtist = { artistName ->
+                        val isArtistAlreadyOpen = selectedArtistDetail != null
                         collapseFullPlayer()
-                        viewModel.openArtistByName(artistName, activeTrack.title, activeTrack.highResArtworkUrl)
+                        if (isArtistAlreadyOpen) {
+                            viewModel.openArtistByName(artistName, activeTrack.title, activeTrack.highResArtworkUrl)
+                        } else {
+                            screenScope.launch {
+                                kotlinx.coroutines.delay(260)
+                                viewModel.openArtistByName(artistName, activeTrack.title, activeTrack.highResArtworkUrl)
+                            }
+                        }
+                    },
+                    onOpenCurrentPlaylist = {
+                        val isAlreadyOpen = selectedPlaylistDetail != null || (selectedTab == 2 && selectedUserPlaylist != null)
+                        collapseFullPlayer()
+                        screenScope.launch {
+                            if (!isAlreadyOpen) {
+                                kotlinx.coroutines.delay(260)
+                                val opened = viewModel.openCurrentPlaylistScreen()
+                                if (opened && viewModel.selectedUserPlaylist.value != null) {
+                                    selectedTab = 2
+                                }
+                            } else {
+                                kotlinx.coroutines.delay(100)
+                                viewModel.openCurrentPlaylistScreen()
+                            }
+                        }
                     },
                     isDownloaded = downloads.any { it.videoId == activeTrack.videoId && it.isDownloaded },
                     isDownloading = downloadingIds.contains(activeTrack.videoId),

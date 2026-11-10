@@ -130,6 +130,7 @@ import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
 import java.io.File
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -161,6 +162,8 @@ fun PlaylistDetailsScreen(
     onUpdateTitle: (newTitle: String) -> Unit,
     onDeletePlaylist: () -> Unit,
     playlists: List<AuraPlaylist> = emptyList(),
+    initialScrollToTrackId: String? = null,
+    onClearScrollTarget: () -> Unit = {},
     onAddTrackToPlaylist: (playlistId: String, track: AuraTrack) -> Unit = { _, _ -> },
     onCreatePlaylist: (name: String, description: String, coverUrl: String) -> Unit = { _, _, _ -> },
     onOpenArtist: (String) -> Unit = {}
@@ -245,7 +248,32 @@ fun PlaylistDetailsScreen(
         }
     }
 
+    val density = LocalDensity.current
+    val statusBarTopPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    var pinnedHeaderBottomY by remember { mutableFloatStateOf(0f) }
+    var belowCoverTitleBottomY by remember { mutableFloatStateOf(Float.MAX_VALUE) }
+
     val listState = rememberLazyListState()
+
+    // Auto-scroll to currently playing track when navigated from full-screen now playing
+    LaunchedEffect(initialScrollToTrackId, processedTracks) {
+        if (!initialScrollToTrackId.isNullOrBlank() && processedTracks.isNotEmpty()) {
+            val trackIdx = processedTracks.indexOfFirst {
+                it.videoId == initialScrollToTrackId || it.id == initialScrollToTrackId
+            }
+            if (trackIdx >= 0) {
+                // Header is item 0, tracks start at index 1
+                val targetIndex = trackIdx + 1
+                val pinnedHeaderOffsetPx = with(density) { (statusBarTopPadding + 48.dp).roundToPx() }
+                val offsetPx = if (pinnedHeaderBottomY > 0f) pinnedHeaderBottomY.roundToInt() else pinnedHeaderOffsetPx
+                // Wait for the playlist screen slide-in transition (280ms) to finish and settle first,
+                // then gracefully scroll down to the song location
+                kotlinx.coroutines.delay(340)
+                listState.animateScrollToItem(index = targetIndex, scrollOffset = -offsetPx)
+                onClearScrollTarget()
+            }
+        }
+    }
 
     var isSearchRevealed by remember { mutableStateOf(false) }
 
@@ -291,9 +319,6 @@ fun PlaylistDetailsScreen(
         }
     }
 
-    var pinnedHeaderBottomY by remember { mutableFloatStateOf(0f) }
-    var belowCoverTitleBottomY by remember { mutableFloatStateOf(Float.MAX_VALUE) }
-
     val headerBackgroundAlpha by remember {
         derivedStateOf {
             if (listState.firstVisibleItemIndex > 0) {
@@ -332,8 +357,6 @@ fun PlaylistDetailsScreen(
             )
         )
     }
-
-    val statusBarTopPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
 
     Box(
         modifier = Modifier
@@ -398,14 +421,14 @@ fun PlaylistDetailsScreen(
                                     .weight(1f)
                                     .height(38.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.15f))
+                                    .background(Color(0xFF404352))
                                     .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Search,
                                     contentDescription = null,
-                                    tint = Color.White.copy(alpha = 0.70f),
+                                    tint = Color(0xFFB0B4C0),
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -414,12 +437,13 @@ fun PlaylistDetailsScreen(
                                     onValueChange = { searchInPlaylistQuery = it },
                                     singleLine = true,
                                     textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
+                                    cursorBrush = SolidColor(AuraPlayGreen),
                                     modifier = Modifier.weight(1f),
                                     decorationBox = { inner ->
                                         if (searchInPlaylistQuery.isEmpty()) {
                                             Text(
                                                 text = "Find in playlist",
-                                                color = Color.White.copy(alpha = 0.60f),
+                                                color = Color(0xFFB0B4C0),
                                                 fontSize = 13.sp
                                             )
                                         }
@@ -434,7 +458,7 @@ fun PlaylistDetailsScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
                                             contentDescription = "Clear",
-                                            tint = Color.White.copy(alpha = 0.70f),
+                                            tint = Color(0xFFB0B4C0),
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -445,7 +469,7 @@ fun PlaylistDetailsScreen(
 
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = Color.White.copy(alpha = 0.15f),
+                                color = Color(0xFF404352),
                                 modifier = Modifier
                                     .height(38.dp)
                                     .clip(RoundedCornerShape(8.dp))
@@ -471,7 +495,7 @@ fun PlaylistDetailsScreen(
                                 ) {
                                     Text(
                                         text = sortOption.displayName,
-                                        color = Color.White,
+                                        color = Color(0xFFD0D4E0),
                                         fontSize = 12.5.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -533,44 +557,17 @@ fun PlaylistDetailsScreen(
                         }
                     )
 
-                    // Description if present
-                    if (playlist.description.isNotBlank()) {
+                    // Description if present (filter out any legacy "Imported from Spotify" description)
+                    val cleanDesc = playlist.description.replace(Regex("""(?i)^Imported from Spotify.*"""), "").trim()
+                    if (cleanDesc.isNotBlank()) {
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = playlist.description,
+                            text = cleanDesc,
                             color = Color.White.copy(alpha = 0.70f),
                             fontSize = 12.5.sp,
                             lineHeight = 17.sp,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
-                        )
-                    }
-
-                    // Creator Row
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 8.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(24.dp)
-                                .clip(CircleShape)
-                                .background(AuraPlayGreen),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = playlist.name.firstOrNull()?.uppercase() ?: "A",
-                                color = Color.Black,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = if (playlist.id.startsWith("spotify")) "Spotify" else "Aura Music",
-                            color = Color.White,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
                         )
                     }
 
@@ -715,9 +712,11 @@ fun PlaylistDetailsScreen(
                 items = processedTracks,
                 key = { index, track -> "playlist_track_${index}_${track.videoId.ifBlank { track.id }}" }
             ) { _, track ->
+                val isCurrent = currentPlayingId == track.videoId || (currentPlayingId != null && currentPlayingId == track.id)
                 SpotifyTrackRowItem(
                     track = track,
-                    isCurrent = currentPlayingId == track.videoId,
+                    isCurrent = isCurrent,
+                    isPlaying = isPlaying,
                     isFavorite = favorites.any { it.videoId == track.videoId },
                     isDownloaded = downloads.any { it.videoId == track.videoId && it.isDownloaded },
                     isDownloading = downloadingIds.contains(track.videoId),
