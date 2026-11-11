@@ -328,6 +328,8 @@ class AuraStorageRepository(context: Context) {
                 put("isDownloaded", t.isDownloaded)
                 put("localFilePath", t.localFilePath ?: "")
                 put("isPodcast", t.isPodcast)
+                t.musicVideoType?.let { put("musicVideoType", it) }
+                t.viewCount?.let { put("viewCount", it) }
             })
         }
         return arr
@@ -356,7 +358,9 @@ class AuraStorageRepository(context: Context) {
                         genre = o.optString("genre", "Pop"),
                         isDownloaded = o.optBoolean("isDownloaded", false),
                         localFilePath = o.optString("localFilePath").takeIf { it.isNotBlank() },
-                        isPodcast = o.optBoolean("isPodcast", false)
+                        isPodcast = o.optBoolean("isPodcast", false),
+                        musicVideoType = o.optString("musicVideoType").takeIf { it.isNotBlank() },
+                        viewCount = if (o.has("viewCount")) o.optLong("viewCount") else null
                     )
                 )
             }
@@ -465,5 +469,42 @@ class AuraStorageRepository(context: Context) {
     fun loadChartCountry(): String = prefs.getString("setting_chart_country", "US") ?: "US"
     fun saveChartCountry(code: String) {
         prefs.edit().putString("setting_chart_country", code).apply()
+    }
+
+    // --- Explore Category Fan-Out Covers Cache ---
+    fun loadExploreCoverCache(): Map<String, List<String>> {
+        val raw = prefs.getString("explore_cover_cache_json", null) ?: return emptyMap()
+        return try {
+            val obj = JSONObject(raw)
+            val map = mutableMapOf<String, List<String>>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                val arr = obj.optJSONArray(key) ?: continue
+                val urls = mutableListOf<String>()
+                for (i in 0 until arr.length()) {
+                    val u = arr.optString(i)
+                    if (!u.isNullOrBlank()) urls.add(u)
+                }
+                if (urls.isNotEmpty()) {
+                    map[key] = urls
+                }
+            }
+            map
+        } catch (_: Exception) {
+            emptyMap()
+        }
+    }
+
+    fun saveExploreCoverCache(cache: Map<String, List<String>>) {
+        try {
+            val obj = JSONObject()
+            cache.forEach { (category, urls) ->
+                val arr = JSONArray()
+                urls.forEach { arr.put(it) }
+                obj.put(category, arr)
+            }
+            prefs.edit().putString("explore_cover_cache_json", obj.toString()).apply()
+        } catch (_: Exception) {}
     }
 }

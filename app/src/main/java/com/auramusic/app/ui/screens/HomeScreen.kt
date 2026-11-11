@@ -2252,7 +2252,7 @@ fun formatDuration(seconds: Int): String {
 }
 
 @Composable
-private fun MoodCarouselShelf(
+internal fun MoodCarouselShelf(
     shelf: YtmMoodShelf,
     pageWidth: Dp,
     currentPlayingId: String?,

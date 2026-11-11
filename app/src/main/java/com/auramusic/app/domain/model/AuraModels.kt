@@ -269,6 +269,27 @@ data class YtmMoodShelf(
     val items: List<YtmMoodItem> = emptyList()
 )
 
+data class YtmMoodCategoryItem(
+    val title: String,
+    val params: String = "",
+    val stripeColor: Long = 0xFF1DB954,
+    val browseId: String = "FEmusic_moods_and_genres_category"
+)
+
+data class YtmMoodCategorySection(
+    val title: String,
+    val items: List<YtmMoodCategoryItem> = emptyList()
+)
+
+data class CatalogDetail(
+    val title: String,
+    val params: String = "",
+    val browseId: String = "FEmusic_moods_and_genres_category",
+    val shelves: List<YtmMoodShelf> = emptyList(),
+    val isLoading: Boolean = false,
+    val error: String? = null
+)
+
 data class MoodBrowseResult(
     val backgroundUrl: String?,
     val tracks: List<AuraTrack>,

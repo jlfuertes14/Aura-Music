@@ -27,9 +27,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -204,7 +206,7 @@ private fun formatLyricsOffsetDisplay(offsetMs: Int): String {
     return "$sign$s.${tenths}s"
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AuraNowPlayingSheet(
     track: AuraTrack,
@@ -386,6 +388,7 @@ fun AuraNowPlayingSheet(
                             palette = palette,
                             lyrics = lyrics,
                             lyricsOffsetMs = lyricsOffsetMs,
+                            showRomanized = showRomanized,
                             isFavorite = isFavorite,
                             isShuffleEnabled = isShuffleEnabled,
                             artistDetail = artistDetail,
@@ -525,7 +528,7 @@ fun AuraNowPlayingSheet(
                 FullScreenSongLyricsView(
                     track = track,
                     lyrics = lyrics,
-                    positionSec = positionSec + (lyricsOffsetMs / 1000f),
+                    positionSec = positionSec,
                     durationSec = durationSec,
                     bufferedSec = bufferedSec,
                     isPlaying = isPlaying,
@@ -606,13 +609,40 @@ fun AuraNowPlayingSheet(
                             } else {
                                 val current = lines.getOrNull(activeIdx)
                                 if (current != null) {
-                                    Text(
-                                        text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.text),
-                                        fontSize = 18.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        lineHeight = 26.sp
-                                    )
+                                    if (current.words.isNotEmpty()) {
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            current.words.forEach { w ->
+                                                val wordReached = effectiveSec >= w.startTimeSec
+                                                Text(
+                                                    text = SimpMusicLyricsRepository.unescapeLyricsHtml(w.word),
+                                                    fontSize = 18.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (wordReached) Color.White else Color.White.copy(alpha = 0.40f),
+                                                    lineHeight = 26.sp
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Text(
+                                            text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.text),
+                                            fontSize = 18.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            lineHeight = 26.sp
+                                        )
+                                    }
+                                    if (showRomanized && !current.romanizedText.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.romanizedText),
+                                            fontSize = 12.sp,
+                                            color = Color.White.copy(alpha = 0.75f),
+                                            lineHeight = 16.sp
+                                        )
+                                    }
                                 }
                                 val next1 = lines.getOrNull(activeIdx + 1)
                                 if (next1 != null) {
@@ -2175,6 +2205,7 @@ private fun LiquidGlassPlayerView(
  * - Connected Audio / Fidelity indicator
  * - Synced lyrics card preview with expand button directly below controls
  */
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SpotifyEncorePlayerView(
     track: AuraTrack,
@@ -2187,6 +2218,7 @@ private fun SpotifyEncorePlayerView(
     palette: AuraPalette,
     lyrics: LyricsData?,
     lyricsOffsetMs: Int,
+    showRomanized: Boolean = false,
     isFavorite: Boolean,
     isShuffleEnabled: Boolean,
     artistDetail: ArtistDetail? = null,
@@ -2656,6 +2688,7 @@ private fun SpotifyEncorePlayerView(
                                 exit = fadeOut(tween(140, easing = LyricsEaseInCubic)) + shrinkHorizontally(tween(180, easing = LyricsEaseInCubic))
                             ) {
                                 val signedOffset = formatLyricsOffsetDisplay(lyricsOffsetMs)
+                                val haptics = LocalHapticFeedback.current
                                 Row(
                                     modifier = Modifier
                                         .clip(CircleShape)
@@ -2663,13 +2696,22 @@ private fun SpotifyEncorePlayerView(
                                         .padding(horizontal = 4.dp, vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    IconButton(
-                                        onClick = { onAdjustLyricsOffset(-100) },
-                                        modifier = Modifier.size(28.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .combinedClickable(
+                                                onClick = { onAdjustLyricsOffset(-100) },
+                                                onLongClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onAdjustLyricsOffset(-500)
+                                                }
+                                            ),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Remove,
-                                            contentDescription = "Delay -0.1s",
+                                            contentDescription = "Delay -0.1s (Hold for -0.5s)",
                                             tint = Color.White,
                                             modifier = Modifier.size(15.dp)
                                         )
@@ -2683,13 +2725,22 @@ private fun SpotifyEncorePlayerView(
                                         maxLines = 1,
                                         modifier = Modifier.widthIn(min = 52.dp)
                                     )
-                                    IconButton(
-                                        onClick = { onAdjustLyricsOffset(100) },
-                                        modifier = Modifier.size(28.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .combinedClickable(
+                                                onClick = { onAdjustLyricsOffset(100) },
+                                                onLongClick = {
+                                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                                    onAdjustLyricsOffset(500)
+                                                }
+                                            ),
+                                        contentAlignment = Alignment.Center
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Add,
-                                            contentDescription = "Advance +100ms",
+                                            contentDescription = "Advance +0.1s (Hold for +0.5s)",
                                             tint = Color.White,
                                             modifier = Modifier.size(15.dp)
                                         )
@@ -2798,13 +2849,42 @@ private fun SpotifyEncorePlayerView(
                                 }
 
                                 if (current != null) {
-                                    Text(
-                                        text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.text),
-                                        fontSize = 20.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color.White,
-                                        lineHeight = 28.sp
-                                    )
+                                    if (current.words.isNotEmpty()) {
+                                        FlowRow(
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                                        ) {
+                                            current.words.forEach { w ->
+                                                val wordReached = effectiveSec >= w.startTimeSec
+                                                Text(
+                                                    text = SimpMusicLyricsRepository.unescapeLyricsHtml(w.word),
+                                                    fontSize = 20.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (wordReached) Color.White else Color.White.copy(alpha = 0.40f),
+                                                    lineHeight = 28.sp
+                                                )
+                                            }
+                                        }
+                                    } else {
+                                        Text(
+                                            text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.text),
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White,
+                                            lineHeight = 28.sp
+                                        )
+                                    }
+
+                                    if (showRomanized && !current.romanizedText.isNullOrBlank()) {
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = SimpMusicLyricsRepository.unescapeLyricsHtml(current.romanizedText),
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            color = Color.White.copy(alpha = 0.75f),
+                                            lineHeight = 18.sp
+                                        )
+                                    }
                                     Spacer(modifier = Modifier.height(8.dp))
                                 }
 
@@ -2858,6 +2938,7 @@ private fun SpotifyEncorePlayerView(
  * Full Screen Song Lyrics View with track controls at bottom,
  * 100% solid, fully opaque background (no transparency).
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FullScreenLyricsCompactHeader(
     modifier: Modifier = Modifier,
@@ -2984,6 +3065,7 @@ private fun FullScreenLyricsCompactHeader(
                         exit = fadeOut(tween(140, easing = LyricsEaseInCubic)) + shrinkHorizontally(tween(180, easing = LyricsEaseInCubic))
                     ) {
                         val signedOffset = formatLyricsOffsetDisplay(lyricsOffsetMs)
+                        val haptics = LocalHapticFeedback.current
                         Row(
                             modifier = Modifier
                                 .clip(CircleShape)
@@ -2991,8 +3073,20 @@ private fun FullScreenLyricsCompactHeader(
                                 .padding(horizontal = 2.dp, vertical = 2.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            IconButton(onClick = { onAdjustLyricsOffset(-100) }, modifier = Modifier.size(26.dp)) {
-                                Icon(Icons.Rounded.Remove, contentDescription = "Delay -0.1s", tint = Color.White, modifier = Modifier.size(14.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .combinedClickable(
+                                        onClick = { onAdjustLyricsOffset(-100) },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onAdjustLyricsOffset(-500)
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Remove, contentDescription = "Delay -0.1s (Hold for -0.5s)", tint = Color.White, modifier = Modifier.size(14.dp))
                             }
                             Text(
                                 text = signedOffset,
@@ -3002,8 +3096,20 @@ private fun FullScreenLyricsCompactHeader(
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.widthIn(min = 40.dp)
                             )
-                            IconButton(onClick = { onAdjustLyricsOffset(100) }, modifier = Modifier.size(26.dp)) {
-                                Icon(Icons.Rounded.Add, contentDescription = "Advance +0.1s", tint = Color.White, modifier = Modifier.size(14.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .combinedClickable(
+                                        onClick = { onAdjustLyricsOffset(100) },
+                                        onLongClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onAdjustLyricsOffset(500)
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Add, contentDescription = "Advance +0.1s (Hold for +0.5s)", tint = Color.White, modifier = Modifier.size(14.dp))
                             }
                             if (lyricsOffsetMs != 0) {
                                 IconButton(onClick = { onAdjustLyricsOffset(-lyricsOffsetMs) }, modifier = Modifier.size(26.dp)) {
@@ -3080,7 +3186,7 @@ private fun FullScreenSongLyricsView(
     val effectiveSec = positionSec + (lyricsOffsetMs / 1000f)
     val activeIdx = lines.indexOfLast { effectiveSec >= it.timeSec }.coerceAtLeast(0)
     // Pre-calculate initial index on frame 1 so the active line is already placed in the center immediately
-    val initialIdx = remember { (activeIdx - 1).coerceAtLeast(0) }
+    val initialIdx = remember(track.videoId) { (activeIdx - 1).coerceAtLeast(0) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = initialIdx)
     var hasUserBrowsedLyrics by remember(track.videoId) { mutableStateOf(false) }
     var lastFirstVisibleIndex by remember(track.videoId) { mutableStateOf(initialIdx) }
@@ -3167,7 +3273,7 @@ private fun FullScreenSongLyricsView(
                                         verticalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
                                         line.words.forEach { w ->
-                                            val wordReached = positionSec >= w.startTimeSec
+                                            val wordReached = effectiveSec >= w.startTimeSec
                                             Text(
                                                 text = SimpMusicLyricsRepository.unescapeLyricsHtml(w.word),
                                                 fontSize = 24.sp,

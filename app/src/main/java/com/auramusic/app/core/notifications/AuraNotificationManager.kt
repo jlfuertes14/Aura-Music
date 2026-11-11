@@ -14,6 +14,7 @@ import android.graphics.Path
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.os.Build
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -25,6 +26,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
@@ -51,6 +53,10 @@ object AuraNotificationManager {
     var customSubscriptionPoolUrl: String? = null
     var supabaseAnonKey: String? = null
 
+    private val registrationMutex = Mutex()
+    private var lastSyncedTimeMs = 0L
+    private var lastSyncedToken: String? = null
+
     init {
         val sbUrl = com.auramusic.app.BuildConfig.SUPABASE_PUBLIC_URL.trim().trimEnd('/')
         val sbKey = com.auramusic.app.BuildConfig.SUPABASE_ANON_KEY.trim()
@@ -67,7 +73,15 @@ object AuraNotificationManager {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         var deviceId = prefs.getString(KEY_DEVICE_ID, null)
         if (deviceId.isNullOrBlank()) {
-            deviceId = java.util.UUID.randomUUID().toString()
+            val androidId = try {
+                Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+            } catch (_: Exception) { null }
+
+            deviceId = if (!androidId.isNullOrBlank() && androidId != "9774d56d682e549c") {
+                androidId
+            } else {
+                java.util.UUID.randomUUID().toString()
+            }
             prefs.edit().putString(KEY_DEVICE_ID, deviceId).apply()
         }
         return deviceId
@@ -160,9 +174,20 @@ object AuraNotificationManager {
     /**
      * Registers this device's token in a custom backend or Supabase PostgREST table.
      * Matches the Supabase schema: { device_id, push_token, platform: 'android', channel: 'stable', app_version, enabled, last_seen_at }
+     * Protected by Mutex and 60-second debounce to prevent concurrent/duplicate requests.
      */
-    private fun registerWithSubscriptionPool(context: Context, token: String, poolUrl: String) {
+    private suspend fun registerWithSubscriptionPool(context: Context, token: String, poolUrl: String) {
+        if (!registrationMutex.tryLock()) {
+            Log.d(TAG, "Registration already in flight, skipping duplicate call.")
+            return
+        }
         try {
+            val now = System.currentTimeMillis()
+            if (token == lastSyncedToken && (now - lastSyncedTimeMs) < 60_000L) {
+                Log.d(TAG, "Device already synced within last 60 seconds, skipping duplicate.")
+                return
+            }
+
             val deviceId = getOrCreateDeviceId(context)
             val appVersion = try {
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.5.1"
@@ -196,6 +221,8 @@ object AuraNotificationManager {
             SimpMusicExtractorEngine.httpClient.newCall(requestBuilder.build()).execute().use { response ->
                 val body = response.body?.string() ?: ""
                 if (response.isSuccessful) {
+                    lastSyncedTimeMs = now
+                    lastSyncedToken = token
                     Log.i(TAG, "Device registered with Supabase subscription pool! HTTP ${response.code} response: $body")
                 } else {
                     Log.e(TAG, "Subscription pool returned HTTP ${response.code} error: $body")
@@ -203,6 +230,8 @@ object AuraNotificationManager {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to register with custom subscription pool: ${e.message}", e)
+        } finally {
+            registrationMutex.unlock()
         }
     }
 

@@ -100,8 +100,10 @@ private val FluidEasing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 data class BrowseCategory(
     val title: String,
     val backgroundColor: Color,
-    val artworkUrl: String,
-    val searchQuery: String
+    val params: String = "",
+    val browseId: String = "FEmusic_moods_and_genres_category",
+    val artworkUrl: String = "",
+    val searchQuery: String = ""
 )
 
 data class WatchPlaylistCard(
@@ -111,20 +113,57 @@ data class WatchPlaylistCard(
     val query: String
 )
 
-private val CURATED_BROWSE_CATEGORIES = listOf(
-    BrowseCategory("Music", Color(0xFFE11D48), "https://lh3.googleusercontent.com/RCpTA6EXJQyjVFDosWOKa2SMmqkua_lA9mHPDWWciLwgqpZLz9fS3xYq9R0_L9kF=w544-h544-l90-rj", "Pop"),
-    BrowseCategory("Podcasts", Color(0xFF006450), "https://lh3.googleusercontent.com/hnefGBrazRhn4Z92bdSZBUENl40ONjRiVDsmZKZh-WZ2iCKE-W_YyJtZ_fL4w=w544-h544-l90-rj", "Podcast"),
-    BrowseCategory("Audiobooks", Color(0xFF283EA3), "https://lh3.googleusercontent.com/f0uIq9s7qQYV4f_4zB1=w544-h544-l90-rj", "Audiobook"),
-    BrowseCategory("Live Events", Color(0xFF7358FF), "https://lh3.googleusercontent.com/zV8Q8k=w544-h544-l90-rj", "Live Performance"),
-    BrowseCategory("Made For You", Color(0xFF8C1932), "https://lh3.googleusercontent.com/dK0M_Fh5uQ6s4z7=w544-h544-l90-rj", "Favorites"),
-    BrowseCategory("Fitness", Color(0xFF4B5563), "https://lh3.googleusercontent.com/k9_a1=w544-h544-l90-rj", "Workout"),
-    BrowseCategory("Pop", Color(0xFFFF4632), "https://lh3.googleusercontent.com/sc_b2=w544-h544-l90-rj", "Pop Hits"),
-    BrowseCategory("Hip-Hop", Color(0xFFBA5D07), "https://lh3.googleusercontent.com/RCpTA6EXJQyjVFDosWOKa2SMmqkua_lA9mHPDWWciLwgqpZLz9fS3xYq9R0_L9kF=w544-h544-l90-rj", "Hip Hop"),
-    BrowseCategory("Rock", Color(0xFFE91429), "https://lh3.googleusercontent.com/f0uIq9s7qQYV4f_4zB1=w544-h544-l90-rj", "Rock Classics"),
-    BrowseCategory("Anime & J-Pop", Color(0xFF0D72EC), "https://lh3.googleusercontent.com/hnefGBrazRhn4Z92bdSZBUENl40ONjRiVDsmZKZh-WZ2iCKE-W_YyJtZ_fL4w=w544-h544-l90-rj", "Anime Jpop"),
-    BrowseCategory("Chill & Lo-Fi", Color(0xFF148A08), "https://lh3.googleusercontent.com/zV8Q8k=w544-h544-l90-rj", "Lofi Chill"),
-    BrowseCategory("Charts", Color(0xFF8D67AB), "https://lh3.googleusercontent.com/k9_a1=w544-h544-l90-rj", "Top 50")
+val TOP_BROWSE_CATEGORIES = listOf(
+    BrowseCategory("New Releases", Color(0xFF6366F1), browseId = "FEmusic_new_releases"),
+    BrowseCategory("Charts", Color(0xFFEC4899), browseId = "FEmusic_charts"),
+    BrowseCategory("Pop", Color(0xFFFF4081), params = "ggMPOg1uX1BmNzc2V2p0YXJ5"),
+    BrowseCategory("Hip-Hop", Color(0xFFE24B00), params = "ggMPOg1uX2E4aVJuU05GOVQ0")
 )
+
+val MOODS_MOMENTS_CATEGORIES = listOf(
+    BrowseCategory("Chill", Color(0xFF5C6BC0), params = "ggMPOg1uX1JOQWZFeDByc2Jm"),
+    BrowseCategory("Workout", Color(0xFFEF6C00), params = "ggMPOg1uXzIxYkNac21YZ2Z0"),
+    BrowseCategory("Party", Color(0xFF8E24AA), params = "ggMPOg1uX2w1aW1CRDFTSUNo"),
+    BrowseCategory("Focus", Color(0xFF455A64), params = "ggMPOg1uX0NvNGNhWThMYWRh"),
+    BrowseCategory("Feel Good", Color(0xFF2E7D32), params = "ggMPOg1uXzZQbDB5eThLRTQ3"),
+    BrowseCategory("Romance", Color(0xFFC2185B), params = "ggMPOg1uX1JCQnB2QXVYVEIz"),
+    BrowseCategory("Energize", Color(0xFFF9A825), params = "ggMPOg1uX2lRZUZiMnNrQnJW"),
+    BrowseCategory("Sleep", Color(0xFF4A148C), params = "ggMPOg1uX1MxaFQ3Z0JMZkN4"),
+    BrowseCategory("Commute", Color(0xFFE65100), params = "ggMPOg1uX044Z2o5WERLckpU"),
+    BrowseCategory("Gaming", Color(0xFF37474F), params = "ggMPOg1uX3NmUVV4Vzl3WGQ0"),
+    BrowseCategory("Sad", Color(0xFF546E7A), params = "ggMPOg1uX3NISTh4UmtWcFgz")
+)
+
+val GENRES_CATEGORIES = listOf(
+    BrowseCategory("Rock", Color(0xFFB71C1C), params = "ggMPOg1uXzJKTm5jUEZ5Uzlu"),
+    BrowseCategory("R&B & Soul", Color(0xFF6A1B9A), params = "ggMPOg1uX2JxQ2hxc2J5UFhR"),
+    BrowseCategory("Dance & Electronic", Color(0xFF00838F), params = "ggMPOg1uX1NPTld3SDN3WGs4"),
+    BrowseCategory("Indie & Alternative", Color(0xFF455A64), params = "ggMPOg1uX21NWWpBbU01SDgy"),
+    BrowseCategory("Country & Americana", Color(0xFF1565C0), params = "ggMPOg1uX1RXcFlyZEpRb1d3"),
+    BrowseCategory("Latin", Color(0xFFEF6C00), params = "ggMPOg1uX29wWTRjMHV1dWN5"),
+    BrowseCategory("K-Pop", Color(0xFFAD1457), params = "ggMPOg1uX0JrbjBDOFFPSzJW"),
+    BrowseCategory("J-Pop & Anime", Color(0xFFD81B60), params = "ggMPOg1uXzAwSjVITDBZckJR"),
+    BrowseCategory("Classical", Color(0xFF546E7A), params = "ggMPOg1uX1N4VmduTmdUR3dm"),
+    BrowseCategory("Jazz", Color(0xFF283593), params = "ggMPOg1uX3lPcDFRaE9wM1BS"),
+    BrowseCategory("Metal", Color(0xFF263238), params = "ggMPOg1uXzdlSXhKZ0hMV1Z4"),
+    BrowseCategory("Decades", Color(0xFF2E7D32), params = "ggMPOg1uX1F0bWVKNFlyWG9I"),
+    BrowseCategory("Folk & Acoustic", Color(0xFF1B5E20), params = "ggMPOg1uXzBTRFBmQ3N4b0R6"),
+    BrowseCategory("Soundtracks", Color(0xFF00695C), params = "ggMPOg1uX2tWZXBsRm05cHNR"),
+    BrowseCategory("Reggae & Caribbean", Color(0xFFF57F17), params = "ggMPOg1uX1JUc2lFcDFuUUth"),
+    BrowseCategory("Blues", Color(0xFF1565C0), params = "ggMPOg1uX2NXUkgxdW0zUHJp"),
+    BrowseCategory("Bollywood & Indian", Color(0xFF4A148C), params = "ggMPOg1uX0JrcUJGUHhxaTFV"),
+    BrowseCategory("African", Color(0xFF2E7D32), params = "ggMPOg1uX0UzWGxlRE5jMDVk"),
+    BrowseCategory("Arabic", Color(0xFFBF360C), params = "ggMPOg1uX3VOQWxsblVZTFNE"),
+    BrowseCategory("Christian & Gospel", Color(0xFF00838F), params = "ggMPOg1uX3E1VnpSRHhLVElG"),
+    BrowseCategory("Mandopop & Cantopop", Color(0xFFC62828), params = "ggMPOg1uX2hXVUQwc0JTNXlE"),
+    BrowseCategory("OPM", Color(0xFFE65100), params = "ggMPOg1uX2J0T2l6RmllTm5K"),
+    BrowseCategory("Indonesian", Color(0xFF880E4F), params = "ggMPOg1uX2VTcWxZSUY2YU0y"),
+    BrowseCategory("Family", Color(0xFF0277BD), params = "ggMPOg1uXzMyY3J2SGM0bVh5"),
+    BrowseCategory("Seasonal", Color(0xFFEF6C00), params = "ggMPOg1uX2hpNzBtTkdkNTN4"),
+    BrowseCategory("Thai", Color(0xFF00695C), params = "ggMPOg1uXzVxeTRCN0xndGpS")
+)
+
+val CURATED_BROWSE_CATEGORIES = TOP_BROWSE_CATEGORIES + MOODS_MOMENTS_CATEGORIES + GENRES_CATEGORIES
 
 private val WATCH_PLAYLISTS = listOf(
     WatchPlaylistCard("VIDEOS FOR YOU", "VIDEOS FOR YOU", "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&q=80", "Music Videos"),
@@ -165,7 +204,8 @@ fun SearchScreen(
     onOpenArtist: (String, String) -> Unit = { _, _ -> },
     onOpenCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {},
     onPlayCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {},
-    onToggleSaveCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {}
+    onToggleSaveCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {},
+    onOpenCatalogCategory: (BrowseCategory) -> Unit = {}
 ) {
     val context = LocalContext.current
     var isSearchActive by rememberSaveable { mutableStateOf(query.isNotBlank()) }
@@ -208,8 +248,7 @@ fun SearchScreen(
                     isSearchActive = true
                 },
                 onCategoryClick = { category ->
-                    isSearchActive = true
-                    onQueryChange(category.searchQuery)
+                    onOpenCatalogCategory(category)
                 },
                 onWatchPlaylistClick = { watchItem ->
                     isSearchActive = true
@@ -431,8 +470,7 @@ private fun SearchExploreView(
         }
 
         // First 4 Top Category Cards (2 columns)
-        val firstBatch = CURATED_BROWSE_CATEGORIES.take(4)
-        items(firstBatch.chunked(2)) { pair ->
+        items(TOP_BROWSE_CATEGORIES.chunked(2)) { pair ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -485,21 +523,55 @@ private fun SearchExploreView(
             }
         }
 
-        // Section: "More for you" category cards
+        // Section: "Moods & moments" category cards
         item {
             Text(
-                text = "More for you",
+                text = "Moods & moments",
                 fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
                 color = TextPrimary,
                 modifier = Modifier
                     .padding(horizontal = 16.dp)
-                    .padding(top = 16.dp, bottom = 12.dp)
+                    .padding(top = 18.dp, bottom = 12.dp)
             )
         }
 
-        val secondBatch = CURATED_BROWSE_CATEGORIES.drop(4)
-        items(secondBatch.chunked(2)) { pair ->
+        items(MOODS_MOMENTS_CATEGORIES.chunked(2)) { pair ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                pair.forEach { category ->
+                    Box(modifier = Modifier.weight(1f)) {
+                        SpotifyCategoryCard(
+                            category = category,
+                            artworkTracks = exploreArtworkTracks[category.title].orEmpty(),
+                            onClick = { onCategoryClick(category) }
+                        )
+                    }
+                }
+                if (pair.size == 1) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
+        // Section: "Genres" category cards
+        item {
+            Text(
+                text = "Genres",
+                fontSize = 19.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(top = 22.dp, bottom = 12.dp)
+            )
+        }
+
+        items(GENRES_CATEGORIES.chunked(2)) { pair ->
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -523,9 +595,38 @@ private fun SearchExploreView(
     }
 }
 
+private val DEFAULT_BROWSE_FANOUT_COVERS = listOf(
+    "https://i.ytimg.com/vi/4tijiFGhBN8/hq720.jpg",
+    "https://i.ytimg.com/vi/4NRXx6U8ABQ/hq720.jpg",
+    "https://i.ytimg.com/vi/d5gf9dXbPi0/hq720.jpg",
+    "https://i.ytimg.com/vi/B9synWjqBn8/hq720.jpg",
+    "https://i.ytimg.com/vi/qU9mHegkTc4/hq720.jpg",
+    "https://i.ytimg.com/vi/34Na4j8AVgA/hq720.jpg",
+    "https://i.ytimg.com/vi/Sv5yCzPCkv8/hq720.jpg",
+    "https://i.ytimg.com/vi/4D4bB6n0qI4/hq720.jpg",
+    "https://i.ytimg.com/vi/fcnDmrtj6Sk/hqdefault.jpg",
+    "https://i.ytimg.com/vi/vRjaGgDsWSo/hqdefault.jpg",
+    "https://i.ytimg.com/vi/vSA7yMrTETg/hqdefault.jpg",
+    "https://i.ytimg.com/vi/gNi_6U5Pm_o/hqdefault.jpg",
+    "https://i.ytimg.com/vi/kJQP7kiw5Fk/hqdefault.jpg",
+    "https://i.ytimg.com/vi/OPf0YbXqDm0/hqdefault.jpg",
+    "https://i.ytimg.com/vi/2Vv-BfVoq4g/hqdefault.jpg",
+    "https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg",
+    "https://i.ytimg.com/vi/YQHsXMglC9A/hqdefault.jpg",
+    "https://i.ytimg.com/vi/09R8_2nJtjg/hqdefault.jpg",
+    "https://i.ytimg.com/vi/kffacxfA7G4/hqdefault.jpg",
+    "https://i.ytimg.com/vi/L0MK7qz13bU/hqdefault.jpg",
+    "https://i.ytimg.com/vi/CevxZvSJLk8/hqdefault.jpg",
+    "https://i.ytimg.com/vi/hT_nvWreIhg/hqdefault.jpg"
+)
+
+// Thread-safe in-memory cache to ensure browse cards never reload or flicker once computed
+private val categoryFanOutCoverCache = java.util.concurrent.ConcurrentHashMap<String, List<String>>()
+
 /**
  * Spotify Category Card:
  * Bold white title in top-left, rotated angled artwork overflowing at bottom-right corner.
+ * Consistently renders 3 fanned-out cover art images for every browse card, cached permanently in memory.
  */
 @Composable
 private fun SpotifyCategoryCard(
@@ -533,6 +634,28 @@ private fun SpotifyCategoryCard(
     artworkTracks: List<AuraTrack>,
     onClick: () -> Unit
 ) {
+    val covers = remember(category.title, artworkTracks) {
+        val cached = categoryFanOutCoverCache[category.title]
+        if (cached != null && cached.size >= 3) {
+            cached
+        } else {
+            val liveUrls = artworkTracks.mapNotNull { it.highResArtworkUrl.takeIf { url -> url.isNotBlank() } }
+            val resolved = if (liveUrls.size >= 3) {
+                liveUrls.take(3)
+            } else {
+                val seedIndex = Math.abs(category.title.hashCode())
+                val fallbackList = listOf(
+                    DEFAULT_BROWSE_FANOUT_COVERS[seedIndex % DEFAULT_BROWSE_FANOUT_COVERS.size],
+                    DEFAULT_BROWSE_FANOUT_COVERS[(seedIndex + 3) % DEFAULT_BROWSE_FANOUT_COVERS.size],
+                    DEFAULT_BROWSE_FANOUT_COVERS[(seedIndex + 7) % DEFAULT_BROWSE_FANOUT_COVERS.size]
+                )
+                (liveUrls + fallbackList).distinct().take(3)
+            }
+            categoryFanOutCoverCache[category.title] = resolved
+            resolved
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -541,47 +664,29 @@ private fun SpotifyCategoryCard(
             .background(category.backgroundColor)
             .clickable(onClick = onClick)
     ) {
-        if (artworkTracks.size >= 2) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .graphicsLayer {
-                        translationX = 14.dp.toPx()
-                        translationY = 8.dp.toPx()
-                    }
-                    .size(width = 96.dp, height = 84.dp)
-            ) {
-                artworkTracks.take(3).forEachIndexed { index, track ->
-                    AsyncImage(
-                        model = track.highResArtworkUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .offset(x = ((index - 1) * 21).dp, y = 5.dp)
-                            .rotate((index - 1) * 16f)
-                            .zIndex(index.toFloat())
-                            .size(width = 48.dp, height = 58.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                    )
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .graphicsLayer {
+                    translationX = 14.dp.toPx()
+                    translationY = 8.dp.toPx()
                 }
+                .size(width = 96.dp, height = 84.dp)
+        ) {
+            covers.forEachIndexed { index, coverUrl ->
+                AsyncImage(
+                    model = coverUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .offset(x = ((index - 1) * 21).dp, y = 5.dp)
+                        .rotate((index - 1) * 16f)
+                        .zIndex(index.toFloat())
+                        .size(width = 48.dp, height = 58.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                )
             }
-        } else {
-            // Keep curated fallback artwork visible while category covers load.
-            AsyncImage(
-                model = category.artworkUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .graphicsLayer {
-                        translationX = 14.dp.toPx()
-                        translationY = 8.dp.toPx()
-                        rotationZ = 25f
-                    }
-                    .size(68.dp)
-                    .clip(RoundedCornerShape(6.dp))
-            )
         }
 
         // Category Title

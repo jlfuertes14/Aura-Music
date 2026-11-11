@@ -318,14 +318,16 @@ object AuraPlayerManager {
             dataSpec
         }
 
-        // 4. SimpMusic Zero-Wait LoadControl (bufferForPlaybackMs = 0, bufferForPlaybackAfterRebufferMs = 0)
+        // 4. LoadControl with a robust rebuffer safety cushion to prevent endless pause/play loops
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                DefaultLoadControl.DEFAULT_MIN_BUFFER_MS * 2,
-                DefaultLoadControl.DEFAULT_MAX_BUFFER_MS * 2,
-                0,
-                0
+                30_000, // minBufferMs: attempt to buffer up to 30s ahead
+                60_000, // maxBufferMs: keep maximum 60s in buffer
+                1_500,  // bufferForPlaybackMs: quick start with 1.5s buffer
+                4_000   // bufferForPlaybackAfterRebufferMs: MUST collect 4.0s of buffer before resuming after running dry!
             )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(15_000, true) // Retain 15s behind current position for instant rewind
             .build()
 
         val audioAttributes = AudioAttributes.Builder()
@@ -1060,6 +1062,7 @@ object AuraPlayerManager {
     ) {
         val currentAudio = fromAudioTrack ?: currentTrack.value
         val player = exoPlayer
+        val currentPos = if (startPlayback) 0L else (player?.currentPosition ?: 0L)
         if (currentAudio != null && originalAudioTrack == null) {
             originalAudioTrack = currentAudio
             originalAudioQueue = _queue.value
@@ -1073,7 +1076,8 @@ object AuraPlayerManager {
         // made an audio fallback look like a successfully loaded music video.
         val preservedTrack = videoTrack.copy(
             artworkUrl = "https://i.ytimg.com/vi/${videoTrack.videoId}/hqdefault.jpg",
-            album = currentAudio?.album ?: videoTrack.album
+            album = currentAudio?.album ?: videoTrack.album,
+            musicVideoType = videoTrack.musicVideoType ?: "MUSIC_VIDEO_TYPE_OMV"
         )
         _currentTrack.value = preservedTrack
 
@@ -1101,7 +1105,7 @@ object AuraPlayerManager {
                         .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.streamUrl)))
                 }
 
-                player.setMediaSource(mediaSource, 0L)
+                player.setMediaSource(mediaSource, currentPos)
                 player.prepare()
                 if (wasPlaying) {
                     player.play()
@@ -1162,7 +1166,8 @@ object AuraPlayerManager {
         _durationSec.value = videoTrack.durationSeconds.toFloat().coerceAtLeast(1f)
         _isVideoMode.value = true
         _currentTrack.value = videoTrack.copy(
-            artworkUrl = "https://i.ytimg.com/vi/${videoTrack.videoId}/hqdefault.jpg"
+            artworkUrl = "https://i.ytimg.com/vi/${videoTrack.videoId}/hqdefault.jpg",
+            musicVideoType = videoTrack.musicVideoType ?: "MUSIC_VIDEO_TYPE_OMV"
         )
 
         scope.launch {

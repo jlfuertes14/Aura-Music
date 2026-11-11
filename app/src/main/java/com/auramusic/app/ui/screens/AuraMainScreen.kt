@@ -246,18 +246,17 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val areCommentsLoading by viewModel.areCommentsLoading.collectAsState()
     val commentsError by viewModel.commentsError.collectAsState()
     val selectedPlaylistDetail by viewModel.selectedPlaylistDetail.collectAsState()
+    val selectedCatalogDetail by viewModel.selectedCatalogDetail.collectAsState()
+    val isCatalogLoading by viewModel.isCatalogLoading.collectAsState()
     val playlistScrollTargetTrackId by viewModel.playlistScrollTargetTrackId.collectAsState()
 
-    BackHandler(enabled = !isPlayerExpanded && selectedArtistDetail != null) {
-        viewModel.closeArtistDetail()
-    }
-
-    BackHandler(enabled = !isPlayerExpanded && selectedPlaylistDetail != null) {
-        viewModel.closePlaylistDetail()
-    }
-
-    BackHandler(enabled = !isPlayerExpanded && selectedArtistDetail == null && selectedPlaylistDetail == null && selectedTab != 0) {
-        selectedTab = 0
+    BackHandler(enabled = !isPlayerExpanded && (selectedArtistDetail != null || selectedPlaylistDetail != null || selectedCatalogDetail != null || selectedTab != 0)) {
+        when {
+            selectedArtistDetail != null -> viewModel.closeArtistDetail()
+            selectedPlaylistDetail != null -> viewModel.closePlaylistDetail()
+            selectedCatalogDetail != null -> viewModel.closeCatalogDetail()
+            selectedTab != 0 -> selectedTab = 0
+        }
     }
     val isPlaylistLoading by viewModel.isPlaylistLoading.collectAsState()
     val activeCategory by viewModel.activeCategory.collectAsState()
@@ -501,7 +500,14 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             onOpenArtist = { artistName, songTitle -> viewModel.openArtistByName(artistName, songTitle) },
                             onOpenCommunityPlaylist = { viewModel.openPlaylistDetail(it) },
                             onPlayCommunityPlaylist = { viewModel.playCommunityPlaylist(it) },
-                            onToggleSaveCommunityPlaylist = { viewModel.toggleSaveCommunityPlaylist(it) }
+                            onToggleSaveCommunityPlaylist = { viewModel.toggleSaveCommunityPlaylist(it) },
+                            onOpenCatalogCategory = { category ->
+                                viewModel.openCatalogCategory(
+                                    title = category.title,
+                                    params = category.params,
+                                    browseId = category.browseId
+                                )
+                            }
                         )
                     }
                     2 -> Box(
@@ -557,7 +563,94 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             }
         }
 
-        // 1b. Full-Screen Slide-in Artist Detail Screen
+        // 1b. Full-Screen Slide-in Catalog Detail Screen (Search Catalog & Moods)
+        var cachedCatalogDetail by remember { mutableStateOf<com.auramusic.app.domain.model.CatalogDetail?>(null) }
+        if (selectedCatalogDetail != null) {
+            cachedCatalogDetail = selectedCatalogDetail
+        }
+        AnimatedVisibility(
+            visible = selectedCatalogDetail != null,
+            enter = slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
+            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
+            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            (selectedCatalogDetail ?: cachedCatalogDetail)?.let { detail ->
+                SearchCatalogDetailScreen(
+                    catalogDetail = detail,
+                    isLoading = isCatalogLoading,
+                    currentPlayingId = currentTrack?.videoId,
+                    isPlaying = isPlaying,
+                    favorites = favorites,
+                    downloads = downloads,
+                    playlists = playlists,
+                    onClose = { viewModel.closeCatalogDetail() },
+                    onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
+                    onPlayMusicVideo = { track, queue ->
+                        viewModel.playHomeMusicVideo(track, queue)
+                        expandFullPlayer()
+                    },
+                    onOpenPlaylist = { playlist -> viewModel.openPlaylistDetail(playlist) },
+                    onOpenAlbum = { albumTrack -> viewModel.openAlbum(albumTrack) },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
+                    onOpenArtist = { artist, title -> viewModel.openArtistByName(artist, title) },
+                    onAddTrackToPlaylist = { plId, track -> viewModel.addTrackToPlaylist(plId, track) },
+                    onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) },
+                    onRetry = {
+                        viewModel.openCatalogCategory(
+                            title = detail.title,
+                            params = detail.params,
+                            browseId = detail.browseId
+                        )
+                    }
+                )
+            }
+        }
+
+        // 1c. Full-Screen Slide-in Playlist Detail Screen (renders on top of Catalog Detail Screen & Home)
+        var cachedPlaylistDetail by remember { mutableStateOf<com.auramusic.app.domain.model.PlaylistDetail?>(null) }
+        if (selectedPlaylistDetail != null) {
+            cachedPlaylistDetail = selectedPlaylistDetail
+        }
+        AnimatedVisibility(
+            visible = selectedPlaylistDetail != null,
+            enter = slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
+            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
+            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            (selectedPlaylistDetail ?: cachedPlaylistDetail)?.let { detail ->
+                PlaylistDetailScreen(
+                    playlistDetail = detail,
+                    isLoading = isPlaylistLoading,
+                    currentPlayingId = currentTrack?.videoId,
+                    isPlaying = isPlaying,
+                    initialScrollToTrackId = playlistScrollTargetTrackId,
+                    onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
+                    isSaved = viewModel.isPlaylistSaved(detail.id),
+                    onClose = { viewModel.closePlaylistDetail() },
+                    onPlayTrack = { track, queue ->
+                        viewModel.setActivePlaylistDetail(detail)
+                        viewModel.playTrack(track, queue)
+                    },
+                    onToggleFavorite = { viewModel.toggleFavorite(it) },
+                    onToggleSave = { viewModel.toggleSavePlaylistDetail(detail) }
+                )
+            }
+        }
+
+        // 1d. Full-Screen Slide-in Artist Detail Screen (renders on top of Playlist Detail Screen & Catalog Detail Screen)
         AnimatedVisibility(
             visible = selectedArtistDetail != null,
             enter = slideInHorizontally(
@@ -592,43 +685,6 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             artworkUrl = item.artworkUrl
                         )
                     }
-                )
-            }
-        }
-
-        // 1c. Full-Screen Slide-in Playlist Detail Screen
-        var cachedPlaylistDetail by remember { mutableStateOf<com.auramusic.app.domain.model.PlaylistDetail?>(null) }
-        if (selectedPlaylistDetail != null) {
-            cachedPlaylistDetail = selectedPlaylistDetail
-        }
-        AnimatedVisibility(
-            visible = selectedPlaylistDetail != null,
-            enter = slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
-            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
-            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            (selectedPlaylistDetail ?: cachedPlaylistDetail)?.let { detail ->
-                PlaylistDetailScreen(
-                    playlistDetail = detail,
-                    isLoading = isPlaylistLoading,
-                    currentPlayingId = currentTrack?.videoId,
-                    isPlaying = isPlaying,
-                    initialScrollToTrackId = playlistScrollTargetTrackId,
-                    onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
-                    isSaved = viewModel.isPlaylistSaved(detail.id),
-                    onClose = { viewModel.closePlaylistDetail() },
-                    onPlayTrack = { track, queue ->
-                        viewModel.setActivePlaylistDetail(detail)
-                        viewModel.playTrack(track, queue)
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onToggleSave = { viewModel.toggleSavePlaylistDetail(detail) }
                 )
             }
         }
@@ -751,6 +807,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                                 onClick = {
                                     viewModel.closeArtistDetail()
                                     viewModel.closePlaylistDetail()
+                                    viewModel.closeCatalogDetail()
                                     if (selectedTab != idx) {
                                         openedPlaylistFromHome = false
                                     }

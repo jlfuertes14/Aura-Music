@@ -16,6 +16,8 @@ import com.auramusic.app.domain.model.YtmMoodBrowseParams
 import com.auramusic.app.domain.model.YtmMoodShelf
 import com.auramusic.app.domain.model.YtmMoodItem
 import com.auramusic.app.domain.model.YtmMoodItemType
+import com.auramusic.app.domain.model.YtmMoodCategoryItem
+import com.auramusic.app.domain.model.YtmMoodCategorySection
 import com.auramusic.app.domain.model.PlaylistDetail
 import com.auramusic.app.domain.model.PlaylistTrackItem
 import com.auramusic.app.domain.model.ResolvedVideoStream
@@ -575,10 +577,20 @@ object SimpMusicExtractorEngine {
      * is NEVER maximized as a fake video.
      * Returns null if no authentic official video stream is available.
      */
-    private fun primaryArtistName(artist: String): String =
+    fun primaryArtistName(artist: String): String =
         artist
             .replace(Regex("(?i)\\s+(feat(?:uring)?|ft\\.?|with)\\s+.*$"), "")
-            .trim()
+            .split(Regex("\\s*(?:,|;|&)\\s*"))
+            .firstOrNull { it.isNotBlank() }
+            ?.trim()
+            ?: artist.trim()
+
+    private fun artistVariants(artist: String): List<String> =
+        artist
+            .split(Regex("(?i)\\s*(?:,|;|&|\\bfeat(?:uring)?\\.?\\b|\\bft\\.?\\b|\\bwith\\b)\\s*"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() && !it.equals("YouTube Artist", ignoreCase = true) }
+            .ifEmpty { listOf(artist.trim()) }
 
     private fun normalizedVideoMatchText(value: String): String =
         value.lowercase()
@@ -586,9 +598,43 @@ object SimpMusicExtractorEngine {
             .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
             .trim()
 
+    private fun normalizedVideoWords(value: String): Set<String> {
+        val base = normalizedVideoMatchText(value)
+            .split(Regex("\\s+"))
+            .filter(String::isNotBlank)
+        val collapsed = value.lowercase()
+            .replace(Regex("(?i)\\b(official|music|video|mv|vevo|topic|hd|4k)\\b"), " ")
+            .split(Regex("\\s+"))
+            .map { it.replace(Regex("[^\\p{L}\\p{N}]"), "") }
+            .filter { it.length >= 2 }
+        return (base + collapsed).toSet()
+    }
+
+    fun cleanSongTitleForVideoSearch(rawTitle: String, rawArtist: String): String {
+        var cleaned = rawTitle
+            .replace(Regex("(?i)\\(feat\\..*?\\)|\\[feat\\..*?\\]|\\(ft\\..*?\\)|\\[ft\\..*?\\]"), "")
+            .substringBefore("(")
+            .substringBefore("[")
+            .substringBefore("|")
+            .replace(Regex("(?i)\\s+\\b(?:feat(?:uring)?|ft)\\b\\.?\\s+.*$"), "")
+            .replace(Regex("(?i)\\b(official|music|video|audio|lyrics?|visualizer|remastered|remaster|hd|hq|4k|mv)\\b"), "")
+            .trim()
+
+        if (cleaned.contains(" - ")) {
+            val beforeDash = cleaned.substringBefore(" - ").trim()
+            val afterDash = cleaned.substringAfter(" - ").trim()
+            val artistWords = artistVariants(rawArtist).flatMap { normalizedVideoWords(it) }.toSet()
+            val prefixWords = normalizedVideoWords(beforeDash)
+            if (afterDash.isNotBlank() && prefixWords.isNotEmpty() && prefixWords.intersect(artistWords).isNotEmpty()) {
+                cleaned = afterDash
+            }
+        }
+        return cleaned.trim().ifBlank { rawTitle.trim() }
+    }
+
     private fun officialVideoMatchScore(candidateTitle: String, requestedTitle: String): Float {
-        val wanted = normalizedVideoMatchText(requestedTitle).split(Regex("\\s+")).filter(String::isNotBlank).toSet()
-        val actual = normalizedVideoMatchText(candidateTitle).split(Regex("\\s+")).filter(String::isNotBlank).toSet()
+        val wanted = normalizedVideoWords(requestedTitle)
+        val actual = normalizedVideoWords(candidateTitle)
         if (wanted.isEmpty() || actual.isEmpty()) return 0f
         return wanted.intersect(actual).size.toFloat() / wanted.size
     }
@@ -632,69 +678,114 @@ object SimpMusicExtractorEngine {
             Regex("\\bmusic\\s+video\\b").containsMatchIn(title) ||
             Regex("\\b(vevo|official)\\b").containsMatchIn(artist)
 
-    private fun isTrustedVideoDistributor(artist: String): Boolean = Regex(
-        "\\b(netflix|vevo|sony music|universal music|warner records|republic records|atlantic records|hybe labels|smtown|jyp entertainment|yg entertainment|big hit music|bighit music|kq entertainment|starship entertainment)\\b"
-    ).containsMatchIn(artist)
-
     private fun isOfficialVideoMatch(
         candidate: AuraTrack,
         requestedTitle: String,
         requestedArtist: String,
         currentVideoId: String
     ): Boolean {
-        if (candidate.videoId.isBlank() || candidate.videoId == currentVideoId) return false
+        if (candidate.videoId.isBlank()) return false
 
         val title = candidate.title.lowercase()
         val artist = candidate.artist.lowercase()
+        val hasVideoCue = hasOfficialVideoCue(title, artist)
 
+        // Only reject currentVideoId if the candidate is NOT marked as an official music video
+        if (candidate.videoId == currentVideoId &&
+            !isOfficialInnerTubeVideoType(candidate.musicVideoType) &&
+            !hasVideoCue
+        ) {
+            return false
+        }
+
+        // Negative exclusion terms - only reject if term is not part of the requested song title itself
+        val lowerRequestedTitle = requestedTitle.lowercase()
         val excludedTerms = listOf(
             "cover", "karaoke", "lyrics", "lyric video", "reaction", "instrumental", "audio", "live", "acoustic",
-            "tribute", "fan made", "fanmade", "unofficial", "slowed", "sped up", "nightcore", "audio only", " - topic"
+            "tribute", "fan made", "fanmade", "unofficial", "slowed", "sped up", "nightcore", "audio only", " - topic",
+            "8d audio", "dance practice", "dance cover", "tutorial", "guitar lesson", "bass lesson"
         )
-        if (excludedTerms.any { title.contains(it) || artist.contains(it) }) return false
+        for (term in excludedTerms) {
+            if (!lowerRequestedTitle.contains(term) && (title.contains(term) || artist.contains(term))) {
+                return false
+            }
+        }
 
         val wantedTitleWords = normalizedVideoMatchText(requestedTitle)
             .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
-        val foundTitleWords = normalizedVideoMatchText(candidate.title)
-            .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
+        val foundTitleWords = normalizedVideoWords(candidate.title)
         if (wantedTitleWords.isEmpty() || foundTitleWords.isEmpty()) return false
         val titleMatch = wantedTitleWords.intersect(foundTitleWords).size.toFloat() / wantedTitleWords.size
-        if (titleMatch < 0.8f) return false
+        if (titleMatch < 0.65f) return false
 
-        val wantedArtistWords = normalizedVideoMatchText(primaryArtistName(requestedArtist))
-            .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
-        val foundArtistWords = normalizedVideoMatchText(candidate.artist)
-            .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
-        val foundTitleArtistWords = normalizedVideoMatchText(candidate.title)
-            .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
-        if (wantedArtistWords.isEmpty() || foundArtistWords.isEmpty()) return false
-        val uploaderArtistMatch = wantedArtistWords.intersect(foundArtistWords).size.toFloat() / wantedArtistWords.size
-        val titleArtistMatch = wantedArtistWords.intersect(foundTitleArtistWords).size.toFloat() / wantedArtistWords.size
-        val hasVideoCue = hasOfficialVideoCue(title, artist)
-        val trustedDistributor = isTrustedVideoDistributor(artist)
+        val foundArtistWords = normalizedVideoWords(candidate.artist)
+        val foundTitleArtistWords = normalizedVideoWords(candidate.title)
+        if (foundArtistWords.isEmpty() && foundTitleArtistWords.isEmpty()) return false
 
-        // InnerTube's classification is useful evidence, but it is not enough by itself: unrelated
-        // uploads can be classified OMV, while licensed studio uploads can appear as UGC.
-        when (candidate.musicVideoType?.uppercase()) {
-            "MUSIC_VIDEO_TYPE_ATV" -> return false
-            "MUSIC_VIDEO_TYPE_UGC" -> return hasVideoCue && trustedDistributor &&
-                titleMatch >= 0.8f && titleArtistMatch >= 0.6f
-            "MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC" ->
-                return titleMatch >= 0.8f &&
-                    (uploaderArtistMatch >= 0.6f || (trustedDistributor && titleArtistMatch >= 0.6f))
+        val variants = artistVariants(requestedArtist)
+        var uploaderArtistMatch = 0f
+        var titleArtistMatch = 0f
+        for (variant in variants) {
+            val wantedWords = normalizedVideoMatchText(variant)
+                .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
+            if (wantedWords.isEmpty()) continue
+            val upScore = wantedWords.intersect(foundArtistWords).size.toFloat() / wantedWords.size
+            val tiScore = wantedWords.intersect(foundTitleArtistWords).size.toFloat() / wantedWords.size
+            if (upScore > uploaderArtistMatch) uploaderArtistMatch = upScore
+            if (tiScore > titleArtistMatch) titleArtistMatch = tiScore
         }
 
-        // Some search rows omit the type. In that case use explicit video wording and require
-        // either the artist as uploader or a recognized distributor with the artist in the title.
-        if (!hasVideoCue || titleMatch < 0.8f) return false
-        return uploaderArtistMatch >= 0.6f || (trustedDistributor && titleArtistMatch >= 0.6f)
+        // The artist name must appear either in the uploader channel or directly in the video title.
+        // This dynamically accepts official uploads from any distributor, record label, or game/anime studio
+        // (e.g. League of Legends, Sony Music, Universal, 88rising, Aniplex) without hardcoding publisher names.
+        val hasArtistPresence = uploaderArtistMatch >= 0.35f || titleArtistMatch >= 0.35f
+
+        when (candidate.musicVideoType?.uppercase()) {
+            "MUSIC_VIDEO_TYPE_ATV" -> return false // Static album art Topic audio upload, not a video
+            "MUSIC_VIDEO_TYPE_OMV", "MUSIC_VIDEO_TYPE_OFFICIAL_SOURCE_MUSIC" ->
+                return titleMatch >= 0.65f && hasArtistPresence
+            "MUSIC_VIDEO_TYPE_UGC" ->
+                return titleMatch >= 0.75f && hasVideoCue && hasArtistPresence
+        }
+
+        // When YouTube Music search returns candidate with null musicVideoType
+        if (hasVideoCue && titleMatch >= 0.65f && hasArtistPresence) return true
+        if (uploaderArtistMatch >= 0.75f && titleMatch >= 0.75f) return true
+
+        return false
     }
 
-    private fun officialVideoCandidateScore(candidate: AuraTrack, requestedTitle: String): Float =
-        (if (isOfficialInnerTubeVideoType(candidate.musicVideoType)) 10f else 0f) +
-            officialVideoMatchScore(candidate.title, requestedTitle) +
-            // Views only break close matches; they never turn a rejected result into an eligible one.
-            (candidate.viewCount?.takeIf { it > 0 }?.let { ln(it.toFloat() + 1f) / 100f } ?: 0f)
+    private fun officialVideoCandidateScore(
+        candidate: AuraTrack,
+        requestedTitle: String,
+        rankIndex: Int = 0
+    ): Float {
+        var score = 0f
+
+        // 1. YouTube editorial classification (InnerTube OMV / Official Source)
+        if (isOfficialInnerTubeVideoType(candidate.musicVideoType)) {
+            score += 15f
+        }
+
+        // 2. Official video text cue in title ("official music video", "official mv", etc.)
+        if (hasOfficialVideoCue(candidate.title.lowercase(), candidate.artist.lowercase())) {
+            score += 10f
+        }
+
+        // 3. Title overlap score (0.0 to 5.0)
+        score += officialVideoMatchScore(candidate.title, requestedTitle) * 5f
+
+        // 4. View count weighting on logarithmic scale
+        // A 48M view video gets ln(48,000,001) = 17.68 pts, naturally crushing a 5K view fan re-upload (~8.5 pts)
+        candidate.viewCount?.takeIf { it > 0 }?.let { views ->
+            score += kotlin.math.ln(views.toDouble() + 1.0).toFloat()
+        }
+
+        // 5. YouTube Music relevance ranking bonus (preserves YouTube's Content ID / AI ranking preference)
+        score += (20 - rankIndex).coerceAtLeast(0) * 0.25f
+
+        return score
+    }
 
     suspend fun findOfficialMusicVideo(track: AuraTrack): AuraTrack? = withContext(Dispatchers.IO) {
         try {
@@ -719,12 +810,7 @@ object SimpMusicExtractorEngine {
 
             // Clean artist and title for YouTube search
             val cleanArtist = primaryArtistName(track.artist)
-            val cleanTitle = track.title
-                .replace(Regex("(?i)\\(feat\\..*?\\)|\\[feat\\..*?\\]"), "")
-                .replace(Regex("(?i)\\b(official|music|video|audio|lyrics?|visualizer|remastered|remaster|hd|hq|4k)\\b"), "")
-                .substringBefore("(")
-                .substringBefore("[")
-                .trim()
+            val cleanTitle = cleanSongTitleForVideoSearch(track.title, track.artist)
 
             val titleForQuery = cleanTitle.ifBlank { track.title }
             val artistForQuery = cleanArtist.ifBlank { track.artist }
@@ -739,9 +825,14 @@ object SimpMusicExtractorEngine {
             // client often returns the official result for the natural query but ranks it lower
             // when extra "official music video" terms are forced into the query.
             val candidatesById = linkedMapOf<String, AuraTrack>()
+            val candidateRankIndices = mutableMapOf<String, Int>()
+            var globalRank = 0
             queryVariants.map { searchQuery ->
                 async { searchYouTubeMusic(searchQuery, filter = "videos", prefetchTopResult = false) }
             }.awaitAll().flatten().forEach { result ->
+                if (!candidateRankIndices.containsKey(result.videoId)) {
+                    candidateRankIndices[result.videoId] = globalRank++
+                }
                 val existing = candidatesById[result.videoId]
                 if (existing == null) {
                     candidatesById[result.videoId] = result
@@ -756,8 +847,8 @@ object SimpMusicExtractorEngine {
             }
 
             var candidate = candidatesById.values
-                .filter { isOfficialVideoMatch(it, titleForQuery, artistForQuery, track.videoId) }
-                .maxByOrNull { officialVideoCandidateScore(it, titleForQuery) }
+                .filter { isOfficialVideoMatch(it, titleForQuery, track.artist, track.videoId) }
+                .maxByOrNull { officialVideoCandidateScore(it, titleForQuery, candidateRankIndices[it.videoId] ?: 20) }
 
             // 2. Direct YouTube fallback search via NewPipe extractor if YouTube Music didn't find an MV
             if (candidate == null) {
@@ -774,7 +865,7 @@ object SimpMusicExtractorEngine {
                             title = item.name.orEmpty(),
                             artist = item.uploaderName?.replace(" - Topic", "")?.trim().orEmpty()
                         )
-                        vidId.isNotBlank() && isOfficialVideoMatch(fallbackTrack, titleForQuery, artistForQuery, track.videoId)
+                        vidId.isNotBlank() && isOfficialVideoMatch(fallbackTrack, titleForQuery, track.artist, track.videoId)
                     }
                     if (ytItem != null) {
                         val vidId = ytItem.url?.substringAfter("v=")?.substringBefore("&") ?: ""
@@ -1008,8 +1099,12 @@ object SimpMusicExtractorEngine {
 
                     if (playlistItems != null) {
                         for (i in 0 until playlistItems.length()) {
-                            val renderer = playlistItems.optJSONObject(i)
-                                ?.optJSONObject("playlistPanelVideoRenderer") ?: continue
+                            val rowObj = playlistItems.optJSONObject(i) ?: continue
+                            val renderer = rowObj.optJSONObject("playlistPanelVideoRenderer")
+                                ?: rowObj.optJSONObject("playlistPanelVideoWrapperRenderer")
+                                    ?.optJSONObject("primaryRenderer")
+                                    ?.optJSONObject("playlistPanelVideoRenderer")
+                                ?: continue
                             val itemVidId = renderer.optString("videoId")
                             if (itemVidId.isBlank() || itemVidId == videoId) continue
 
@@ -1259,228 +1354,12 @@ object SimpMusicExtractorEngine {
                     if (sections != null) {
                         for (s in 0 until sections.length()) {
                             val sec = sections.optJSONObject(s) ?: continue
-                            val shelf = sec.optJSONObject("musicCarouselShelfRenderer") ?: continue
-                            val header = shelf.optJSONObject("header")?.optJSONObject("musicCarouselShelfBasicHeaderRenderer")
-                            val shelfTitle = header?.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
-                            val shelfSubtitle = header?.optJSONObject("strapline")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim()
-                            val numItemsPerColumn = shelf.optString("numItemsPerColumn").ifBlank {
-                                header?.optString("numItemsPerColumn").orEmpty()
-                            }
-                            val is4RowGrid = numItemsPerColumn == "4"
-                            val contents = shelf.optJSONArray("contents") ?: continue
-                            val shelfItems = mutableListOf<YtmMoodItem>()
-
-                            for (i in 0 until contents.length()) {
-                                val item = contents.optJSONObject(i) ?: continue
-                                val resItem = item.optJSONObject("musicResponsiveListItemRenderer")
-                                if (resItem != null) {
-                                    val flexCols = resItem.optJSONArray("flexColumns") ?: continue
-                                    val firstRun = flexCols.optJSONObject(0)
-                                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
-                                        ?.optJSONObject("text")
-                                        ?.optJSONArray("runs")
-                                        ?.optJSONObject(0)
-                                    val songTitle = firstRun?.optString("text") ?: continue
-                                    val vidId = resItem.optJSONObject("playlistItemData")?.optString("videoId")
-                                        ?.takeIf { it.isNotBlank() }
-                                        ?: resItem.optJSONObject("overlay")
-                                            ?.optJSONObject("musicItemThumbnailOverlayRenderer")
-                                            ?.optJSONObject("content")
-                                            ?.optJSONObject("musicPlayButtonRenderer")
-                                            ?.optJSONObject("playNavigationEndpoint")
-                                            ?.optJSONObject("watchEndpoint")
-                                            ?.optString("videoId")
-                                            ?.takeIf { it.isNotBlank() }
-                                        ?: continue
-
-                                    val subRuns = flexCols.optJSONObject(1)
-                                        ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
-                                        ?.optJSONObject("text")
-                                        ?.optJSONArray("runs")
-                                    var songArtist = "YouTube Artist"
-                                    var songAlbum = "YouTube Music"
-                                    if (subRuns != null) {
-                                        val texts = mutableListOf<String>()
-                                        for (r in 0 until subRuns.length()) {
-                                            val t = subRuns.optJSONObject(r)?.optString("text")?.trim().orEmpty()
-                                            if (t.isNotEmpty() && t != "•" && t != "&") texts.add(t)
-                                        }
-                                        if (texts.isNotEmpty()) {
-                                            songArtist = if (texts[0].equals("Song", ignoreCase = true) || texts[0].equals("Video", ignoreCase = true)) {
-                                                texts.getOrNull(1) ?: "YouTube Artist"
-                                            } else texts[0]
-                                            if (texts.size > 2) {
-                                                songAlbum = texts[1]
-                                            }
-                                        }
-                                    }
-                                    val thumbs = resItem.optJSONObject("thumbnail")
-                                        ?.optJSONObject("musicThumbnailRenderer")
-                                        ?.optJSONObject("thumbnail")
-                                        ?.optJSONArray("thumbnails")
-                                    val thumb = thumbs?.let {
-                                        if (it.length() > 0) it.optJSONObject(it.length() - 1)?.optString("url") else null
-                                    } ?: "https://img.youtube.com/vi/$vidId/hqdefault.jpg"
-
-                                    val track = AuraTrack(
-                                        id = "yt_$vidId",
-                                        videoId = vidId,
-                                        title = songTitle,
-                                        artist = songArtist,
-                                        album = songAlbum,
-                                        artworkUrl = thumb,
-                                        genre = category
-                                    )
-                                    parsedTracks.add(track)
-                                    shelfItems.add(
-                                        YtmMoodItem(
-                                            id = "track_$vidId",
-                                            title = songTitle,
-                                            subtitle = songArtist,
-                                            artworkUrl = thumb,
-                                            type = YtmMoodItemType.TRACK,
-                                            track = track
-                                        )
-                                    )
-                                }
-                                val twoRow = item.optJSONObject("musicTwoRowItemRenderer")
-                                if (twoRow != null) {
-                                    val cardTitle = twoRow.optJSONObject("title")
-                                        ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: continue
-                                    val subRuns = twoRow.optJSONObject("subtitle")?.optJSONArray("runs")
-                                    var subText = "YouTube Music"
-                                    if (subRuns != null) {
-                                        val sBuilder = StringBuilder()
-                                        for (r in 0 until subRuns.length()) {
-                                            val t = subRuns.optJSONObject(r)?.optString("text").orEmpty()
-                                            sBuilder.append(t)
-                                        }
-                                        if (sBuilder.isNotBlank()) subText = sBuilder.toString().trim()
-                                    }
-                                    val thumbs = twoRow.optJSONObject("thumbnailRenderer")
-                                        ?.optJSONObject("musicThumbnailRenderer")
-                                        ?.optJSONObject("thumbnail")
-                                        ?.optJSONArray("thumbnails")
-                                    val thumb = thumbs?.let {
-                                        if (it.length() > 0) it.optJSONObject(it.length() - 1)?.optString("url") else null
-                                    } ?: ""
-                                    val navWatch = twoRow.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")
-                                    val navBrowse = twoRow.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
-                                    val vidId = navWatch?.optString("videoId")?.takeIf { it.isNotBlank() }
-                                    val browseId = navBrowse?.optString("browseId")?.takeIf { it.isNotBlank() }
-                                        ?: navWatch?.optString("playlistId")?.takeIf { it.isNotBlank() }
-
-                                    if (vidId != null) {
-                                        val isVideo = shelfTitle.contains("video", ignoreCase = true) ||
-                                                subText.contains("video", ignoreCase = true) ||
-                                                subText.contains("views", ignoreCase = true)
-                                        val track = AuraTrack(
-                                            id = "yt_$vidId",
-                                            videoId = vidId,
-                                            title = cardTitle,
-                                            artist = subText,
-                                            album = category,
-                                            artworkUrl = thumb,
-                                            genre = category,
-                                            musicVideoType = if (isVideo) "MUSIC_VIDEO_TYPE_OMV" else null
-                                        )
-                                        parsedTracks.add(track)
-                                        shelfItems.add(
-                                            YtmMoodItem(
-                                                id = "yt_$vidId",
-                                                title = cardTitle,
-                                                subtitle = subText,
-                                                artworkUrl = thumb,
-                                                type = if (isVideo) YtmMoodItemType.VIDEO else YtmMoodItemType.TRACK,
-                                                track = track
-                                            )
-                                        )
-                                    } else if (browseId != null) {
-                                        if (browseId.startsWith("VL") || browseId.startsWith("RDCLAK") || browseId.startsWith("PL")) {
-                                            val playlist = YtmCommunityPlaylist(
-                                                id = browseId.removePrefix("VL"),
-                                                title = cardTitle,
-                                                author = subText,
-                                                artworkUrl = thumb
-                                            )
-                                            shelfItems.add(
-                                                YtmMoodItem(
-                                                    id = "pl_$browseId",
-                                                    title = cardTitle,
-                                                    subtitle = subText,
-                                                    artworkUrl = thumb,
-                                                    type = YtmMoodItemType.PLAYLIST,
-                                                    playlist = playlist
-                                                )
-                                            )
-                                        } else if (browseId.startsWith("MPRE") || browseId.startsWith("FEmusic_library_album")) {
-                                            val albumTrack = AuraTrack(
-                                                id = "yt_album_$browseId",
-                                                videoId = browseId,
-                                                title = cardTitle,
-                                                artist = subText,
-                                                album = cardTitle,
-                                                artworkUrl = thumb,
-                                                genre = category
-                                            )
-                                            parsedAlbums.add(albumTrack)
-                                            shelfItems.add(
-                                                YtmMoodItem(
-                                                    id = "album_$browseId",
-                                                    title = cardTitle,
-                                                    subtitle = subText,
-                                                    artworkUrl = thumb,
-                                                    type = YtmMoodItemType.ALBUM,
-                                                    track = albumTrack
-                                                )
-                                            )
-                                        } else if (browseId.startsWith("MPSP")) {
-                                            val podcast = YtmCommunityPlaylist(
-                                                id = browseId,
-                                                title = cardTitle,
-                                                author = subText,
-                                                artworkUrl = thumb
-                                            )
-                                            shelfItems.add(
-                                                YtmMoodItem(
-                                                    id = "pod_$browseId",
-                                                    title = cardTitle,
-                                                    subtitle = subText,
-                                                    artworkUrl = thumb,
-                                                    type = YtmMoodItemType.PLAYLIST,
-                                                    playlist = podcast
-                                                )
-                                            )
-                                        } else {
-                                            val playlist = YtmCommunityPlaylist(
-                                                id = browseId,
-                                                title = cardTitle,
-                                                author = subText,
-                                                artworkUrl = thumb
-                                            )
-                                            shelfItems.add(
-                                                YtmMoodItem(
-                                                    id = "misc_$browseId",
-                                                    title = cardTitle,
-                                                    subtitle = subText,
-                                                    artworkUrl = thumb,
-                                                    type = YtmMoodItemType.PLAYLIST,
-                                                    playlist = playlist
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            if (shelfItems.isNotEmpty()) {
-                                parsedShelves.add(
-                                    YtmMoodShelf(
-                                        title = shelfTitle.ifBlank { if (is4RowGrid) "Quick picks" else "$category Highlights" },
-                                        subtitle = shelfSubtitle,
-                                        is4RowGrid = is4RowGrid,
-                                        items = shelfItems
-                                    )
-                                )
+                            val shelf = sec.optJSONObject("musicCarouselShelfRenderer")
+                                ?: sec.optJSONObject("gridRenderer")
+                                ?: continue
+                            val parsedShelf = parseCarouselOrGridShelf(shelf, category, parsedTracks, parsedAlbums)
+                            if (parsedShelf != null && parsedShelf.items.isNotEmpty()) {
+                                parsedShelves.add(parsedShelf)
                             }
                         }
                     }
@@ -1531,6 +1410,428 @@ object SimpMusicExtractorEngine {
                 tracks = searchYouTubeMusic("$category songs official audio", "songs").take(30)
             )
         }
+    }
+
+    /**
+     * Parses a musicCarouselShelfRenderer or gridRenderer into a YtmMoodShelf model.
+     * Optionally populates [outTracks] and [outAlbums] collectors.
+     */
+    private fun parseCarouselOrGridShelf(
+        shelf: JSONObject,
+        defaultCategory: String,
+        outTracks: MutableList<AuraTrack>? = null,
+        outAlbums: MutableList<AuraTrack>? = null
+    ): YtmMoodShelf? {
+        val header = shelf.optJSONObject("header")?.optJSONObject("musicCarouselShelfBasicHeaderRenderer")
+            ?: shelf.optJSONObject("header")?.optJSONObject("gridHeaderRenderer")
+        val shelfTitle = header?.optJSONObject("title")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
+        val shelfSubtitle = header?.optJSONObject("strapline")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim()
+            ?: header?.optJSONObject("subtitle")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim()
+        val numItemsPerColumn = shelf.optString("numItemsPerColumn").ifBlank {
+            header?.optString("numItemsPerColumn").orEmpty()
+        }
+        val is4RowGrid = numItemsPerColumn == "4"
+        val contents = shelf.optJSONArray("contents") ?: shelf.optJSONArray("items") ?: return null
+        val shelfItems = mutableListOf<YtmMoodItem>()
+
+        for (i in 0 until contents.length()) {
+            val item = contents.optJSONObject(i) ?: continue
+            val resItem = item.optJSONObject("musicResponsiveListItemRenderer")
+            if (resItem != null) {
+                val flexCols = resItem.optJSONArray("flexColumns") ?: continue
+                val firstRun = flexCols.optJSONObject(0)
+                    ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                    ?.optJSONObject("text")
+                    ?.optJSONArray("runs")
+                    ?.optJSONObject(0)
+                val songTitle = firstRun?.optString("text") ?: continue
+                val vidId = resItem.optJSONObject("playlistItemData")?.optString("videoId")
+                    ?.takeIf { it.isNotBlank() }
+                    ?: resItem.optJSONObject("overlay")
+                        ?.optJSONObject("musicItemThumbnailOverlayRenderer")
+                        ?.optJSONObject("content")
+                        ?.optJSONObject("musicPlayButtonRenderer")
+                        ?.optJSONObject("playNavigationEndpoint")
+                        ?.optJSONObject("watchEndpoint")
+                        ?.optString("videoId")
+                        ?.takeIf { it.isNotBlank() }
+                    ?: continue
+
+                val subRuns = flexCols.optJSONObject(1)
+                    ?.optJSONObject("musicResponsiveListItemFlexColumnRenderer")
+                    ?.optJSONObject("text")
+                    ?.optJSONArray("runs")
+                var songArtist = "YouTube Artist"
+                var songAlbum = "YouTube Music"
+                if (subRuns != null) {
+                    val texts = mutableListOf<String>()
+                    for (r in 0 until subRuns.length()) {
+                        val t = subRuns.optJSONObject(r)?.optString("text")?.trim().orEmpty()
+                        if (t.isNotEmpty() && t != "•" && t != "&") texts.add(t)
+                    }
+                    if (texts.isNotEmpty()) {
+                        songArtist = if (texts[0].equals("Song", ignoreCase = true) || texts[0].equals("Video", ignoreCase = true)) {
+                            texts.getOrNull(1) ?: "YouTube Artist"
+                        } else texts[0]
+                        if (texts.size > 2) {
+                            songAlbum = texts[1]
+                        }
+                    }
+                }
+                val thumbs = resItem.optJSONObject("thumbnail")
+                    ?.optJSONObject("musicThumbnailRenderer")
+                    ?.optJSONObject("thumbnail")
+                    ?.optJSONArray("thumbnails")
+                val thumb = thumbs?.let {
+                    if (it.length() > 0) it.optJSONObject(it.length() - 1)?.optString("url") else null
+                } ?: "https://img.youtube.com/vi/$vidId/hqdefault.jpg"
+
+                val track = AuraTrack(
+                    id = "yt_$vidId",
+                    videoId = vidId,
+                    title = songTitle,
+                    artist = songArtist,
+                    album = songAlbum,
+                    artworkUrl = thumb,
+                    genre = defaultCategory
+                )
+                outTracks?.add(track)
+                shelfItems.add(
+                    YtmMoodItem(
+                        id = "track_$vidId",
+                        title = songTitle,
+                        subtitle = songArtist,
+                        artworkUrl = thumb,
+                        type = YtmMoodItemType.TRACK,
+                        track = track
+                    )
+                )
+            }
+            val twoRow = item.optJSONObject("musicTwoRowItemRenderer")
+            if (twoRow != null) {
+                val cardTitle = twoRow.optJSONObject("title")
+                    ?.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: continue
+                val subRuns = twoRow.optJSONObject("subtitle")?.optJSONArray("runs")
+                var subText = "YouTube Music"
+                if (subRuns != null) {
+                    val sBuilder = StringBuilder()
+                    for (r in 0 until subRuns.length()) {
+                        val t = subRuns.optJSONObject(r)?.optString("text").orEmpty()
+                        sBuilder.append(t)
+                    }
+                    if (sBuilder.isNotBlank()) subText = sBuilder.toString().trim()
+                }
+                val thumbs = twoRow.optJSONObject("thumbnailRenderer")
+                    ?.optJSONObject("musicThumbnailRenderer")
+                    ?.optJSONObject("thumbnail")
+                    ?.optJSONArray("thumbnails")
+                val thumb = thumbs?.let {
+                    if (it.length() > 0) it.optJSONObject(it.length() - 1)?.optString("url") else null
+                } ?: ""
+                val navWatch = twoRow.optJSONObject("navigationEndpoint")?.optJSONObject("watchEndpoint")
+                val navBrowse = twoRow.optJSONObject("navigationEndpoint")?.optJSONObject("browseEndpoint")
+                val vidId = navWatch?.optString("videoId")?.takeIf { it.isNotBlank() }
+                val browseId = navBrowse?.optString("browseId")?.takeIf { it.isNotBlank() }
+                    ?: navWatch?.optString("playlistId")?.takeIf { it.isNotBlank() }
+
+                if (vidId != null) {
+                    val isVideo = shelfTitle.contains("video", ignoreCase = true) ||
+                            subText.contains("video", ignoreCase = true) ||
+                            subText.contains("views", ignoreCase = true)
+                    val track = AuraTrack(
+                        id = "yt_$vidId",
+                        videoId = vidId,
+                        title = cardTitle,
+                        artist = subText,
+                        album = defaultCategory,
+                        artworkUrl = thumb,
+                        genre = defaultCategory,
+                        musicVideoType = if (isVideo) "MUSIC_VIDEO_TYPE_OMV" else null
+                    )
+                    outTracks?.add(track)
+                    shelfItems.add(
+                        YtmMoodItem(
+                            id = "yt_$vidId",
+                            title = cardTitle,
+                            subtitle = subText,
+                            artworkUrl = thumb,
+                            type = if (isVideo) YtmMoodItemType.VIDEO else YtmMoodItemType.TRACK,
+                            track = track
+                        )
+                    )
+                } else if (browseId != null) {
+                    if (browseId.startsWith("VL") || browseId.startsWith("RDCLAK") || browseId.startsWith("PL")) {
+                        val playlist = YtmCommunityPlaylist(
+                            id = browseId.removePrefix("VL"),
+                            title = cardTitle,
+                            author = subText,
+                            artworkUrl = thumb
+                        )
+                        shelfItems.add(
+                            YtmMoodItem(
+                                id = "pl_$browseId",
+                                title = cardTitle,
+                                subtitle = subText,
+                                artworkUrl = thumb,
+                                type = YtmMoodItemType.PLAYLIST,
+                                playlist = playlist
+                            )
+                        )
+                    } else if (browseId.startsWith("MPRE") || browseId.startsWith("FEmusic_library_album")) {
+                        val albumTrack = AuraTrack(
+                            id = "yt_album_$browseId",
+                            videoId = browseId,
+                            title = cardTitle,
+                            artist = subText,
+                            album = cardTitle,
+                            artworkUrl = thumb,
+                            genre = defaultCategory
+                        )
+                        outAlbums?.add(albumTrack)
+                        shelfItems.add(
+                            YtmMoodItem(
+                                id = "album_$browseId",
+                                title = cardTitle,
+                                subtitle = subText,
+                                artworkUrl = thumb,
+                                type = YtmMoodItemType.ALBUM,
+                                track = albumTrack
+                            )
+                        )
+                    } else if (browseId.startsWith("MPSP")) {
+                        val podcast = YtmCommunityPlaylist(
+                            id = browseId,
+                            title = cardTitle,
+                            author = subText,
+                            artworkUrl = thumb
+                        )
+                        shelfItems.add(
+                            YtmMoodItem(
+                                id = "pod_$browseId",
+                                title = cardTitle,
+                                subtitle = subText,
+                                artworkUrl = thumb,
+                                type = YtmMoodItemType.PLAYLIST,
+                                playlist = podcast
+                            )
+                        )
+                    } else {
+                        val playlist = YtmCommunityPlaylist(
+                            id = browseId,
+                            title = cardTitle,
+                            author = subText,
+                            artworkUrl = thumb
+                        )
+                        shelfItems.add(
+                            YtmMoodItem(
+                                id = "misc_$browseId",
+                                title = cardTitle,
+                                subtitle = subText,
+                                artworkUrl = thumb,
+                                type = YtmMoodItemType.PLAYLIST,
+                                playlist = playlist
+                            )
+                        )
+                    }
+                }
+            }
+        }
+        if (shelfItems.isEmpty()) return null
+        return YtmMoodShelf(
+            title = shelfTitle.ifBlank { if (is4RowGrid) "Quick picks" else "$defaultCategory Highlights" },
+            subtitle = shelfSubtitle,
+            is4RowGrid = is4RowGrid,
+            items = shelfItems
+        )
+    }
+
+    /**
+     * Fetches details for a Mood or Genre category from YouTube Music InnerTube (`browseId = "FEmusic_moods_and_genres_category"` or custom like `"FEmusic_new_releases"`).
+     * Returns rich shelves with horizontal playlist carousels, 4-row song grids, and albums.
+     */
+    suspend fun fetchMoodCategoryDetails(
+        browseId: String = "FEmusic_moods_and_genres_category",
+        params: String? = null,
+        title: String
+    ): List<YtmMoodShelf> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().apply {
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "WEB_REMIX")
+                        put("clientVersion", "1.20250312.01.00")
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+                put("browseId", browseId)
+                if (!params.isNullOrBlank()) {
+                    put("params", params)
+                }
+            }
+
+            val req = Request.Builder()
+                .url("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false")
+                .header("User-Agent", USER_AGENT)
+                .header("Origin", "https://music.youtube.com")
+                .header("Referer", "https://music.youtube.com/")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    val root = JSONObject(bodyStr)
+                    val parsedShelves = mutableListOf<YtmMoodShelf>()
+
+                    val sections = root.optJSONObject("contents")
+                        ?.optJSONObject("singleColumnBrowseResultsRenderer")
+                        ?.optJSONArray("tabs")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("tabRenderer")
+                        ?.optJSONObject("content")
+                        ?.optJSONObject("sectionListRenderer")
+                        ?.optJSONArray("contents")
+
+                    if (sections != null) {
+                        for (s in 0 until sections.length()) {
+                            val sec = sections.optJSONObject(s) ?: continue
+                            val shelfObj = sec.optJSONObject("musicCarouselShelfRenderer")
+                                ?: sec.optJSONObject("gridRenderer")
+                                ?: continue
+
+                            val parsedShelf = parseCarouselOrGridShelf(shelfObj, title)
+                            if (parsedShelf != null && parsedShelf.items.isNotEmpty()) {
+                                parsedShelves.add(parsedShelf)
+                            }
+                        }
+                    }
+
+                    if (parsedShelves.isNotEmpty()) {
+                        return@withContext parsedShelves
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchMoodCategoryDetails failed for $title: ${e.message}")
+        }
+
+        // Resilient fallback: search YouTube Music for this category so the screen is never blank
+        try {
+            val fallbackTracks = searchYouTubeMusic("$title songs official audio", "songs").take(30)
+            if (fallbackTracks.isNotEmpty()) {
+                val shelfItems = fallbackTracks.map { track ->
+                    YtmMoodItem(
+                        id = "track_${track.videoId}",
+                        title = track.title,
+                        subtitle = track.artist,
+                        artworkUrl = track.artworkUrl,
+                        type = YtmMoodItemType.TRACK,
+                        track = track
+                    )
+                }
+                listOf(
+                    YtmMoodShelf(
+                        title = "$title Highlights",
+                        subtitle = "Recommended for you",
+                        is4RowGrid = true,
+                        items = shelfItems
+                    )
+                )
+            } else {
+                emptyList()
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
+     * Directly queries YouTube Music InnerTube (`browseId = "FEmusic_moods_and_genres"`)
+     * to fetch all official mood & genre navigation buttons with their params and stripe colors.
+     */
+    suspend fun fetchMoodAndGenresCategories(): List<YtmMoodCategorySection> = withContext(Dispatchers.IO) {
+        try {
+            val payload = JSONObject().apply {
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "WEB_REMIX")
+                        put("clientVersion", "1.20250312.01.00")
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+                put("browseId", "FEmusic_moods_and_genres")
+            }
+
+            val req = Request.Builder()
+                .url("https://music.youtube.com/youtubei/v1/browse?prettyPrint=false")
+                .header("User-Agent", USER_AGENT)
+                .header("Origin", "https://music.youtube.com")
+                .header("Referer", "https://music.youtube.com/")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val bodyStr = resp.body?.string() ?: ""
+                    val root = JSONObject(bodyStr)
+                    val sections = root.optJSONObject("contents")
+                        ?.optJSONObject("singleColumnBrowseResultsRenderer")
+                        ?.optJSONArray("tabs")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("tabRenderer")
+                        ?.optJSONObject("content")
+                        ?.optJSONObject("sectionListRenderer")
+                        ?.optJSONArray("contents")
+
+                    val resultSections = mutableListOf<YtmMoodCategorySection>()
+                    if (sections != null) {
+                        for (s in 0 until sections.length()) {
+                            val sec = sections.optJSONObject(s) ?: continue
+                            val grid = sec.optJSONObject("gridRenderer") ?: continue
+                            val secTitle = grid.optJSONObject("header")
+                                ?.optJSONObject("gridHeaderRenderer")
+                                ?.optJSONObject("title")
+                                ?.optJSONArray("runs")
+                                ?.optJSONObject(0)
+                                ?.optString("text")
+                                ?.trim().orEmpty()
+
+                            val itemsArray = grid.optJSONArray("items") ?: continue
+                            val categoryItems = mutableListOf<YtmMoodCategoryItem>()
+                            for (i in 0 until itemsArray.length()) {
+                                val btn = itemsArray.optJSONObject(i)?.optJSONObject("musicNavigationButtonRenderer") ?: continue
+                                val btnText = btn.optJSONObject("buttonText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")?.trim().orEmpty()
+                                val color = btn.optJSONObject("solid")?.optLong("leftStripeColor") ?: 0xFF1DB954
+                                val endpoint = btn.optJSONObject("clickCommand")?.optJSONObject("browseEndpoint")
+                                val browseId = endpoint?.optString("browseId") ?: "FEmusic_moods_and_genres_category"
+                                val params = endpoint?.optString("params").orEmpty()
+                                if (btnText.isNotBlank()) {
+                                    categoryItems.add(
+                                        YtmMoodCategoryItem(
+                                            title = btnText,
+                                            params = params,
+                                            stripeColor = color,
+                                            browseId = browseId
+                                        )
+                                    )
+                                }
+                            }
+                            if (categoryItems.isNotEmpty()) {
+                                resultSections.add(YtmMoodCategorySection(title = secTitle, items = categoryItems))
+                            }
+                        }
+                    }
+                    if (resultSections.isNotEmpty()) {
+                        return@withContext resultSections
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "fetchMoodAndGenresCategories failed: ${e.message}")
+        }
+        emptyList()
     }
 
     /**
@@ -1910,7 +2211,22 @@ object SimpMusicExtractorEngine {
      */
     suspend fun fetchPlaylistTracks(browseId: String): List<AuraTrack> = withContext(Dispatchers.IO) {
         try {
-            val actualBrowseId = if (browseId.startsWith("VL") || browseId.startsWith("FEmusic_")) browseId else "VL$browseId"
+            var cleanId = browseId.trim()
+            while (cleanId.startsWith("album_") || cleanId.startsWith("yt_album_") || cleanId.startsWith("pl_") || cleanId.startsWith("track_") || cleanId.startsWith("pod_") || cleanId.startsWith("misc_") || cleanId.startsWith("yt_")) {
+                cleanId = cleanId.removePrefix("album_")
+                    .removePrefix("yt_album_")
+                    .removePrefix("pl_")
+                    .removePrefix("track_")
+                    .removePrefix("pod_")
+                    .removePrefix("misc_")
+                    .removePrefix("yt_")
+                    .trim()
+            }
+            val actualBrowseId = when {
+                cleanId.startsWith("VL") || cleanId.startsWith("MPRE") || cleanId.startsWith("FEmusic_") || cleanId.startsWith("MPSP") || cleanId.startsWith("MP_") -> cleanId
+                cleanId.startsWith("OLAK5uy_") || cleanId.startsWith("PL") || cleanId.startsWith("RD") -> "VL$cleanId"
+                else -> if (cleanId.startsWith("VL")) cleanId else "VL$cleanId"
+            }
             val payload = JSONObject().apply {
                 put("context", JSONObject().apply {
                     put("client", JSONObject().apply {
@@ -2002,12 +2318,22 @@ object SimpMusicExtractorEngine {
      */
     suspend fun fetchPlaylistDetail(playlist: YtmCommunityPlaylist): PlaylistDetail = withContext(Dispatchers.IO) {
         val playCountRegex = Regex("""([,\d]+(?:\.\d+)?\s*[KkMmBb]?\s*(?:plays|views))""", RegexOption.IGNORE_CASE)
-        val rawId = playlist.id.removePrefix("album_").removePrefix("pl_").removePrefix("track_").removePrefix("yt_album_").removePrefix("pod_").trim()
+        var rawId = playlist.id.trim()
+        while (rawId.startsWith("album_") || rawId.startsWith("yt_album_") || rawId.startsWith("pl_") || rawId.startsWith("track_") || rawId.startsWith("pod_") || rawId.startsWith("misc_") || rawId.startsWith("yt_")) {
+            rawId = rawId.removePrefix("album_")
+                .removePrefix("yt_album_")
+                .removePrefix("pl_")
+                .removePrefix("track_")
+                .removePrefix("pod_")
+                .removePrefix("misc_")
+                .removePrefix("yt_")
+                .trim()
+        }
         val isPodcastShow = rawId.startsWith("MPSP") || rawId.startsWith("MP_") || rawId.contains("podcast", ignoreCase = true)
         try {
             val actualBrowseId = when {
                 isPodcastShow -> rawId
-                rawId.startsWith("VL") || rawId.startsWith("MPREb_") || rawId.startsWith("FEmusic_") -> rawId
+                rawId.startsWith("VL") || rawId.startsWith("MPRE") || rawId.startsWith("FEmusic_") -> rawId
                 rawId.startsWith("OLAK5uy_") || rawId.startsWith("PL") || rawId.startsWith("RD") -> "VL$rawId"
                 else -> if (rawId.startsWith("VL")) rawId else "VL$rawId"
             }
@@ -2549,15 +2875,49 @@ object SimpMusicExtractorEngine {
         }
 
         val fallbackTracks = fetchPlaylistTracks(playlist.id)
+        if (fallbackTracks.isNotEmpty()) {
+            return@withContext PlaylistDetail(
+                id = playlist.id,
+                title = playlist.title,
+                author = playlist.author,
+                trackCount = "${fallbackTracks.size} tracks",
+                bannerUrl = playlist.artworkUrl,
+                tracks = fallbackTracks.mapIndexed { idx, trk ->
+                    PlaylistTrackItem(rank = idx + 1, track = trk, viewCount = "Popular Track")
+                },
+                totalViews = ""
+            )
+        }
+
+        // Resilient fallback: search YouTube Music for "${playlist.title} ${playlist.author}"
+        // Ensures all tapped cards from catalog/moods/explore return results and display their screen
+        try {
+            val searchQuery = "${playlist.title} ${playlist.author}".trim().ifBlank { playlist.title }
+            val searchResults = searchYouTubeMusic(searchQuery, "songs").take(30)
+            if (searchResults.isNotEmpty()) {
+                return@withContext PlaylistDetail(
+                    id = playlist.id,
+                    title = playlist.title,
+                    author = playlist.author.ifBlank { "YouTube Music" },
+                    trackCount = "${searchResults.size} tracks",
+                    bannerUrl = playlist.artworkUrl.ifBlank { searchResults.firstOrNull()?.artworkUrl ?: "" },
+                    tracks = searchResults.mapIndexed { idx, trk ->
+                        PlaylistTrackItem(rank = idx + 1, track = trk, viewCount = "Track ${idx + 1}")
+                    },
+                    totalViews = ""
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Search fallback for playlist detail failed: ${e.message}")
+        }
+
         PlaylistDetail(
             id = playlist.id,
             title = playlist.title,
             author = playlist.author,
-            trackCount = "${fallbackTracks.size} tracks",
+            trackCount = "0 tracks",
             bannerUrl = playlist.artworkUrl,
-            tracks = fallbackTracks.mapIndexed { idx, trk ->
-                PlaylistTrackItem(rank = idx + 1, track = trk, viewCount = "Popular Track")
-            },
+            tracks = emptyList(),
             totalViews = ""
         )
     }

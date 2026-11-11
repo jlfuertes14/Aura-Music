@@ -36,6 +36,9 @@ import com.auramusic.app.domain.model.MoodCategory
 import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.domain.model.PlaylistDetail
 import com.auramusic.app.domain.model.PlaylistTrackItem
+import com.auramusic.app.domain.model.CatalogDetail
+import com.auramusic.app.domain.model.YtmMoodCategorySection
+import com.auramusic.app.domain.model.YtmMoodCategoryItem
 import com.auramusic.app.domain.model.ReturnYouTubeDislikeData
 import com.auramusic.app.domain.model.YtmChartSection
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
@@ -148,6 +151,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedPlaylistDetail = MutableStateFlow<PlaylistDetail?>(null)
     val selectedPlaylistDetail: StateFlow<PlaylistDetail?> = _selectedPlaylistDetail.asStateFlow()
+
+    private val _selectedCatalogDetail = MutableStateFlow<CatalogDetail?>(null)
+    val selectedCatalogDetail: StateFlow<CatalogDetail?> = _selectedCatalogDetail.asStateFlow()
+
+    private val _isCatalogLoading = MutableStateFlow(false)
+    val isCatalogLoading: StateFlow<Boolean> = _isCatalogLoading.asStateFlow()
+
+    private val catalogDetailCache = java.util.concurrent.ConcurrentHashMap<String, List<YtmMoodShelf>>()
 
     private val _activePlayingPlaylistDetail = MutableStateFlow<PlaylistDetail?>(null)
     val activePlayingPlaylistDetail: StateFlow<PlaylistDetail?> = _activePlayingPlaylistDetail.asStateFlow()
@@ -281,7 +292,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         AuraPlayerManager.initialize(application)
-        AuraNotificationManager.setupFcmSubscription(application)
         SimpMusicExtractorEngine.clearStreamCache()
         _favorites.value = storage.loadFavorites()
         _downloads.value = storage.loadDownloads()
@@ -356,24 +366,45 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _visibleRecentlyPlayed.value = updatedRecent
                 }
                 applyLocalRecommendations()
-                _lyricsOffsetMs.value = storage.getLyricsOffsetMs(track.videoId)
+                val canonicalTrack = AuraPlayerManager.originalAudioTrack ?: track
+                val canonicalVid = canonicalTrack.videoId
+                val savedOffset = storage.getLyricsOffsetMs(canonicalVid).takeIf { it != 0 }
+                    ?: storage.getLyricsOffsetMs(track.videoId)
+                _lyricsOffsetMs.value = savedOffset
                 _nowPlayingVideoInfo.value = null
 
                 val paletteDef = async { extractAuraPaletteFromUrl(track.highResArtworkUrl) }
                 val videoInfoDef = async { SimpMusicExtractorEngine.fetchVideoInfo(track.videoId) }
-                val lyricsDef = async {
-                    SimpMusicLyricsRepository.getLyrics(
-                        videoId = track.videoId,
-                        title = track.title,
-                        artist = track.artist,
-                        durationSeconds = track.durationSeconds
-                    )
+
+                // Check if lyrics are already loaded for this song so switching between Audio and Video mode
+                // retains the exact same verified, synced lyrics without re-querying raw video metadata.
+                val isSameSongLyrics = _lyrics.value != null && (
+                    _lyrics.value?.videoId == canonicalVid ||
+                    _lyrics.value?.videoId == track.videoId ||
+                    (AuraPlayerManager.isVideoMode.value && AuraPlayerManager.originalAudioTrack != null && _lyrics.value?.syncedLines?.isNotEmpty() == true)
+                )
+
+                val lyricsDef = if (isSameSongLyrics) {
+                    null
+                } else {
+                    async {
+                        val cleanTitle = SimpMusicExtractorEngine.cleanSongTitleForVideoSearch(canonicalTrack.title, canonicalTrack.artist)
+                        val cleanArtist = SimpMusicExtractorEngine.primaryArtistName(canonicalTrack.artist)
+                        SimpMusicLyricsRepository.getLyrics(
+                            videoId = canonicalVid,
+                            title = cleanTitle.ifBlank { canonicalTrack.title },
+                            artist = cleanArtist.ifBlank { canonicalTrack.artist },
+                            durationSeconds = canonicalTrack.durationSeconds
+                        )
+                    }
                 }
                 val sponsorDef = async { SponsorBlockRepository.getSponsorSegments(track.videoId) }
                 val rydDef = async { SponsorBlockRepository.getReturnYouTubeDislike(track.videoId) }
 
                 _palette.value = paletteDef.await()
-                _lyrics.value = lyricsDef.await()
+                if (lyricsDef != null) {
+                    _lyrics.value = lyricsDef.await()
+                }
                 AuraPlayerManager.setSponsorSegments(sponsorDef.await())
                 val videoInfo = videoInfoDef.await()
                 val ryd = rydDef.await()
@@ -727,9 +758,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openAlbum(track: AuraTrack) {
         viewModelScope.launch {
-            val cleanVid = track.videoId.removePrefix("album_").removePrefix("yt_album_").trim()
+            var cleanVid = track.videoId.trim()
+            while (cleanVid.startsWith("album_") || cleanVid.startsWith("yt_album_") || cleanVid.startsWith("pl_") || cleanVid.startsWith("track_") || cleanVid.startsWith("yt_")) {
+                cleanVid = cleanVid.removePrefix("album_")
+                    .removePrefix("yt_album_")
+                    .removePrefix("pl_")
+                    .removePrefix("track_")
+                    .removePrefix("yt_")
+                    .trim()
+            }
             val albumName = track.album.takeIf { it.isNotBlank() && !it.equals("YouTube Music", true) } ?: track.title
-            val targetId = if (cleanVid.startsWith("MPREb_") || cleanVid.startsWith("OLAK5uy_")) {
+            val targetId = if (cleanVid.startsWith("MPRE") || cleanVid.startsWith("OLAK5uy_") || cleanVid.startsWith("VL")) {
                 cleanVid
             } else {
                 SimpMusicExtractorEngine.findAlbumBrowseId(albumName, track.artist) ?: cleanVid
@@ -745,6 +784,70 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closePlaylistDetail() {
         _selectedPlaylistDetail.value = null
+    }
+
+    fun openCatalogCategory(
+        title: String,
+        params: String = "",
+        browseId: String = "FEmusic_moods_and_genres_category"
+    ) {
+        val cacheKey = "${browseId}_${params}_${title}"
+        val cached = catalogDetailCache[cacheKey]
+        if (cached != null && cached.isNotEmpty()) {
+            _selectedCatalogDetail.value = CatalogDetail(
+                title = title,
+                params = params,
+                browseId = browseId,
+                shelves = cached,
+                isLoading = false
+            )
+            return
+        }
+
+        _selectedCatalogDetail.value = CatalogDetail(
+            title = title,
+            params = params,
+            browseId = browseId,
+            shelves = emptyList(),
+            isLoading = true
+        )
+        _isCatalogLoading.value = true
+
+        viewModelScope.launch {
+            try {
+                val shelves = SimpMusicExtractorEngine.fetchMoodCategoryDetails(
+                    browseId = browseId,
+                    params = params.ifBlank { null },
+                    title = title
+                )
+                if (shelves.isNotEmpty()) {
+                    catalogDetailCache[cacheKey] = shelves
+                }
+                _selectedCatalogDetail.value = CatalogDetail(
+                    title = title,
+                    params = params,
+                    browseId = browseId,
+                    shelves = shelves,
+                    isLoading = false
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("AuraViewModel", "Error fetching catalog category $title: ${e.message}")
+                _selectedCatalogDetail.value = CatalogDetail(
+                    title = title,
+                    params = params,
+                    browseId = browseId,
+                    shelves = emptyList(),
+                    isLoading = false,
+                    error = e.message ?: "Failed to load"
+                )
+            } finally {
+                _isCatalogLoading.value = false
+            }
+        }
+    }
+
+    fun closeCatalogDetail() {
+        _selectedCatalogDetail.value = null
     }
 
     fun setActivePlaylistDetail(detail: PlaylistDetail) {
@@ -945,23 +1048,72 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun loadSearchExploreCoverTracks() {
         if (searchExploreCoversLoaded || searchExploreCoversJob?.isActive == true) return
+
+        // 1. Check persistent disk cache first so it loads only once and never hits network repeatedly
+        val cachedCovers = storage.loadExploreCoverCache()
+        if (cachedCovers.isNotEmpty()) {
+            _searchExploreCoverTracks.value = cachedCovers.mapValues { (catTitle, urls) ->
+                urls.mapIndexed { idx, url ->
+                    AuraTrack(
+                        id = "cache_${catTitle}_$idx",
+                        videoId = "cache_${catTitle}_$idx",
+                        title = catTitle,
+                        artist = catTitle,
+                        artworkUrl = url
+                    )
+                }
+            }
+            searchExploreCoversLoaded = true
+            return
+        }
+
         searchExploreCoversJob = viewModelScope.launch {
             val artistQuery = preferredArtistQuery()
             val categoryQueries = linkedMapOf(
-                "Music" to ("popular music songs official audio" to "songs"),
-                "Podcasts" to ("popular podcasts episodes" to "videos"),
-                "Audiobooks" to ("popular audiobooks full audiobook" to "videos"),
-                "Live Events" to ("live music performances concerts" to "videos"),
-                "Made For You" to (
-                    (if (artistQuery.isBlank()) "popular songs recommended for you" else "$artistQuery songs") to "songs"
-                ),
-                "Fitness" to ("workout fitness music songs" to "songs"),
+                // Top Browse
+                "New Releases" to ("new music albums singles official" to "songs"),
+                "Charts" to ("top global music charts hit songs" to "songs"),
                 "Pop" to ("popular pop hits official audio" to "songs"),
                 "Hip-Hop" to ("popular hip hop hits official audio" to "songs"),
-                "Rock" to ("rock classics popular songs official audio" to "songs"),
-                "Anime & J-Pop" to ("popular anime songs j pop" to "songs"),
-                "Chill & Lo-Fi" to ("chill lo fi beats music" to "songs"),
-                "Charts" to ("top global music charts hit songs" to "songs")
+                // Moods & Moments
+                "Chill" to ("chill relax lo fi beats music" to "songs"),
+                "Workout" to ("workout fitness gym pump songs" to "songs"),
+                "Party" to ("party dance club hits songs" to "songs"),
+                "Focus" to ("deep focus study instrumental music" to "songs"),
+                "Feel Good" to ("feel good happy upbeat songs" to "songs"),
+                "Romance" to ("romantic love songs acoustic" to "songs"),
+                "Energize" to ("energizing electronic pop songs" to "songs"),
+                "Sleep" to ("peaceful sleep calming night music" to "songs"),
+                "Commute" to ("road trip driving commute playlist" to "songs"),
+                "Gaming" to ("gaming music edm synthwave bass" to "songs"),
+                "Sad" to ("sad emotional acoustic songs" to "songs"),
+                // Genres
+                "Rock" to ("rock classics rock anthems official audio" to "songs"),
+                "R&B & Soul" to ("r&b soul hits official audio" to "songs"),
+                "Dance & Electronic" to ("dance electronic edm club music" to "songs"),
+                "Indie & Alternative" to ("indie alternative rock songs" to "songs"),
+                "Country & Americana" to ("country music hits americana" to "songs"),
+                "Latin" to ("latin hits reggaeton pop latino" to "songs"),
+                "K-Pop" to ("popular k-pop hits" to "songs"),
+                "J-Pop & Anime" to ("popular anime songs j-pop" to "songs"),
+                "Classical" to ("classical music masterpieces piano orchestra" to "songs"),
+                "Jazz" to ("smooth jazz cafe instrumental" to "songs"),
+                "Metal" to ("heavy metal rock anthems" to "songs"),
+                "Decades" to ("throwback classics 80s 90s 2000s hits" to "songs"),
+                "Folk & Acoustic" to ("folk acoustic guitar singer songwriter" to "songs"),
+                "Soundtracks" to ("epic movie soundtrack scores" to "songs"),
+                "Reggae & Caribbean" to ("reggae dancehall caribbean vibes" to "songs"),
+                "Blues" to ("blues classics electric blues guitar" to "songs"),
+                "Bollywood & Indian" to ("bollywood hits hindi songs" to "songs"),
+                "African" to ("afrobeats amapiano african hits" to "songs"),
+                "Arabic" to ("arabic pop traditional hits" to "songs"),
+                "Christian & Gospel" to ("christian worship gospel music" to "songs"),
+                "Mandopop & Cantopop" to ("mandopop cantopop chinese hits" to "songs"),
+                "OPM" to ("opm tagalog love songs acoustic" to "songs"),
+                "Indonesian" to ("indonesian pop hits lagu pop" to "songs"),
+                "Family" to ("kids children family fun songs" to "songs"),
+                "Seasonal" to ("holiday seasonal celebration music" to "songs"),
+                "Thai" to ("thai pop hits music" to "songs")
             )
             val fetchedByCategory = mutableMapOf<String, List<AuraTrack>>()
 
@@ -970,16 +1122,25 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     fetchedByCategory.values.flatten() + _homeRecommendations.value + _favorites.value +
                         _recentlyPlayed.value + SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS
                 ).distinctBy { it.videoId }
-                _searchExploreCoverTracks.value = categoryQueries.keys.associateWith { title ->
-                    (fetchedByCategory[title].orEmpty() + fallbackArtworkPool)
-                        .distinctBy { it.videoId }
-                        .take(3)
+
+                val mapped = categoryQueries.keys.associateWith { title ->
+                    val specific = fetchedByCategory[title].orEmpty()
+                    if (specific.size >= 3) {
+                        specific.take(3)
+                    } else {
+                        val offset = Math.abs(title.hashCode()) % fallbackArtworkPool.size.coerceAtLeast(1)
+                        val rotatedPool = if (fallbackArtworkPool.isNotEmpty()) {
+                            fallbackArtworkPool.drop(offset) + fallbackArtworkPool.take(offset)
+                        } else emptyList()
+                        (specific + rotatedPool).distinctBy { it.videoId }.take(3)
+                    }
                 }
+                _searchExploreCoverTracks.value = mapped
             }
 
             publishArtworkFanPools()
 
-            // Limit parallel InnerTube requests so opening Explore does not flood the service.
+            // Fetch high-priority categories first, then remainder in small batches
             categoryQueries.entries.chunked(4).forEach { batch ->
                 val requests = batch.map { entry ->
                     entry.key to async {
@@ -988,7 +1149,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                                 query = entry.value.first,
                                 filter = entry.value.second,
                                 prefetchTopResult = false
-                            ).take(8)
+                            ).take(4)
                         }.getOrDefault(emptyList())
                     }
                 }
@@ -1010,6 +1171,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             fetchedByCategory["Made For You"] = madeForYou
             publishArtworkFanPools()
             searchExploreCoversLoaded = true
+
+            // Persist resolved fan-out covers to disk so subsequent launches use cache immediately
+            val coversToPersist = _searchExploreCoverTracks.value.mapValues { (_, tracks) ->
+                tracks.mapNotNull { it.highResArtworkUrl.takeIf { u -> u.isNotBlank() } }.take(3)
+            }
+            if (coversToPersist.isNotEmpty()) {
+                storage.saveExploreCoverCache(coversToPersist)
+            }
         }
     }
 
@@ -1595,9 +1764,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     fun adjustLyricsOffset(deltaMs: Int) {
         val vid = AuraPlayerManager.currentTrack.value?.videoId ?: return
+        val canonicalVid = AuraPlayerManager.originalAudioTrack?.videoId ?: vid
         val next = (_lyricsOffsetMs.value + deltaMs).coerceIn(-120000, 120000)
         _lyricsOffsetMs.value = next
         storage.setLyricsOffsetMs(vid, next)
+        if (canonicalVid != vid) {
+            storage.setLyricsOffsetMs(canonicalVid, next)
+        }
     }
 
     fun toggleRomanizedLyrics() {
@@ -1646,7 +1819,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             AuraPlayerManager.setVideoLoading(true)
             Toast.makeText(getApplication(), "Checking for Official Music Video…", Toast.LENGTH_SHORT).show()
 
+            val targetKey = LocalRecommendationEngine.songIdentityKey(track)
+            val matchedShelfVideo = (_homeMusicVideos.value + rawHomeVideos + rawCategoryVideos).firstOrNull { candidate ->
+                candidate.videoId.isNotBlank() && (
+                    candidate.videoId == track.videoId ||
+                        (targetKey.isNotBlank() && LocalRecommendationEngine.songIdentityKey(candidate) == targetKey)
+                    )
+            }
             val official = SimpMusicExtractorEngine.findOfficialMusicVideo(track)
+                ?: matchedShelfVideo?.takeIf {
+                    withContext(Dispatchers.IO) { SimpMusicExtractorEngine.resolveVideoStream(it.videoId) != null }
+                }
             AuraPlayerManager.setVideoLoading(false)
 
             if (official != null) {

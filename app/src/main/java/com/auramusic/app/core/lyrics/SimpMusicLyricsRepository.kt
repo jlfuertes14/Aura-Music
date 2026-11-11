@@ -167,10 +167,21 @@ object SimpMusicLyricsRepository {
 
     private fun normalizeLyricsTitle(raw: String, artist: String): String {
         var title = raw
-            .replace(Regex("(?i)\\[[^]]*(official|music video|lyrics?|audio|visuali[sz]er|4k|hd)[^]]*]"), " ")
-            .replace(Regex("(?i)\\([^)]*(official|music video|lyrics?|audio|visuali[sz]er|4k|hd|from\\s+|soundtrack|kpop demon hunters)[^)]*\\)"), " ")
-            .replace(Regex("(?i)\\b(official\\s+(music\\s+)?video|official\\s+audio|lyrics?\\s+video|lyrics?|audio|visuali[sz]er|4k|hd)\\b"), " ")
-        normalizeLyricsArtist(artist).split(",", "&", " feat. ").map(String::trim)
+            .replace(Regex("(?i)\\[[^]]*(official|music video|lyrics?|audio|visuali[sz]er|4k|hd|mv)[^]]*]"), " ")
+            .replace(Regex("(?i)\\([^)]*(official|music video|lyrics?|audio|visuali[sz]er|4k|hd|mv|from\\s+|soundtrack)[^)]*\\)"), " ")
+            .replace(Regex("(?i)\\b(official\\s+(music\\s+)?video|official\\s+audio|official\\s+mv|lyrics?\\s+video|lyrics?|audio|visuali[sz]er|4k|hd|mv|m/v)\\b"), " ")
+        if (title.contains(" - ")) {
+            val prefix = title.substringBefore(" - ").trim()
+            val suffix = title.substringAfter(" - ").trim()
+            if (suffix.isNotBlank()) {
+                val artistTokens = normalizeLyricsArtist(artist).lowercase().split(Regex("[\\s,]+")).filter { it.length >= 2 }
+                val prefixTokens = prefix.lowercase().split(Regex("[\\s,]+")).filter { it.length >= 2 }
+                if (prefixTokens.any { artistTokens.contains(it) }) {
+                    title = suffix
+                }
+            }
+        }
+        normalizeLyricsArtist(artist).split(",", "&", " feat. ", " ft. ").map(String::trim)
             .filter { it.length >= 3 }
             .forEach { creditedName ->
                 title = title.replace(
