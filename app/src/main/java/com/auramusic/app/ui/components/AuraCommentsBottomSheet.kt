@@ -76,6 +76,7 @@ fun AuraCommentsBottomSheet(
             )
         }
     ) {
+        ForceWhiteSystemBarsEffect()
         Column(Modifier.fillMaxWidth().fillMaxHeight(0.78f)) {
             Row(
                 modifier = Modifier
