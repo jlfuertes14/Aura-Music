@@ -210,8 +210,8 @@ fun AuraUpdateModal(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 // Version Diff Text Row (matching Yomite minimal inline design: no pill border/background)
-                val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.0" }
-                val cleanRemote = release.version.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.1" }
+                val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.1" }
+                val cleanRemote = release.version.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.2" }
 
                 Row(
                     modifier = Modifier.padding(top = 6.dp),

@@ -190,8 +190,8 @@ object AuraNotificationManager {
 
             val deviceId = getOrCreateDeviceId(context)
             val appVersion = try {
-                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.5.1"
-            } catch (_: Exception) { "1.5.1" }
+                context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.5.2"
+            } catch (_: Exception) { "1.5.2" }
 
             val payload = JSONObject().apply {
                 put("device_id", deviceId)
