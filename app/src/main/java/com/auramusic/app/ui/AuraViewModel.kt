@@ -28,6 +28,7 @@ import com.auramusic.app.domain.model.ArtistSong
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.domain.model.isPendingResolution
 import com.auramusic.app.domain.model.AuraVideoInfo
 import com.auramusic.app.domain.model.AuraChart
 import com.auramusic.app.domain.model.ChartSupportedCountries
@@ -58,6 +59,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChangedBy
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -298,9 +300,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         val batchId: Long? = null
     )
 
+    private val _isDownloadPaused = MutableStateFlow(false)
+    val isDownloadPaused: StateFlow<Boolean> = _isDownloadPaused.asStateFlow()
+
     private val downloadQueue = ArrayDeque<DownloadTask>()
     private var downloadWorkerJob: Job? = null
     private val batchRemainingCounts = mutableMapOf<Long, Int>()
+    private val batchSucceededCounts = mutableMapOf<Long, Int>()
     private var nextBatchId = 1L
 
     init {
@@ -386,7 +392,18 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 _lyricsOffsetMs.value = savedOffset
                 _nowPlayingVideoInfo.value = null
 
-                val paletteDef = async { extractAuraPaletteFromUrl(track.highResArtworkUrl) }
+                val cachedOfflinePalette = storage.loadOfflinePalette(canonicalVid)
+                    ?: storage.loadOfflinePalette(track.videoId)
+                if (cachedOfflinePalette != null) {
+                    _palette.value = cachedOfflinePalette
+                }
+                val paletteDef = async {
+                    cachedOfflinePalette ?: extractAuraPaletteFromUrl(track.highResArtworkUrl, getApplication()).also { extracted ->
+                        if (isTrackDownloaded(canonicalVid) || isTrackDownloaded(track.videoId)) {
+                            storage.saveOfflinePalette(track.videoId, extracted)
+                        }
+                    }
+                }
                 val videoInfoDef = async { SimpMusicExtractorEngine.fetchVideoInfo(track.videoId) }
 
                 // Check if lyrics are already loaded for this song so switching between Audio and Video mode
@@ -401,14 +418,20 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     null
                 } else {
                     async {
+                        val offlineLyrics = storage.loadOfflineLyrics(canonicalVid)
+                            ?: storage.loadOfflineLyrics(track.videoId)
                         val cleanTitle = SimpMusicExtractorEngine.cleanSongTitleForVideoSearch(canonicalTrack.title, canonicalTrack.artist)
                         val cleanArtist = SimpMusicExtractorEngine.primaryArtistName(canonicalTrack.artist)
-                        SimpMusicLyricsRepository.getLyrics(
+                        offlineLyrics ?: SimpMusicLyricsRepository.getLyrics(
                             videoId = canonicalVid,
                             title = cleanTitle.ifBlank { canonicalTrack.title },
                             artist = cleanArtist.ifBlank { canonicalTrack.artist },
                             durationSeconds = canonicalTrack.durationSeconds
-                        )
+                        )?.also { fetched ->
+                            if (isTrackDownloaded(canonicalVid) || isTrackDownloaded(track.videoId)) {
+                                storage.saveOfflineLyrics(track.videoId, fetched)
+                            }
+                        }
                     }
                 }
                 val sponsorDef = async { SponsorBlockRepository.getSponsorSegments(track.videoId) }
@@ -1574,6 +1597,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         val batchId = nextBatchId++
         batchRemainingCounts[batchId] = toDownload.size
+        batchSucceededCounts[batchId] = 0
         Toast.makeText(getApplication(), "Downloading all songs", Toast.LENGTH_SHORT).show()
         enqueueDownloadTasks(toDownload, suppressPerItemToast = true, batchId = batchId)
     }
@@ -1610,9 +1634,24 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private fun startDownloadWorker() {
         downloadWorkerJob = viewModelScope.launch {
             while (downloadQueue.isNotEmpty()) {
+                _isDownloadPaused.first { !it }
                 val task = downloadQueue.removeFirst()
-                val track = task.track
-                _downloadProgress.value = _downloadProgress.value + (track.videoId to 0.02f)
+                val rawTrack = task.track
+                _downloadProgress.value = _downloadProgress.value + (rawTrack.videoId to 0.02f)
+
+                val track = if (rawTrack.isPendingResolution || rawTrack.videoId.startsWith("spotify_pending")) {
+                    val resolved = withContext(Dispatchers.IO) {
+                        SimpMusicExtractorEngine.resolveSpotifyPendingTrack(rawTrack)
+                    }
+                    if (!resolved.isPendingResolution && !resolved.videoId.startsWith("spotify_pending")) {
+                        AuraPlayerManager.onTrackResolvedCallback?.invoke(resolved)
+                        resolved
+                    } else {
+                        rawTrack
+                    }
+                } else {
+                    rawTrack
+                }
 
                 // Cache lyrics and color palette in parallel for this single track, sequentially across the queue
                 val lyricsJob = async {
@@ -1628,35 +1667,58 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
+                val artworkJob = async {
+                    AuraPlayerManager.saveOfflineArtwork(getApplication(), track)
+                }
+
                 val paletteJob = async {
                     try {
-                        val pal = extractAuraPaletteFromUrl(track.highResArtworkUrl)
+                        val pal = extractAuraPaletteFromUrl(track.highResArtworkUrl, getApplication())
                         storage.saveOfflinePalette(track.videoId, pal)
                     } catch (e: Exception) {
                         Log.w("AuraViewModel", "Failed to cache offline palette for ${track.videoId}: ${e.message}")
                     }
                 }
 
-                val file = AuraPlayerManager.downloadTrackOffline(getApplication(), track) { _, _, progress ->
-                    _downloadProgress.value = _downloadProgress.value + (track.videoId to progress.coerceAtLeast(0.02f))
+                val file = AuraPlayerManager.downloadTrackOffline(
+                    getApplication(),
+                    track,
+                    awaitResume = { _isDownloadPaused.first { !it } }
+                ) { _, _, progress ->
+                    val clamped = progress.coerceAtLeast(0.02f)
+                    _downloadProgress.value = _downloadProgress.value + (rawTrack.videoId to clamped)
                 }
 
                 lyricsJob.await()
                 paletteJob.await()
+                val localArtUri = artworkJob.await()
 
-                _downloadingIds.value = _downloadingIds.value - track.videoId
-                _downloadProgress.value = _downloadProgress.value - track.videoId
+                val succeeded = file != null && file.exists() && file.length() > 10_000L
+                if (succeeded) {
+                    _downloadProgress.value = _downloadProgress.value + (rawTrack.videoId to 1f)
+                    kotlinx.coroutines.delay(220L)
+                }
 
-                if (file != null && file.exists() && file.length() > 10_000L) {
-                    val downloadedTrack = track.copy(isDownloaded = true, localFilePath = file.absolutePath)
-                    val updated = listOf(downloadedTrack) + _downloads.value.filterNot { it.videoId == track.videoId }
+                _downloadingIds.value = _downloadingIds.value - rawTrack.videoId
+                _downloadProgress.value = _downloadProgress.value - rawTrack.videoId
+
+                if (succeeded) {
+                    val downloadedTrack = track.copy(
+                        isDownloaded = true,
+                        localFilePath = file!!.absolutePath,
+                        artworkUrl = localArtUri ?: track.artworkUrl
+                    )
+                    val updated = listOf(downloadedTrack) +
+                        _downloads.value.filterNot { it.videoId == track.videoId || it.videoId == rawTrack.videoId }
                     _downloads.value = updated
                     storage.saveDownloads(updated.filter { it.isDownloaded })
                     if (!task.suppressPerItemToast) {
                         Toast.makeText(getApplication(), "Downloaded: ${track.title}", Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    _downloads.value = _downloads.value.filterNot { it.videoId == track.videoId && !it.isDownloaded }
+                    _downloads.value = _downloads.value.filterNot {
+                        (it.videoId == track.videoId || it.videoId == rawTrack.videoId) && !it.isDownloaded
+                    }
                     if (!task.suppressPerItemToast) {
                         Toast.makeText(getApplication(), "Download failed for ${track.title}", Toast.LENGTH_SHORT).show()
                     }
@@ -1664,20 +1726,48 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
                 val bId = task.batchId
                 if (bId != null) {
+                    if (succeeded) {
+                        batchSucceededCounts[bId] = (batchSucceededCounts[bId] ?: 0) + 1
+                    }
                     val remaining = (batchRemainingCounts[bId] ?: 1) - 1
                     if (remaining <= 0) {
+                        val totalSucceeded = batchSucceededCounts.remove(bId) ?: 0
                         batchRemainingCounts.remove(bId)
-                        Toast.makeText(
-                            getApplication(),
-                            "Downloaded all songs in the playlist",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        val msg = if (totalSucceeded > 0) {
+                            "Downloaded all songs in the playlist"
+                        } else {
+                            "Failed to download songs in the playlist"
+                        }
+                        Toast.makeText(getApplication(), msg, Toast.LENGTH_SHORT).show()
                     } else {
                         batchRemainingCounts[bId] = remaining
                     }
                 }
             }
         }
+    }
+
+    fun pauseDownloads() {
+        if (_downloadingIds.value.isNotEmpty()) _isDownloadPaused.value = true
+    }
+
+    fun resumeDownloads() {
+        _isDownloadPaused.value = false
+    }
+
+    /** Stops the active download, drops everything still queued and discards unfinished entries. */
+    fun cancelAllDownloads() {
+        if (_downloadingIds.value.isEmpty() && downloadQueue.isEmpty()) return
+        downloadWorkerJob?.cancel()
+        downloadWorkerJob = null
+        downloadQueue.clear()
+        batchRemainingCounts.clear()
+        batchSucceededCounts.clear()
+        _isDownloadPaused.value = false
+        _downloadingIds.value = emptySet()
+        _downloadProgress.value = emptyMap()
+        _downloads.value = _downloads.value.filter { it.isDownloaded }
+        Toast.makeText(getApplication(), "Downloads cancelled", Toast.LENGTH_SHORT).show()
     }
 
     fun removeDownload(track: AuraTrack) {
@@ -1700,9 +1790,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     val f = File(p)
                     if (f.exists()) f.delete()
                 }
-                // 2. Delete from dedicated folder
+                // 2. Delete from dedicated folder + offline artwork
                 val dedicated = AuraPlayerManager.getOfflineFile(getApplication(), track.videoId)
                 if (dedicated.exists()) dedicated.delete()
+                val offlineArt = AuraPlayerManager.getOfflineArtworkFile(getApplication(), track.videoId)
+                if (offlineArt.exists()) offlineArt.delete()
             } catch (e: Exception) {
                 Log.w("AuraViewModel", "Error deleting offline file: ${e.message}")
             }

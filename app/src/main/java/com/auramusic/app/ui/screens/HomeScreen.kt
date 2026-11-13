@@ -2179,9 +2179,17 @@ fun SpotifyTrackRowItem(
             Spacer(modifier = Modifier.height(2.dp))
 
             if (isDownloading) {
-                val rawProgress = downloadProgress ?: 0f
+                val rawProgress = (downloadProgress ?: 0f).coerceIn(0f, 1f)
                 val isQueued = rawProgress <= 0f
-                val pct = ((rawProgress * 100).toInt()).coerceIn(1, 100)
+                val animatedProgress by animateFloatAsState(
+                    targetValue = rawProgress,
+                    animationSpec = tween(
+                        durationMillis = if (isQueued) 0 else 160,
+                        easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
+                    ),
+                    label = "trackDownloadProgress"
+                )
+                val pct = ((animatedProgress * 100).toInt()).coerceIn(1, 100)
                 Text(
                     text = if (isQueued) "Queued" else "Downloading • $pct%",
                     style = MaterialTheme.typography.bodySmall,
@@ -2190,7 +2198,7 @@ fun SpotifyTrackRowItem(
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 LinearProgressIndicator(
-                    progress = { rawProgress.coerceIn(0f, 1f) },
+                    progress = { if (isQueued) 0f else animatedProgress.coerceIn(0f, 1f) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(3.dp)

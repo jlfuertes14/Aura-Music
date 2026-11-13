@@ -59,6 +59,7 @@ import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
@@ -124,6 +125,7 @@ import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.components.AuraPlaylistCover
 import com.auramusic.app.ui.components.AuraPlaylistOptionsModal
 import com.auramusic.app.ui.components.AuraTrackOptionsModal
+import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPlayGreen
 import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
@@ -157,6 +159,10 @@ fun PlaylistDetailsScreen(
     onToggleFavorite: (AuraTrack) -> Unit,
     onDownloadTrack: (AuraTrack) -> Unit,
     onDownloadAll: (List<AuraTrack>) -> Unit = { tracks -> tracks.forEach(onDownloadTrack) },
+    isDownloadPaused: Boolean = false,
+    onPauseDownloads: () -> Unit = {},
+    onResumeDownloads: () -> Unit = {},
+    onCancelDownloads: () -> Unit = {},
     onRemoveDownload: ((AuraTrack) -> Unit)? = null,
     onRemoveTrackFromPlaylist: ((videoId: String) -> Unit)? = null,
     onUpdateCover: (newCoverUrl: String) -> Unit,
@@ -220,10 +226,14 @@ fun PlaylistDetailsScreen(
 
     var playlistPalette by remember { mutableStateOf<AuraPalette?>(null) }
     LaunchedEffect(playlist.coverUrl, playlist.tracks) {
-        val artUrl = playlist.coverUrl.ifBlank { playlist.tracks.firstOrNull()?.highResArtworkUrl ?: "" }
+        val firstTrackArt = playlist.tracks.firstOrNull()?.let { t ->
+            com.auramusic.app.core.media.AuraPlayerManager.getOfflineArtworkUri(context, t.videoId)
+                ?: t.highResArtworkUrl
+        } ?: ""
+        val artUrl = playlist.coverUrl.ifBlank { firstTrackArt }
         if (artUrl.isNotBlank()) {
             try {
-                playlistPalette = extractAuraPaletteFromUrl(artUrl)
+                playlistPalette = extractAuraPaletteFromUrl(artUrl, context)
             } catch (_: Exception) {}
         }
     }
@@ -615,17 +625,43 @@ fun PlaylistDetailsScreen(
                             .padding(top = 10.dp, bottom = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Download All
-                        IconButton(
-                            onClick = { onDownloadAll(playlist.tracks) },
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Download,
-                                contentDescription = "Download All",
-                                tint = Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(22.dp)
-                            )
+                        // Download All -> Pause / Resume + Cancel while this playlist is downloading
+                        val isBatchDownloading = playlist.tracks.any { downloadingIds.contains(it.videoId) }
+                        if (isBatchDownloading) {
+                            IconButton(
+                                onClick = { if (isDownloadPaused) onResumeDownloads() else onPauseDownloads() },
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isDownloadPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
+                                    contentDescription = if (isDownloadPaused) "Resume downloads" else "Pause downloads",
+                                    tint = AuraNeonLime,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
+                            IconButton(
+                                onClick = onCancelDownloads,
+                                modifier = Modifier.size(44.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Cancel downloads",
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
+                        } else {
+                            IconButton(
+                                onClick = { onDownloadAll(playlist.tracks) },
+                                modifier = Modifier.size(38.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Download,
+                                    contentDescription = "Download All",
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(22.dp)
+                                )
+                            }
                         }
 
                         // Share

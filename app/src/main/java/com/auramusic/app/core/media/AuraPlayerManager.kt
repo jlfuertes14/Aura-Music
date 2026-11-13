@@ -44,7 +44,12 @@ import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
 import com.auramusic.app.domain.model.SIMPMUSIC_EQ_PRESETS
 import com.auramusic.app.domain.model.SponsorSegment
 import com.auramusic.app.domain.model.findMatchingPreset
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -508,7 +513,9 @@ object AuraPlayerManager {
         originalAudioIndex = -1
         _isVideoMode.value = false
 
-        val dedupedNewQueue = newQueue?.distinctBy { if (it.id.isNotBlank()) it.id else it.videoId }
+        val rawNewQueue = newQueue?.map(::withOfflineArtwork)
+        val effectiveTrack = withOfflineArtwork(track)
+        val dedupedNewQueue = rawNewQueue?.distinctBy { if (it.id.isNotBlank()) it.id else it.videoId }
         if (!dedupedNewQueue.isNullOrEmpty()) {
             originalQueue = dedupedNewQueue
         } else if (originalQueue.isEmpty()) {
@@ -517,19 +524,19 @@ object AuraPlayerManager {
 
         val baseQueue = when {
             !dedupedNewQueue.isNullOrEmpty() -> dedupedNewQueue
-            _queue.value.any { it.id == track.id || it.videoId == track.videoId } -> _queue.value
-            else -> listOf(track) + _queue.value
+            _queue.value.any { it.id == effectiveTrack.id || it.videoId == effectiveTrack.videoId } -> _queue.value.map(::withOfflineArtwork)
+            else -> listOf(effectiveTrack) + _queue.value
         }
 
         val updatedQueue = if (_isShuffleEnabled.value) {
-            val others = baseQueue.filterNot { it.id == track.id || it.videoId == track.videoId }.shuffled()
-            listOf(track) + others
+            val others = baseQueue.filterNot { it.id == effectiveTrack.id || it.videoId == effectiveTrack.videoId }.shuffled()
+            listOf(effectiveTrack) + others
         } else {
-            val idx = baseQueue.indexOfFirst { it.id == track.id || it.videoId == track.videoId }
+            val idx = baseQueue.indexOfFirst { it.id == effectiveTrack.id || it.videoId == effectiveTrack.videoId }
             if (idx >= 0) {
                 baseQueue.subList(idx, baseQueue.size) + baseQueue.subList(0, idx)
             } else {
-                listOf(track) + baseQueue
+                listOf(effectiveTrack) + baseQueue
             }
         }
 
@@ -1087,6 +1094,59 @@ object AuraPlayerManager {
         return internalDir
     }
 
+    fun getOfflineArtworkFile(context: Context, videoId: String): File {
+        val dir = File(context.filesDir, "aura_offline_artwork").apply { if (!exists()) mkdirs() }
+        return File(dir, "$videoId.jpg")
+    }
+
+    fun getOfflineArtworkUri(context: Context, videoId: String): String? {
+        val f = getOfflineArtworkFile(context, videoId)
+        return if (f.exists() && f.length() > 500L) "file://${f.absolutePath}" else null
+    }
+
+    private fun withOfflineArtwork(track: AuraTrack): AuraTrack {
+        val ctx = appContext ?: return track
+        val localUri = getOfflineArtworkUri(ctx, track.videoId) ?: return track
+        return track.copy(artworkUrl = localUri)
+    }
+
+    @OptIn(coil.annotation.ExperimentalCoilApi::class)
+    suspend fun saveOfflineArtwork(context: Context, track: AuraTrack): String? = withContext(Dispatchers.IO) {
+        getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
+        val target = getOfflineArtworkFile(context, track.videoId)
+        val artUrl = track.highResArtworkUrl.ifBlank { track.artworkUrl }
+        if (artUrl.isBlank()) return@withContext null
+        if (artUrl.startsWith("file://") || artUrl.startsWith("/")) {
+            val src = File(artUrl.removePrefix("file://"))
+            if (src.exists() && src.length() > 500L) {
+                runCatching { src.copyTo(target, overwrite = true) }
+                return@withContext getOfflineArtworkUri(context, track.videoId)
+            }
+        }
+        try {
+            val diskCache = coil.Coil.imageLoader(context).diskCache
+            val snap = diskCache?.openSnapshot(track.highResArtworkUrl)
+                ?: diskCache?.openSnapshot(track.artworkUrl)
+            if (snap != null) {
+                snap.use { it.data.toFile().copyTo(target, overwrite = true) }
+                getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
+            }
+        } catch (_: Exception) {}
+        try {
+            SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(artUrl)).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val bytes = resp.body?.bytes() ?: return@withContext null
+                if (bytes.size > 500) {
+                    target.writeBytes(bytes)
+                    return@withContext "file://${target.absolutePath}"
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to save offline artwork for ${track.videoId}: ${e.message}")
+        }
+        null
+    }
+
     fun getOfflineFile(context: Context, videoId: String): File {
         val dedicated = File(getDedicatedDownloadDir(context), "$videoId.m4a")
         if (dedicated.exists() && dedicated.length() > 10_000L) return dedicated
@@ -1095,52 +1155,202 @@ object AuraPlayerManager {
         return dedicated
     }
 
-    suspend fun downloadTrackOffline(
-        context: Context,
-        track: AuraTrack,
-        onProgress: (bytesRead: Long, totalBytes: Long, progress: Float) -> Unit = { _, _, _ -> }
-    ): File? = withContext(Dispatchers.IO) {
-        try {
-            val resolved = SimpMusicExtractorEngine.resolveStream(track.videoId, _audioQuality.value)
-            val targetFile = getOfflineFile(context, track.videoId)
-            val req = Request.Builder()
-                .url(resolved.streamUrl)
-                .header(
-                    "User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-                )
-                .build()
+    private const val DOWNLOAD_USER_AGENT =
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    private const val DOWNLOAD_CHUNK_BYTES = 2L * 1024 * 1024
+    private const val DOWNLOAD_PARALLELISM = 4
 
-            SimpMusicExtractorEngine.httpClient.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val body = resp.body ?: return@withContext null
-                val totalBytes = body.contentLength().takeIf { it > 0 } ?: (track.durationSeconds * 20_000L)
-                var bytesReadTotal = 0L
+    private suspend fun checkActive() = currentCoroutineContext().ensureActive()
 
-                targetFile.outputStream().use { out ->
-                    body.byteStream().use { input ->
-                        val buffer = ByteArray(16 * 1024)
-                        var read: Int
-                        var lastProgressUpdate = 0L
-                        while (input.read(buffer).also { read = it } != -1) {
-                            out.write(buffer, 0, read)
-                            bytesReadTotal += read
-                            val now = System.currentTimeMillis()
-                            if (now - lastProgressUpdate > 100 || bytesReadTotal == totalBytes) {
-                                lastProgressUpdate = now
-                                val progress = (bytesReadTotal.toFloat() / totalBytes.coerceAtLeast(1L)).coerceIn(0f, 1f)
-                                onProgress(bytesReadTotal, totalBytes, progress)
+    private fun downloadRequest(url: String, rangeStart: Long? = null, rangeEnd: Long? = null): Request {
+        val builder = Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT)
+        if (rangeStart != null && rangeEnd != null) builder.header("Range", "bytes=$rangeStart-$rangeEnd")
+        return builder.build()
+    }
+
+    /** Returns total size in bytes if the server honours HTTP range requests, else null. */
+    private fun probeRangeSupport(url: String): Long? = try {
+        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url, 0, 0)).execute().use { resp ->
+            if (resp.code != 206) return@use null
+            resp.header("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull()
+        }
+    } catch (e: java.io.IOException) {
+        null
+    }
+
+    /**
+     * Downloads the stream in ranged chunks over several parallel connections. YouTube throttles a
+     * single unbounded request, while small ranged requests run at full speed.
+     */
+    private suspend fun downloadChunked(
+        url: String,
+        part: File,
+        total: Long,
+        awaitResume: suspend () -> Unit,
+        onProgress: (Long, Long, Float) -> Unit
+    ) = coroutineScope {
+        java.io.RandomAccessFile(part, "rw").use { raf ->
+            raf.setLength(total)
+            val channel = raf.channel
+            val chunkCount = ((total + DOWNLOAD_CHUNK_BYTES - 1) / DOWNLOAD_CHUNK_BYTES).toInt()
+            val nextChunk = java.util.concurrent.atomic.AtomicInteger(0)
+            val downloaded = java.util.concurrent.atomic.AtomicLong(0)
+            val lastReport = java.util.concurrent.atomic.AtomicLong(0)
+
+            val workers = (1..minOf(DOWNLOAD_PARALLELISM, chunkCount)).map {
+                async {
+                    while (true) {
+                        awaitResume()
+                        checkActive()
+                        val idx = nextChunk.getAndIncrement()
+                        if (idx >= chunkCount) break
+                        val start = idx * DOWNLOAD_CHUNK_BYTES
+                        val end = minOf(start + DOWNLOAD_CHUNK_BYTES, total) - 1
+                        var attempt = 0
+                        while (true) {
+                            var written = 0L
+                            try {
+                                SimpMusicExtractorEngine.httpClient
+                                    .newCall(downloadRequest(url, start, end)).execute().use { resp ->
+                                        if (resp.code != 206) throw java.io.IOException("Range not honoured: ${resp.code}")
+                                        val input = resp.body?.byteStream() ?: throw java.io.IOException("Empty body")
+                                        val buffer = ByteArray(32 * 1024)
+                                        var pos = start
+                                        while (true) {
+                                            val read = input.read(buffer)
+                                            if (read == -1) break
+                                            val bb = java.nio.ByteBuffer.wrap(buffer, 0, read)
+                                            while (bb.hasRemaining()) pos += channel.write(bb, pos)
+                                            written += read
+                                            downloaded.addAndGet(read.toLong())
+                                            val now = System.currentTimeMillis()
+                                            val last = lastReport.get()
+                                            if (now - last > 32 && lastReport.compareAndSet(last, now)) {
+                                                val soFar = downloaded.get()
+                                                onProgress(soFar, total, (soFar.toFloat() / total).coerceIn(0f, 1f))
+                                            }
+                                            checkActive()
+                                        }
+                                    }
+                                if (written != end - start + 1) throw java.io.IOException("Short chunk")
+                                break
+                            } catch (e: java.io.IOException) {
+                                downloaded.addAndGet(-written)
+                                if (++attempt >= 3) throw e
                             }
                         }
-                        onProgress(bytesReadTotal, totalBytes, 1f)
                     }
                 }
             }
-            if (targetFile.exists() && targetFile.length() > 10_000L) targetFile else null
+            workers.forEach { it.await() }
+            onProgress(total, total, 1f)
+        }
+    }
+
+    private suspend fun downloadSingleStream(
+        url: String,
+        part: File,
+        fallbackTotal: Long,
+        awaitResume: suspend () -> Unit,
+        onProgress: (Long, Long, Float) -> Unit
+    ) {
+        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url)).execute().use { resp ->
+            if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
+            val body = resp.body ?: throw java.io.IOException("Empty body")
+            val totalBytes = body.contentLength().takeIf { it > 0 } ?: fallbackTotal
+            var bytesReadTotal = 0L
+            part.outputStream().use { out ->
+                body.byteStream().use { input ->
+                    val buffer = ByteArray(32 * 1024)
+                    var lastProgressUpdate = 0L
+                    while (true) {
+                        awaitResume()
+                        checkActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        out.write(buffer, 0, read)
+                        bytesReadTotal += read
+                        val now = System.currentTimeMillis()
+                        if (now - lastProgressUpdate > 32) {
+                            lastProgressUpdate = now
+                            onProgress(bytesReadTotal, totalBytes, (bytesReadTotal.toFloat() / totalBytes.coerceAtLeast(1L)).coerceIn(0f, 1f))
+                        }
+                    }
+                    onProgress(bytesReadTotal, totalBytes, 1f)
+                }
+            }
+        }
+    }
+
+    suspend fun downloadTrackOffline(
+        context: Context,
+        track: AuraTrack,
+        awaitResume: suspend () -> Unit = {},
+        onProgress: (bytesRead: Long, totalBytes: Long, progress: Float) -> Unit = { _, _, _ -> }
+    ): File? = withContext(Dispatchers.IO) {
+        val activeTrack = if (track.isPendingResolution || track.videoId.startsWith("spotify_pending")) {
+            val resolvedPending = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(track)
+            if (resolvedPending.isPendingResolution || resolvedPending.videoId.startsWith("spotify_pending")) {
+                Log.e(TAG, "Offline download failed: could not resolve pending track ${track.title}")
+                return@withContext null
+            }
+            resolvedPending
+        } else {
+            track
+        }
+        val cacheTmpDir = File(context.cacheDir, "aura_dl_tmp").apply { mkdirs() }
+        // Download into app-private cache first; Scoped Storage blocks .part files in Music/ with EPERM.
+        val partFile = File(cacheTmpDir, "${activeTrack.videoId}.m4a.part")
+        try {
+            val resolved = SimpMusicExtractorEngine.resolveStream(activeTrack.videoId, _audioQuality.value)
+            val url = resolved.streamUrl
+            val rangeTotal = probeRangeSupport(url)
+            var done = false
+            if (rangeTotal != null && rangeTotal > DOWNLOAD_CHUNK_BYTES) {
+                try {
+                    downloadChunked(url, partFile, rangeTotal, awaitResume, onProgress)
+                    done = true
+                } catch (e: java.io.IOException) {
+                    Log.w(TAG, "Chunked download failed for ${activeTrack.videoId}, falling back: ${e.message}")
+                }
+            }
+            if (!done) {
+                downloadSingleStream(url, partFile, activeTrack.durationSeconds * 20_000L, awaitResume, onProgress)
+            }
+            if (partFile.length() > 10_000L) {
+                val primaryTarget = getOfflineFile(context, activeTrack.videoId)
+                val fallbackTarget = File(
+                    File(context.filesDir, "aura_offline_tracks").apply { mkdirs() },
+                    "${activeTrack.videoId}.m4a"
+                )
+                val saved = moveOrCopyToTarget(partFile, primaryTarget)
+                    ?: moveOrCopyToTarget(partFile, fallbackTarget)
+                partFile.delete()
+                saved
+            } else {
+                partFile.delete()
+                null
+            }
+        } catch (e: CancellationException) {
+            partFile.delete()
+            throw e
         } catch (e: Exception) {
-            Log.e(TAG, "Offline download failed for ${track.videoId}: ${e.message}")
+            Log.e(TAG, "Offline download failed for ${activeTrack.videoId}: ${e.message}")
+            partFile.delete()
             null
         }
+    }
+
+    private fun moveOrCopyToTarget(partFile: File, targetFile: File): File? = try {
+        targetFile.parentFile?.mkdirs()
+        if (targetFile.exists()) targetFile.delete()
+        if (!partFile.renameTo(targetFile)) {
+            partFile.copyTo(targetFile, overwrite = true)
+        }
+        if (targetFile.exists() && targetFile.length() > 10_000L) targetFile else null
+    } catch (e: Exception) {
+        Log.w(TAG, "Cannot write offline track to ${targetFile.absolutePath}: ${e.message}")
+        null
     }
 
     fun setVideoLoading(loading: Boolean) {

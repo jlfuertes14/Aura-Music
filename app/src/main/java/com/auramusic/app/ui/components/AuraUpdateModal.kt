@@ -82,7 +82,7 @@ private val CardSurfaceBg = Color(0xFF16181F)
 private val AuraLime = AuraNeonLime // Official AURA Neon Lime (#D4F644)
 private val SecondaryText = Color(0xFF9E9E9E)
 private val LightButtonBg = Color(0xFFF0F1F4)
-private val DarkButtonText = Color(0xFF111215)
+private val DarkButtonText = Color.Black
 
 /**
  * Full-screen in-app update experience matching the Yomite design architecture:
@@ -467,6 +467,7 @@ fun AuraUpdateModal(
                             ) {
                                 Text(
                                     text = "Install Update",
+                                    color = Color.Black,
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -497,6 +498,7 @@ fun AuraUpdateModal(
                                 ) {
                                     Text(
                                         text = "Later",
+                                        color = Color.Black,
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -516,6 +518,7 @@ fun AuraUpdateModal(
                                 ) {
                                     Text(
                                         text = if (updateState == UpdateState.ERROR) "Retry Update" else "Install Update",
+                                        color = Color.Black,
                                         fontSize = 14.5.sp,
                                         fontWeight = FontWeight.Bold
                                     )

@@ -1,6 +1,10 @@
 package com.auramusic.app.ui.theme
 
+import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import coil.Coil
+import coil.annotation.ExperimentalCoilApi
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
@@ -192,7 +196,11 @@ fun AuraMusicTheme(content: @Composable () -> Unit) {
  * Automatically scans the cover art album and extracts dominant, vibrant, and ambient colors
  * using AndroidX Palette.
  */
-suspend fun extractAuraPaletteFromUrl(artworkUrl: String): AuraPalette = withContext(Dispatchers.IO) {
+@OptIn(ExperimentalCoilApi::class)
+suspend fun extractAuraPaletteFromUrl(
+    artworkUrl: String,
+    context: Context? = null
+): AuraPalette = withContext(Dispatchers.IO) {
     if (artworkUrl.isBlank()) return@withContext AuraPalette()
     try {
         // Use a 400x400 scaled URL for instant download & reliable palette extraction
@@ -200,11 +208,27 @@ suspend fun extractAuraPaletteFromUrl(artworkUrl: String): AuraPalette = withCon
             artworkUrl.replace(Regex("=w\\d+-h\\d+[^&?]*"), "=w400-h400-l90-rj")
         } else artworkUrl
 
-        val req = Request.Builder().url(scanUrl).build()
-        SimpMusicExtractorEngine.httpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) return@withContext AuraPalette()
-            val bytes = resp.body?.bytes() ?: return@withContext AuraPalette()
-            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@withContext AuraPalette()
+        val localFileBitmap: Bitmap? = if (artworkUrl.startsWith("file://") || artworkUrl.startsWith("/")) {
+            BitmapFactory.decodeFile(artworkUrl.removePrefix("file://"))
+        } else null
+
+        val cachedBitmap: Bitmap? = localFileBitmap ?: context?.let { ctx ->
+            runCatching {
+                val diskCache = Coil.imageLoader(ctx).diskCache
+                val snap = diskCache?.openSnapshot(artworkUrl) ?: diskCache?.openSnapshot(scanUrl)
+                snap?.use { BitmapFactory.decodeFile(it.data.toFile().absolutePath) }
+            }.getOrNull()
+        }
+
+        val bitmap: Bitmap = cachedBitmap ?: run {
+            val req = Request.Builder().url(scanUrl).build()
+            SimpMusicExtractorEngine.httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext AuraPalette()
+                val bytes = resp.body?.bytes() ?: return@withContext AuraPalette()
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@withContext AuraPalette()
+            }
+        }
+        run {
             val palette = Palette.from(bitmap).maximumColorCount(32).generate()
 
             val swatches = palette.swatches

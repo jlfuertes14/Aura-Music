@@ -295,6 +295,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val visibleUserPlaylists by viewModel.visibleUserPlaylists.collectAsState()
     val listeningStats by viewModel.listeningStats.collectAsState()
     val downloadingIds by viewModel.downloadingIds.collectAsState()
+    val isDownloadPaused by viewModel.isDownloadPaused.collectAsState()
 
     LaunchedEffect(selectedTab) {
         if (selectedTab == 1) viewModel.loadSearchExploreCoverTracks()
@@ -542,6 +543,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             onToggleFavorite = { viewModel.toggleFavorite(it) },
                             onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
                             onDownloadAll = { tracks -> requestDownloadWithPermission { viewModel.downloadAllTracks(tracks) } },
+                            isDownloadPaused = isDownloadPaused,
+                            onPauseDownloads = { viewModel.pauseDownloads() },
+                            onResumeDownloads = { viewModel.resumeDownloads() },
+                            onCancelDownloads = { viewModel.cancelAllDownloads() },
                             onRemoveDownload = { track -> viewModel.removeDownload(track) },
                             onUpdatePlaylistCover = { id, cover -> viewModel.updatePlaylistCover(id, cover) },
                             onUpdatePlaylistTitle = { id, title -> viewModel.updatePlaylistTitle(id, title) },
