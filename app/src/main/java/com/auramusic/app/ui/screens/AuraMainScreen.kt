@@ -380,9 +380,9 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         val saveableStateHolder = rememberSaveableStateHolder()
         val navSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
         val mainContentOffsetX by animateFloatAsState(
-            targetValue = if (selectedPlaylistDetail != null) -1f else 0f,
+            targetValue = if (selectedPlaylistDetail != null || selectedCatalogDetail != null) -1f else 0f,
             animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
-            label = "MainContentPlaylistSlideOffset"
+            label = "MainContentSlideOffset"
         )
         AnimatedContent(
             targetState = selectedTab,
@@ -574,6 +574,11 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         if (selectedCatalogDetail != null) {
             cachedCatalogDetail = selectedCatalogDetail
         }
+        val catalogDetailOffsetX by animateFloatAsState(
+            targetValue = if (selectedPlaylistDetail != null) -1f else 0f,
+            animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
+            label = "CatalogDetailPlaylistSlideOffset"
+        )
         AnimatedVisibility(
             visible = selectedCatalogDetail != null,
             enter = slideInHorizontally(
@@ -584,7 +589,11 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 targetOffsetX = { it },
                 animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
             ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    translationX = size.width * catalogDetailOffsetX
+                }
         ) {
             (selectedCatalogDetail ?: cachedCatalogDetail)?.let { detail ->
                 SearchCatalogDetailScreen(
