@@ -142,6 +142,7 @@ fun LibraryScreen(
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onToggleFavorite: (AuraTrack) -> Unit,
     onDownloadTrack: (AuraTrack) -> Unit,
+    onDownloadAll: (List<AuraTrack>) -> Unit = { tracks -> tracks.forEach(onDownloadTrack) },
     onRemoveDownload: (AuraTrack) -> Unit = {},
     onUpdatePlaylistCover: (playlistId: String, newCoverUrl: String) -> Unit = { _, _ -> },
     onUpdatePlaylistTitle: (playlistId: String, newTitle: String) -> Unit = { _, _ -> },
@@ -724,6 +725,7 @@ fun LibraryScreen(
                 },
                 onToggleFavorite = onToggleFavorite,
                 onDownloadTrack = onDownloadTrack,
+                onDownloadAll = onDownloadAll,
                 onRemoveDownload = onRemoveDownload,
                 onRemoveTrackFromPlaylist = { vId -> onRemoveTrackFromPlaylist(displayPlaylist.id, vId) },
                 onUpdateCover = { newCover -> onUpdatePlaylistCover(displayPlaylist.id, newCover) },
@@ -806,8 +808,7 @@ fun LibraryScreen(
             onDismiss = { selectedPlaylistForOptions = null },
             onDownloadAll = {
                 selectedPlaylistForOptions = null
-                pl.tracks.forEach { onDownloadTrack(it) }
-                Toast.makeText(context, "Downloading ${pl.tracks.size} songs for offline listening…", Toast.LENGTH_SHORT).show()
+                onDownloadAll(pl.tracks)
             },
             onChangeCover = {
                 selectedPlaylistForOptions = null

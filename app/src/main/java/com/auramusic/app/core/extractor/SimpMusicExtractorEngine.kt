@@ -83,11 +83,31 @@ object SimpMusicExtractorEngine {
 
     private val backgroundScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    // Tier 0 In-memory Resolved Stream Cache (videoId -> ResolvedStream)
+    // Tier 0 In-memory Resolved Stream Cache (videoId|quality -> ResolvedStream)
     private val streamCache = ConcurrentHashMap<String, ResolvedStream>()
-    // Tier 0 In-memory Resolved Video Stream Cache (videoId -> ResolvedVideoStream)
+    // Tier 0 In-memory Resolved Video Stream Cache (videoId|videoQuality|audioQuality -> ResolvedVideoStream)
     private val videoStreamCache = ConcurrentHashMap<String, ResolvedVideoStream>()
     private val videoInfoCache = ConcurrentHashMap<String, AuraVideoInfo>()
+    private val loudnessCache = ConcurrentHashMap<String, Float>()
+
+    fun getTrackLoudnessDb(videoId: String): Float? = loudnessCache[videoId]
+
+    private fun cacheLoudnessFromPlayerResponse(bodyStr: String) {
+        if (!bodyStr.contains("loudnessDb")) return
+        try {
+            val json = JSONObject(bodyStr)
+            val vid = json.optJSONObject("videoDetails")?.optString("videoId").orEmpty()
+            val loudness = json.optJSONObject("playerConfig")
+                ?.optJSONObject("audioConfig")
+                ?.optDouble("loudnessDb", Double.NaN)
+                ?: Double.NaN
+            if (vid.isNotBlank() && !loudness.isNaN()) {
+                loudnessCache[vid] = loudness.toFloat()
+            }
+        } catch (_: Exception) {
+            // Ignore malformed or non-JSON responses
+        }
+    }
 
     val httpClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
@@ -134,11 +154,15 @@ object SimpMusicExtractorEngine {
 
                     private fun okhttp3.Response.toPipePipeResponse(): PipePipeResponse {
                         val rawBytes = body?.bytes() ?: ByteArray(0)
+                        val bodyStr = rawBytes.toString(Charsets.UTF_8)
+                        if (request.url.encodedPath.contains("youtubei/v1/player")) {
+                            cacheLoudnessFromPlayerResponse(bodyStr)
+                        }
                         return PipePipeResponse(
                             code,
                             message,
                             headers.toMultimap(),
-                            rawBytes.toString(Charsets.UTF_8),
+                            bodyStr,
                             rawBytes,
                             request.url.toString()
                         )
@@ -210,6 +234,9 @@ object SimpMusicExtractorEngine {
                                     throw BraveReCaptchaException("reCaptcha Challenge requested", request.url())
                                 }
                                 val bodyStr = resp.body?.string() ?: ""
+                                if (resp.request.url.encodedPath.contains("youtubei/v1/player")) {
+                                    cacheLoudnessFromPlayerResponse(bodyStr)
+                                }
                                 return BraveResponse(
                                     resp.code,
                                     resp.message,
@@ -230,24 +257,32 @@ object SimpMusicExtractorEngine {
         }
     }
 
-    fun getCachedStream(videoId: String): ResolvedStream? {
-        val cached = streamCache[videoId] ?: return null
+    private fun audioCacheKey(videoId: String, audioQuality: String): String = "$videoId|$audioQuality"
+
+    private fun videoCacheKey(videoId: String, videoQuality: String, audioQuality: String): String =
+        "$videoId|$videoQuality|$audioQuality"
+
+    fun getCachedStream(videoId: String, audioQuality: String = "Auto"): ResolvedStream? {
+        val key = audioCacheKey(videoId, audioQuality)
+        val cached = streamCache[key] ?: return null
         if (cached.expiresAtMs > System.currentTimeMillis() + 60_000L) {
             return cached
         }
-        streamCache.remove(videoId)
+        streamCache.remove(key)
         return null
     }
 
     fun invalidateStream(videoId: String) {
-        streamCache.remove(videoId)
+        val prefix = "$videoId|"
+        streamCache.keys.filter { it == videoId || it.startsWith(prefix) }.forEach { streamCache.remove(it) }
+        videoStreamCache.keys.filter { it == videoId || it.startsWith(prefix) }.forEach { videoStreamCache.remove(it) }
     }
 
-    fun prefetchStream(videoId: String) {
-        if (videoId.isBlank() || getCachedStream(videoId) != null) return
+    fun prefetchStream(videoId: String, audioQuality: String = "Auto") {
+        if (videoId.isBlank() || getCachedStream(videoId, audioQuality) != null) return
         backgroundScope.launch {
             try {
-                resolveStream(videoId)
+                resolveStream(videoId, audioQuality)
             } catch (e: Exception) {
                 Log.d(TAG, "Prefetch skipped for $videoId: ${e.message}")
             }
@@ -327,6 +362,222 @@ object SimpMusicExtractorEngine {
         videoStreamCache.clear()
     }
 
+    private enum class AudioQualityMode {
+        AUTO, HIGH_OPUS, HIGH_AAC, MEDIUM, LOW
+    }
+
+    private fun parseAudioQualityMode(audioQuality: String): AudioQualityMode = when {
+        audioQuality.contains("Opus", ignoreCase = true) -> AudioQualityMode.HIGH_OPUS
+        audioQuality.contains("AAC", ignoreCase = true) -> AudioQualityMode.HIGH_AAC
+        audioQuality.contains("Medium", ignoreCase = true) -> AudioQualityMode.MEDIUM
+        audioQuality.contains("Low", ignoreCase = true) -> AudioQualityMode.LOW
+        else -> AudioQualityMode.AUTO
+    }
+
+    private fun isM4aStream(suffix: String?, mime: String?): Boolean =
+        suffix.equals("m4a", ignoreCase = true) ||
+            mime?.contains("mp4", ignoreCase = true) == true ||
+            mime?.contains("aac", ignoreCase = true) == true
+
+    private fun isOpusStream(suffix: String?, mime: String?): Boolean =
+        suffix.equals("webm", ignoreCase = true) ||
+            suffix.equals("opus", ignoreCase = true) ||
+            mime?.contains("opus", ignoreCase = true) == true
+
+    private fun <T> sortAudioStreamsForQuality(
+        streams: List<T>,
+        audioQuality: String,
+        urlOf: (T) -> String?,
+        suffixOf: (T) -> String?,
+        mimeOf: (T) -> String?,
+        bitrateOf: (T) -> Int
+    ): List<T> {
+        val mode = parseAudioQualityMode(audioQuality)
+        val comparator = Comparator<T> { a, b ->
+            val rankA = audioTrackRank(urlOf(a).orEmpty(), "en")
+            val rankB = audioTrackRank(urlOf(b).orEmpty(), "en")
+            if (rankA != rankB) return@Comparator rankA.compareTo(rankB)
+
+            val brA = bitrateOf(a)
+            val brB = bitrateOf(b)
+            val m4aA = isM4aStream(suffixOf(a), mimeOf(a))
+            val m4aB = isM4aStream(suffixOf(b), mimeOf(b))
+            val opusA = isOpusStream(suffixOf(a), mimeOf(a))
+            val opusB = isOpusStream(suffixOf(b), mimeOf(b))
+
+            when (mode) {
+                AudioQualityMode.HIGH_OPUS -> {
+                    if (opusA != opusB) return@Comparator if (opusA) -1 else 1
+                    brB.compareTo(brA)
+                }
+                AudioQualityMode.HIGH_AAC -> {
+                    if (m4aA != m4aB) return@Comparator if (m4aA) -1 else 1
+                    brB.compareTo(brA)
+                }
+                AudioQualityMode.MEDIUM -> {
+                    val inBandA = brA in 110..175
+                    val inBandB = brB in 110..175
+                    if (inBandA != inBandB) return@Comparator if (inBandA) -1 else 1
+                    if (inBandA) {
+                        val distA = kotlin.math.abs(brA - 144)
+                        val distB = kotlin.math.abs(brB - 144)
+                        if (distA != distB) return@Comparator distA.compareTo(distB)
+                        return@Comparator m4aB.compareTo(m4aA)
+                    }
+                    val belowCapA = brA in 1..192
+                    val belowCapB = brB in 1..192
+                    if (belowCapA != belowCapB) return@Comparator if (belowCapA) -1 else 1
+                    val distA = kotlin.math.abs((if (brA > 0) brA else 999) - 144)
+                    val distB = kotlin.math.abs((if (brB > 0) brB else 999) - 144)
+                    distA.compareTo(distB)
+                }
+                AudioQualityMode.LOW -> {
+                    val inBandA = brA in 40..105
+                    val inBandB = brB in 40..105
+                    if (inBandA != inBandB) return@Comparator if (inBandA) -1 else 1
+                    val effA = if (brA > 0) brA else Int.MAX_VALUE
+                    val effB = if (brB > 0) brB else Int.MAX_VALUE
+                    effA.compareTo(effB)
+                }
+                AudioQualityMode.AUTO -> {
+                    if (m4aA != m4aB) return@Comparator if (m4aA) -1 else 1
+                    brB.compareTo(brA)
+                }
+            }
+        }
+        return streams.filter { !urlOf(it).isNullOrBlank() }.sortedWith(comparator)
+    }
+
+    private fun <T> resolveAudioFromStreams(
+        videoId: String,
+        streams: List<T>?,
+        durationSeconds: Int,
+        sourceTier: String,
+        audioQuality: String,
+        urlOf: (T) -> String?,
+        suffixOf: (T) -> String?,
+        mimeOf: (T) -> String?,
+        bitrateOf: (T) -> Int
+    ): ResolvedStream? {
+        if (streams.isNullOrEmpty()) return null
+        val sorted = sortAudioStreamsForQuality(streams, audioQuality, urlOf, suffixOf, mimeOf, bitrateOf)
+        for (selected in sorted) {
+            val rawUrl = urlOf(selected) ?: continue
+            val verifiedUrl = verifyPlayableUrl(rawUrl) ?: continue
+            val suffix = suffixOf(selected)
+            val mime = mimeOf(selected)
+            val codec = if (isM4aStream(suffix, mime)) "AAC" else "OPUS"
+            val resolved = ResolvedStream(
+                videoId = videoId,
+                streamUrl = verifiedUrl,
+                mimeType = mime ?: "audio/mp4",
+                bitrateKbps = bitrateOf(selected).takeIf { it > 0 } ?: 160,
+                codec = codec,
+                loudnessDb = loudnessCache[videoId] ?: 0f,
+                durationSeconds = durationSeconds.coerceAtLeast(0),
+                sourceTier = sourceTier
+            )
+            streamCache[audioCacheKey(videoId, audioQuality)] = resolved
+            Log.i(TAG, "$sourceTier resolved $videoId [${audioQuality}] (${resolved.codec} ${resolved.bitrateKbps}kbps, loudness=${resolved.loudnessDb}dB)")
+            return resolved
+        }
+        return null
+    }
+
+    private fun targetVideoHeight(videoQuality: String): Int = when {
+        videoQuality.startsWith("360") -> 360
+        videoQuality.startsWith("480") -> 480
+        videoQuality.startsWith("720") -> 720
+        videoQuality.startsWith("1080") -> 1080
+        else -> 1080 // "Auto (1080p)": adaptive up to 1080p, or best available if lower/higher only
+    }
+
+    private fun <T> sortVideoStreamsForQuality(
+        streams: List<T>,
+        videoQuality: String,
+        urlOf: (T) -> String?,
+        heightOf: (T) -> Int
+    ): List<T> {
+        val maxTargetHeight = targetVideoHeight(videoQuality)
+        return streams
+            .filter { !urlOf(it).isNullOrBlank() && heightOf(it) > 0 }
+            .sortedWith(Comparator { a, b ->
+                val hA = heightOf(a)
+                val hB = heightOf(b)
+                val withinA = hA <= maxTargetHeight
+                val withinB = hB <= maxTargetHeight
+                if (withinA != withinB) return@Comparator if (withinA) -1 else 1
+                if (withinA) hB.compareTo(hA) else hA.compareTo(hB)
+            })
+    }
+
+    private fun <V, A> resolveVideoFromLists(
+        videoId: String,
+        videoOnlyStreams: List<V>?,
+        progressiveStreams: List<V>?,
+        audioStreams: List<A>?,
+        durationSeconds: Int,
+        tierLabel: String,
+        videoQuality: String,
+        audioQuality: String,
+        videoUrlOf: (V) -> String?,
+        videoHeightOf: (V) -> Int,
+        videoResolutionOf: (V) -> String?,
+        audioUrlOf: (A) -> String?,
+        audioSuffixOf: (A) -> String?,
+        audioMimeOf: (A) -> String?,
+        audioBitrateOf: (A) -> Int
+    ): ResolvedVideoStream? {
+        if (!videoOnlyStreams.isNullOrEmpty() && !audioStreams.isNullOrEmpty()) {
+            val sortedVideos = sortVideoStreamsForQuality(videoOnlyStreams, videoQuality, videoUrlOf, videoHeightOf)
+            val sortedAudios = sortAudioStreamsForQuality(audioStreams, audioQuality, audioUrlOf, audioSuffixOf, audioMimeOf, audioBitrateOf)
+
+            var verifiedAudioUrl: String? = null
+            for (audio in sortedAudios.take(4)) {
+                val candidate = audioUrlOf(audio) ?: continue
+                verifiedAudioUrl = verifyPlayableUrl(candidate)
+                if (verifiedAudioUrl != null) break
+            }
+
+            if (verifiedAudioUrl != null) {
+                for (video in sortedVideos.take(4)) {
+                    val rawVideoUrl = videoUrlOf(video) ?: continue
+                    val verifiedVideo = verifyPlayableUrl(rawVideoUrl) ?: continue
+                    val h = videoHeightOf(video)
+                    val resolved = ResolvedVideoStream(
+                        videoId = videoId,
+                        streamUrl = verifiedVideo,
+                        quality = if (h >= 720) "${h}p HD" else "${h}p",
+                        durationSeconds = durationSeconds.coerceAtLeast(0),
+                        audioUrl = verifiedAudioUrl
+                    )
+                    videoStreamCache[videoCacheKey(videoId, videoQuality, audioQuality)] = resolved
+                    Log.i(TAG, "$tierLabel resolved video+audio for $videoId (${resolved.quality}, pref=$videoQuality, audio=$audioQuality)")
+                    return resolved
+                }
+            }
+        }
+
+        if (!progressiveStreams.isNullOrEmpty()) {
+            val sorted = sortVideoStreamsForQuality(progressiveStreams, videoQuality, videoUrlOf, videoHeightOf)
+            for (stream in sorted) {
+                val rawUrl = videoUrlOf(stream) ?: continue
+                val verifiedUrl = verifyPlayableUrl(rawUrl) ?: continue
+                val resolved = ResolvedVideoStream(
+                    videoId = videoId,
+                    streamUrl = verifiedUrl,
+                    quality = videoResolutionOf(stream) ?: "${videoHeightOf(stream)}p",
+                    durationSeconds = durationSeconds.coerceAtLeast(0),
+                    audioUrl = null
+                )
+                videoStreamCache[videoCacheKey(videoId, videoQuality, audioQuality)] = resolved
+                Log.i(TAG, "$tierLabel resolved progressive video for $videoId (${resolved.quality}, pref=$videoQuality)")
+                return resolved
+            }
+        }
+        return null
+    }
+
     /**
      * Multi-tier SimpMusic stream extraction:
      * Tier 0: Memory cache (0ms)
@@ -334,42 +585,30 @@ object SimpMusicExtractorEngine {
      * Tier 2: BraveNewPipe Extractor (SmartTube engine)
      * Tier 3: Fast pre-warmed Invidious/Piped local=true proxy stream (~230ms)
      */
-    suspend fun resolveStream(videoId: String): ResolvedStream = withContext(Dispatchers.IO) {
+    suspend fun resolveStream(
+        videoId: String,
+        audioQuality: String = "Auto"
+    ): ResolvedStream = withContext(Dispatchers.IO) {
         initExtractors()
 
-        getCachedStream(videoId)?.let { return@withContext it }
+        getCachedStream(videoId, audioQuality)?.let { return@withContext it }
 
         // Tier 1: PipePipeExtractor (SimpMusic)
         try {
             YoutubeApiDecoder.setLocalDecoder(null)
             val url = "https://www.youtube.com/watch?v=$videoId"
             val streamInfo = PipePipeStreamInfo.getInfo(PipePipeServiceList.YouTube, url)
-            val audioStreams = streamInfo.audioStreams
-            if (!audioStreams.isNullOrEmpty()) {
-                val sortedStreams = audioStreams.sortedWith(
-                    compareBy<PipePipeAudioStream> { audioTrackRank(it.content, "en") }
-                        .thenByDescending { it.format?.suffix?.equals("m4a", ignoreCase = true) == true }
-                        .thenByDescending { it.averageBitrate }
-                )
-                for (selected in sortedStreams) {
-                    val rawUrl = selected.content
-                    val verifiedUrl = verifyPlayableUrl(rawUrl)
-                    if (verifiedUrl != null) {
-                        val resolved = ResolvedStream(
-                            videoId = videoId,
-                            streamUrl = verifiedUrl,
-                            mimeType = selected.format?.mimeType ?: "audio/mp4",
-                            bitrateKbps = selected.averageBitrate.takeIf { it > 0 } ?: 160,
-                            codec = if (selected.format?.suffix == "m4a") "AAC" else "OPUS",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            sourceTier = "PipePipeExtractor (SimpMusic Native)"
-                        )
-                        streamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 1 PipePipeExtractor resolved $videoId (${resolved.bitrateKbps}kbps, rank=${audioTrackRank(rawUrl, "en")})")
-                        return@withContext resolved
-                    }
-                }
-            }
+            resolveAudioFromStreams(
+                videoId = videoId,
+                streams = streamInfo.audioStreams,
+                durationSeconds = streamInfo.duration.toInt(),
+                sourceTier = "PipePipeExtractor (SimpMusic Native)",
+                audioQuality = audioQuality,
+                urlOf = { it.content },
+                suffixOf = { it.format?.suffix },
+                mimeOf = { it.format?.mimeType },
+                bitrateOf = { it.averageBitrate }
+            )?.let { return@withContext it }
         } catch (e: Exception) {
             Log.w(TAG, "Tier 1 PipePipeExtractor notice for $videoId: ${e.message}")
         }
@@ -378,31 +617,17 @@ object SimpMusicExtractorEngine {
         try {
             val url = "https://www.youtube.com/watch?v=$videoId"
             val streamInfo = BraveStreamInfo.getInfo(BraveServiceList.YouTube, url)
-            val audioStreams = streamInfo.audioStreams
-            if (!audioStreams.isNullOrEmpty()) {
-                val sortedStreams = audioStreams.sortedWith(
-                    compareBy<BraveAudioStream> { audioTrackRank(it.content, "en") }
-                        .thenByDescending { it.format?.suffix?.equals("m4a", ignoreCase = true) == true }
-                        .thenByDescending { it.averageBitrate }
-                )
-                for (selected in sortedStreams) {
-                    val verifiedUrl = verifyPlayableUrl(selected.content)
-                    if (verifiedUrl != null) {
-                        val resolved = ResolvedStream(
-                            videoId = videoId,
-                            streamUrl = verifiedUrl,
-                            mimeType = selected.format?.mimeType ?: "audio/mp4",
-                            bitrateKbps = selected.averageBitrate.takeIf { it > 0 } ?: 160,
-                            codec = if (selected.format?.suffix == "m4a") "AAC" else "OPUS",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            sourceTier = "NewPipeExtractor (SmartTube Native)"
-                        )
-                        streamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 2 BraveNewPipe resolved $videoId (${resolved.bitrateKbps}kbps, rank=${audioTrackRank(selected.content, "en")})")
-                        return@withContext resolved
-                    }
-                }
-            }
+            resolveAudioFromStreams(
+                videoId = videoId,
+                streams = streamInfo.audioStreams,
+                durationSeconds = streamInfo.duration.toInt(),
+                sourceTier = "NewPipeExtractor (SmartTube Native)",
+                audioQuality = audioQuality,
+                urlOf = { it.content },
+                suffixOf = { it.format?.suffix },
+                mimeOf = { it.format?.mimeType },
+                bitrateOf = { it.averageBitrate }
+            )?.let { return@withContext it }
         } catch (e: Exception) {
             Log.w(TAG, "Tier 2 BraveNewPipe notice for $videoId: ${e.message}")
         }
@@ -422,9 +647,10 @@ object SimpMusicExtractorEngine {
                     mimeType = "audio/mp4",
                     bitrateKbps = 130,
                     codec = "AAC",
+                    loudnessDb = loudnessCache[videoId] ?: 0f,
                     sourceTier = "Direct Edge Stream (Pre-Warmed)"
                 )
-                streamCache[videoId] = resolved
+                streamCache[audioCacheKey(videoId, audioQuality)] = resolved
                 Log.i(TAG, "Tier 3 Direct Edge Stream resolved $videoId -> $finalUrl")
                 return@withContext resolved
             }
@@ -434,73 +660,38 @@ object SimpMusicExtractorEngine {
     }
 
     /**
-     * Resolves a video stream for video playback mode.
-     * Prioritizes high-definition 1080p/720p video paired with high-bitrate audio,
-     * with graceful fallback to progressive muxed MP4 streams.
+     * Resolves a video stream for video playback mode honoring user video & audio quality preferences.
      */
-    suspend fun resolveVideoStream(videoId: String): ResolvedVideoStream? = withContext(Dispatchers.IO) {
+    suspend fun resolveVideoStream(
+        videoId: String,
+        videoQuality: String = "Auto (1080p)",
+        audioQuality: String = "Auto"
+    ): ResolvedVideoStream? = withContext(Dispatchers.IO) {
         initExtractors()
-        videoStreamCache[videoId]?.let { return@withContext it }
+        videoStreamCache[videoCacheKey(videoId, videoQuality, audioQuality)]?.let { return@withContext it }
 
         // Tier 1: PipePipeExtractor
         try {
             YoutubeApiDecoder.setLocalDecoder(null)
             val url = "https://www.youtube.com/watch?v=$videoId"
             val streamInfo = PipePipeStreamInfo.getInfo(PipePipeServiceList.YouTube, url)
-
-            // Step 1: Check for high-definition video-only stream (1080p / 720p) + crisp audio stream
-            val videoOnly = streamInfo.videoOnlyStreams
-            val audioStreams = streamInfo.audioStreams
-            if (!videoOnly.isNullOrEmpty() && !audioStreams.isNullOrEmpty()) {
-                val hdVideo = videoOnly
-                    .filter { it.height >= 720 && !it.content.isNullOrBlank() }
-                    .maxByOrNull { it.height }
-                val bestAudio = audioStreams
-                    .filter { !it.content.isNullOrBlank() }
-                    .sortedWith(
-                        compareBy<PipePipeAudioStream> { audioTrackRank(it.content, "en") }
-                            .thenByDescending { it.averageBitrate }
-                    ).firstOrNull() ?: audioStreams.firstOrNull()
-
-                if (hdVideo != null && bestAudio != null) {
-                    val verifiedVideo = verifyPlayableUrl(hdVideo.content)
-                    val verifiedAudio = verifyPlayableUrl(bestAudio.content)
-                    if (verifiedVideo != null && verifiedAudio != null) {
-                        val resolved = ResolvedVideoStream(
-                            videoId = videoId,
-                            streamUrl = verifiedVideo,
-                            quality = "${hdVideo.height}p HD",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            audioUrl = verifiedAudio
-                        )
-                        videoStreamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 1 PipePipe resolved HD video+audio for $videoId (${resolved.quality})")
-                        return@withContext resolved
-                    }
-                }
-            }
-
-            // Step 2: Fallback to progressive muxed video streams (720p / 360p)
-            val videoStreams = streamInfo.videoStreams
-            if (!videoStreams.isNullOrEmpty()) {
-                val sorted = videoStreams.filter { !it.content.isNullOrBlank() }.sortedByDescending { it.height }
-                for (stream in sorted) {
-                    val rawUrl = stream.content
-                    val verifiedUrl = verifyPlayableUrl(rawUrl)
-                    if (verifiedUrl != null) {
-                        val resolved = ResolvedVideoStream(
-                            videoId = videoId,
-                            streamUrl = verifiedUrl,
-                            quality = stream.resolution ?: "${stream.height}p",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            audioUrl = null
-                        )
-                        videoStreamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 1 PipePipe resolved progressive video for $videoId (${resolved.quality})")
-                        return@withContext resolved
-                    }
-                }
-            }
+            resolveVideoFromLists(
+                videoId = videoId,
+                videoOnlyStreams = streamInfo.videoOnlyStreams,
+                progressiveStreams = streamInfo.videoStreams,
+                audioStreams = streamInfo.audioStreams,
+                durationSeconds = streamInfo.duration.toInt(),
+                tierLabel = "Tier 1 PipePipe",
+                videoQuality = videoQuality,
+                audioQuality = audioQuality,
+                videoUrlOf = { it.content },
+                videoHeightOf = { it.height },
+                videoResolutionOf = { it.resolution },
+                audioUrlOf = { it.content },
+                audioSuffixOf = { it.format?.suffix },
+                audioMimeOf = { it.format?.mimeType },
+                audioBitrateOf = { it.averageBitrate }
+            )?.let { return@withContext it }
         } catch (e: Exception) {
             Log.w(TAG, "Tier 1 PipePipe video error for $videoId: ${e.message}")
         }
@@ -509,60 +700,23 @@ object SimpMusicExtractorEngine {
         try {
             val url = "https://www.youtube.com/watch?v=$videoId"
             val streamInfo = BraveStreamInfo.getInfo(BraveServiceList.YouTube, url)
-
-            // Step 1: Check for high-definition video-only stream (1080p / 720p) + crisp audio stream
-            val videoOnly = streamInfo.videoOnlyStreams
-            val audioStreams = streamInfo.audioStreams
-            if (!videoOnly.isNullOrEmpty() && !audioStreams.isNullOrEmpty()) {
-                val hdVideo = videoOnly
-                    .filter { it.height >= 720 && !it.content.isNullOrBlank() }
-                    .maxByOrNull { it.height }
-                val bestAudio = audioStreams
-                    .filter { !it.content.isNullOrBlank() }
-                    .sortedWith(
-                        compareBy<BraveAudioStream> { audioTrackRank(it.content, "en") }
-                            .thenByDescending { it.averageBitrate }
-                    ).firstOrNull() ?: audioStreams.firstOrNull()
-
-                if (hdVideo != null && bestAudio != null) {
-                    val verifiedVideo = verifyPlayableUrl(hdVideo.content)
-                    val verifiedAudio = verifyPlayableUrl(bestAudio.content)
-                    if (verifiedVideo != null && verifiedAudio != null) {
-                        val resolved = ResolvedVideoStream(
-                            videoId = videoId,
-                            streamUrl = verifiedVideo,
-                            quality = "${hdVideo.height}p HD",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            audioUrl = verifiedAudio
-                        )
-                        videoStreamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 2 BraveNewPipe resolved HD video+audio for $videoId (${resolved.quality})")
-                        return@withContext resolved
-                    }
-                }
-            }
-
-            // Step 2: Fallback to progressive muxed video streams
-            val videoStreams = streamInfo.videoStreams
-            if (!videoStreams.isNullOrEmpty()) {
-                val sorted = videoStreams.filter { !it.content.isNullOrBlank() }.sortedByDescending { it.height }
-                for (stream in sorted) {
-                    val rawUrl = stream.content
-                    val verifiedUrl = verifyPlayableUrl(rawUrl)
-                    if (verifiedUrl != null) {
-                        val resolved = ResolvedVideoStream(
-                            videoId = videoId,
-                            streamUrl = verifiedUrl,
-                            quality = stream.resolution ?: "${stream.height}p",
-                            durationSeconds = streamInfo.duration.toInt().coerceAtLeast(0),
-                            audioUrl = null
-                        )
-                        videoStreamCache[videoId] = resolved
-                        Log.i(TAG, "Tier 2 BraveNewPipe resolved progressive video for $videoId (${resolved.quality})")
-                        return@withContext resolved
-                    }
-                }
-            }
+            resolveVideoFromLists(
+                videoId = videoId,
+                videoOnlyStreams = streamInfo.videoOnlyStreams,
+                progressiveStreams = streamInfo.videoStreams,
+                audioStreams = streamInfo.audioStreams,
+                durationSeconds = streamInfo.duration.toInt(),
+                tierLabel = "Tier 2 BraveNewPipe",
+                videoQuality = videoQuality,
+                audioQuality = audioQuality,
+                videoUrlOf = { it.content },
+                videoHeightOf = { it.height },
+                videoResolutionOf = { it.resolution },
+                audioUrlOf = { it.content },
+                audioSuffixOf = { it.format?.suffix },
+                audioMimeOf = { it.format?.mimeType },
+                audioBitrateOf = { it.averageBitrate }
+            )?.let { return@withContext it }
         } catch (e: Exception) {
             Log.w(TAG, "Tier 2 BraveNewPipe video error for $videoId: ${e.message}")
         }

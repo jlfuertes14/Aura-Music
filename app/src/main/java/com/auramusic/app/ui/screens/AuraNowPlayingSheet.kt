@@ -172,6 +172,7 @@ import com.auramusic.app.ui.components.AudioPlayingIndicator
 import com.auramusic.app.core.lyrics.SimpMusicLyricsRepository
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraPalette
+import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
@@ -261,7 +262,10 @@ fun AuraNowPlayingSheet(
     isLoadingComments: Boolean = false,
     commentsError: String? = null,
     onLoadComments: (String) -> Unit = {},
-    onLoadMoreComments: () -> Unit = {}
+    onLoadMoreComments: () -> Unit = {},
+    onSelectCommentSort: (AuraCommentSort) -> Unit = {},
+    onToggleCommentReplies: (String) -> Unit = {},
+    onLoadMoreCommentReplies: (String) -> Unit = {}
 ) {
     var isLyricsExpanded by remember { mutableStateOf(false) }
     var lyricsCardBounds by remember { mutableStateOf<Rect?>(null) }
@@ -899,6 +903,9 @@ fun AuraNowPlayingSheet(
                 error = commentsError,
                 onRetry = { onLoadComments(track.videoId) },
                 onLoadMore = onLoadMoreComments,
+                onSelectSort = onSelectCommentSort,
+                onToggleReplies = onToggleCommentReplies,
+                onLoadMoreReplies = onLoadMoreCommentReplies,
                 onDismiss = { isCommentsVisible = false }
             )
         }

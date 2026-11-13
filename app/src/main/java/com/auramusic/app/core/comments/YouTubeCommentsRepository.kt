@@ -1,6 +1,7 @@
 package com.auramusic.app.core.comments
 
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
+import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
 import com.auramusic.app.domain.model.AuraYouTubeComment
 import kotlinx.coroutines.Dispatchers
@@ -11,7 +12,12 @@ import okhttp3.MediaType.Companion.toMediaType
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Read-only InnerTube comments flow: watch-page comments tab token, then comments continuation. */
+data class AuraCommentRepliesPage(
+    val replies: List<AuraYouTubeComment>,
+    val continuation: String?
+)
+
+/** Read-only InnerTube comments flow: watch-page comments tab token, sort menus, replies, and continuation. */
 object YouTubeCommentsRepository {
     private const val ENDPOINT = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
     private const val CLIENT_VERSION = "1.20250312.01.00"
@@ -26,6 +32,11 @@ object YouTubeCommentsRepository {
 
     suspend fun nextPage(continuation: String): AuraCommentsPage = withContext(Dispatchers.IO) {
         parsePage(nextRequest(JSONObject().put("continuation", continuation)))
+    }
+
+    suspend fun loadReplies(continuation: String): AuraCommentRepliesPage = withContext(Dispatchers.IO) {
+        val page = parsePage(nextRequest(JSONObject().put("continuation", continuation)))
+        AuraCommentRepliesPage(replies = page.comments, continuation = page.continuation)
     }
 
     private fun nextRequest(extra: JSONObject): JSONObject {
@@ -75,43 +86,171 @@ object YouTubeCommentsRepository {
             }
         }
 
-        val comments = mutableListOf<AuraYouTubeComment>()
-        findObjects(root, "commentThreadRenderer").forEach { thread ->
-            val viewModel = thread.optJSONObject("commentViewModel")?.optJSONObject("commentViewModel")
-            val commentKey = viewModel?.optString("commentKey").orEmpty()
-            val payload = entities[commentKey]
-            if (payload != null) {
-                val properties = payload.optJSONObject("properties")
-                val author = payload.optJSONObject("author")
-                val toolbar = payload.optJSONObject("toolbar")
-                val id = viewModel?.optString("commentId").orEmpty().ifBlank { properties?.optString("commentId").orEmpty() }
-                if (id.isNotBlank()) comments += AuraYouTubeComment(
-                    id = id,
-                    author = author?.optString("displayName").orEmpty().ifBlank { "YouTube user" },
-                    avatarUrl = author?.optString("avatarThumbnailUrl")?.takeIf(String::isNotBlank),
-                    text = properties?.optJSONObject("content")?.optString("content").orEmpty(),
-                    publishedTime = properties?.optString("publishedTime").orEmpty(),
-                    likeCount = toolbar?.optString("likeCountNotliked").orEmpty()
-                )
-            } else {
-                // Older InnerTube renderer is still used for some tracks and client responses.
-                thread.optJSONObject("comment")?.optJSONObject("commentRenderer")?.toAuraComment()?.let(comments::add)
-            }
+        val endpointItems = extractTopLevelContinuationItems(root)
+        val threads = if (endpointItems.isNotEmpty()) {
+            endpointItems.mapNotNull { it.optJSONObject("commentThreadRenderer") }
+        } else {
+            findObjects(root, "commentThreadRenderer")
         }
-        if (comments.isEmpty()) findObjects(root, "commentRenderer").mapNotNullTo(comments) { it.toAuraComment() }
+
+        val comments = mutableListOf<AuraYouTubeComment>()
+        threads.forEach { thread ->
+            parseCommentThread(thread, entities)?.let(comments::add)
+        }
+        if (comments.isEmpty()) {
+            findObjects(root, "commentRenderer").mapNotNullTo(comments) { it.toAuraComment() }
+        }
 
         val header = findObjects(root, "commentsHeaderRenderer").firstOrNull()
         val count = header?.optJSONObject("commentsCount")?.readText()
             ?: header?.optJSONObject("countText")?.readText()
-        val continuation = findObjects(root, "continuationItemRenderer").firstNotNullOfOrNull { renderer ->
-            renderer.optJSONObject("continuationEndpoint")?.optJSONObject("continuationCommand")?.optString("token")
-                ?.takeIf(String::isNotBlank)
-                ?: renderer.optJSONObject("button")?.optJSONObject("buttonRenderer")
-                    ?.optJSONObject("command")?.optJSONObject("continuationCommand")?.optString("token")
+
+        var topSortToken: String? = null
+        var newestSortToken: String? = null
+        var activeSort = AuraCommentSort.TOP
+        val sortItems = header?.optJSONObject("sortMenu")
+            ?.optJSONObject("sortFilterSubMenuRenderer")
+            ?.optJSONArray("subMenuItems")
+        if (sortItems != null) {
+            for (i in 0 until sortItems.length()) {
+                val item = sortItems.optJSONObject(i) ?: continue
+                val title = item.optString("title")
+                val token = item.optJSONObject("continuation")
+                    ?.optJSONObject("reloadContinuationData")
+                    ?.optString("continuation")
                     ?.takeIf(String::isNotBlank)
+                val selected = item.optBoolean("selected", false)
+                when {
+                    title.contains("Newest", ignoreCase = true) -> {
+                        newestSortToken = token
+                        if (selected) activeSort = AuraCommentSort.NEWEST
+                    }
+                    title.contains("Top", ignoreCase = true) -> {
+                        topSortToken = token
+                        if (selected) activeSort = AuraCommentSort.TOP
+                    }
+                }
+            }
         }
-        return AuraCommentsPage(count, comments.distinctBy { it.id }, continuation)
+
+        val continuation = if (endpointItems.isNotEmpty()) {
+            endpointItems.firstNotNullOfOrNull { item ->
+                item.optJSONObject("continuationItemRenderer")?.extractContinuationToken()
+            }
+        } else {
+            findObjects(root, "continuationItemRenderer").firstNotNullOfOrNull { it.extractContinuationToken() }
+        }
+
+        return AuraCommentsPage(
+            countText = count,
+            comments = comments.distinctBy { it.id },
+            continuation = continuation,
+            activeSort = activeSort,
+            topSortToken = topSortToken,
+            newestSortToken = newestSortToken
+        )
     }
+
+    private fun extractTopLevelContinuationItems(root: JSONObject): List<JSONObject> {
+        val endpoints = root.optJSONArray("onResponseReceivedEndpoints") ?: return emptyList()
+        val items = mutableListOf<JSONObject>()
+        for (i in 0 until endpoints.length()) {
+            val endpoint = endpoints.optJSONObject(i) ?: continue
+            val arr = endpoint.optJSONObject("reloadContinuationItemsCommand")?.optJSONArray("continuationItems")
+                ?: endpoint.optJSONObject("appendContinuationItemsAction")?.optJSONArray("continuationItems")
+                ?: continue
+            for (j in 0 until arr.length()) {
+                arr.optJSONObject(j)?.let(items::add)
+            }
+        }
+        return items
+    }
+
+    private fun parseCommentThread(
+        thread: JSONObject,
+        entities: Map<String, JSONObject>
+    ): AuraYouTubeComment? {
+        val baseComment = parseCommentFromThread(thread, entities) ?: return null
+        val repliesRenderer = thread.optJSONObject("replies")?.optJSONObject("commentRepliesRenderer")
+            ?: return baseComment
+
+        val viewRepliesText = repliesRenderer.optJSONObject("viewReplies")
+            ?.optJSONObject("buttonRenderer")
+            ?.optJSONObject("text")
+            ?.readText()
+            .orEmpty()
+
+        val repliesContinuation = extractRepliesContinuation(repliesRenderer.optJSONArray("subThreads"))
+            ?: extractRepliesContinuation(repliesRenderer.optJSONArray("contents"))
+
+        val inlineReplies = mutableListOf<AuraYouTubeComment>()
+        val contents = repliesRenderer.optJSONArray("contents")
+        if (contents != null) {
+            for (i in 0 until contents.length()) {
+                contents.optJSONObject(i)?.optJSONObject("commentRenderer")?.toAuraComment()?.let(inlineReplies::add)
+            }
+        }
+
+        val resolvedReplyCountText = viewRepliesText.ifBlank {
+            baseComment.replyCountText.takeIf { it.isNotBlank() && it != "0" }
+                ?.let { if (it == "1") "1 reply" else "$it replies" }
+                .orEmpty()
+        }
+
+        return baseComment.copy(
+            replyCountText = resolvedReplyCountText,
+            repliesContinuation = repliesContinuation,
+            replies = inlineReplies
+        )
+    }
+
+    private fun parseCommentFromThread(
+        thread: JSONObject,
+        entities: Map<String, JSONObject>
+    ): AuraYouTubeComment? {
+        val viewModel = thread.optJSONObject("commentViewModel")?.optJSONObject("commentViewModel")
+        val commentKey = viewModel?.optString("commentKey").orEmpty()
+        val payload = entities[commentKey]
+        if (payload != null) {
+            val properties = payload.optJSONObject("properties")
+            val author = payload.optJSONObject("author")
+            val toolbar = payload.optJSONObject("toolbar")
+            val id = viewModel?.optString("commentId").orEmpty().ifBlank { properties?.optString("commentId").orEmpty() }
+            if (id.isBlank()) return null
+            return AuraYouTubeComment(
+                id = id,
+                author = author?.optString("displayName").orEmpty().ifBlank { "YouTube user" },
+                avatarUrl = author?.optString("avatarThumbnailUrl")?.takeIf(String::isNotBlank),
+                text = properties?.optJSONObject("content")?.optString("content").orEmpty(),
+                publishedTime = properties?.optString("publishedTime").orEmpty(),
+                likeCount = toolbar?.optString("likeCountNotliked").orEmpty(),
+                replyCountText = toolbar?.optString("replyCount").orEmpty()
+            )
+        }
+        // Older InnerTube renderer is still used for some tracks and client responses.
+        return thread.optJSONObject("comment")?.optJSONObject("commentRenderer")?.toAuraComment()
+    }
+
+    private fun extractRepliesContinuation(array: JSONArray?): String? {
+        if (array == null) return null
+        for (i in 0 until array.length()) {
+            val renderer = array.optJSONObject(i)?.optJSONObject("continuationItemRenderer") ?: continue
+            renderer.extractContinuationToken()?.let { return it }
+        }
+        return null
+    }
+
+    private fun JSONObject.extractContinuationToken(): String? =
+        optJSONObject("continuationEndpoint")
+            ?.optJSONObject("continuationCommand")
+            ?.optString("token")
+            ?.takeIf(String::isNotBlank)
+            ?: optJSONObject("button")
+                ?.optJSONObject("buttonRenderer")
+                ?.optJSONObject("command")
+                ?.optJSONObject("continuationCommand")
+                ?.optString("token")
+                ?.takeIf(String::isNotBlank)
 
     private fun JSONObject.toAuraComment(): AuraYouTubeComment? {
         val id = optString("commentId").ifBlank { return null }

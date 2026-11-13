@@ -466,6 +466,11 @@ class AuraStorageRepository(context: Context) {
         prefs.edit().putString("setting_eq_preset", name).apply()
     }
 
+    fun loadEqualizerEnabled(): Boolean = prefs.getBoolean("setting_eq_enabled", false)
+    fun saveEqualizerEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_eq_enabled", enabled).apply()
+    }
+
     fun loadChartCountry(): String = prefs.getString("setting_chart_country", "US") ?: "US"
     fun saveChartCountry(code: String) {
         prefs.edit().putString("setting_chart_country", code).apply()

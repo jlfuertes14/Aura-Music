@@ -541,6 +541,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
                             onToggleFavorite = { viewModel.toggleFavorite(it) },
                             onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
+                            onDownloadAll = { tracks -> requestDownloadWithPermission { viewModel.downloadAllTracks(tracks) } },
                             onRemoveDownload = { track -> viewModel.removeDownload(track) },
                             onUpdatePlaylistCover = { id, cover -> viewModel.updatePlaylistCover(id, cover) },
                             onUpdatePlaylistTitle = { id, title -> viewModel.updatePlaylistTitle(id, title) },
@@ -1012,7 +1013,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     isLoadingComments = areCommentsLoading,
                     commentsError = commentsError,
                     onLoadComments = { viewModel.loadPlayerComments(it) },
-                    onLoadMoreComments = { viewModel.loadMorePlayerComments() }
+                    onLoadMoreComments = { viewModel.loadMorePlayerComments() },
+                    onSelectCommentSort = { viewModel.selectCommentSort(it) },
+                    onToggleCommentReplies = { viewModel.toggleCommentReplies(it) },
+                    onLoadMoreCommentReplies = { viewModel.loadMoreCommentReplies(it) }
                 )
             }
         }

@@ -3,6 +3,7 @@ package com.auramusic.app.core.media
 import android.content.Context
 import android.content.Intent
 import android.media.audiofx.Equalizer
+import android.media.audiofx.LoudnessEnhancer
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -16,6 +17,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
+import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
@@ -27,14 +29,17 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import com.auramusic.app.core.extractor.ResolvedStream
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.isPendingResolution
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.PlaybackMode
+import com.auramusic.app.domain.model.ResolvedVideoStream
 import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
 import com.auramusic.app.domain.model.SIMPMUSIC_EQ_PRESETS
 import com.auramusic.app.domain.model.SponsorSegment
@@ -53,6 +58,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
+import kotlin.math.pow
 
 @OptIn(UnstableApi::class)
 object AuraPlayerManager {
@@ -69,6 +75,10 @@ object AuraPlayerManager {
     private var appContext: Context? = null
     private var simpleCache: SimpleCache? = null
     private var hardwareEq: Equalizer? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
+    private var boundAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+    @Volatile
+    private var currentTrackLoudnessDb: Float = 0f
 
     var exoPlayer: ExoPlayer? = null
         private set
@@ -180,6 +190,7 @@ object AuraPlayerManager {
         appContext = ctx
 
         val storage = AuraStorageRepository(ctx)
+        _eqEnabled.value = storage.loadEqualizerEnabled()
         _equalizerBands.value = storage.loadEqualizerBands()
         _equalizerPreamp.value = storage.loadEqualizerPreamp()
         val savedPreset = storage.loadEqualizerPreset()
@@ -269,22 +280,29 @@ object AuraPlayerManager {
                 // Check offline downloaded file first
                 val offlineFile = getOfflineFile(ctx, videoId)
                 if (offlineFile.exists() && offlineFile.length() > 10_000L) {
-                    _streamSourceTier.value = "Offline • Lossless"
+                    if (_currentTrack.value?.videoId == videoId) {
+                        currentTrackLoudnessDb = 0f
+                        _streamSourceTier.value = "Offline • Lossless"
+                        scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
+                    }
                     return@Factory dataSpec.buildUpon()
                         .setUri(Uri.fromFile(offlineFile))
-                        .setKey(videoId)
+                        .setKey("offline_$videoId")
                         .build()
                 }
 
                 // Otherwise resolve via SimpMusicExtractorEngine (Tier 0 memory cache -> Tier 1 PipePipe -> Tier 2 NewPipe -> Tier 3 Edge)
+                val audioQualityPref = _audioQuality.value
                 val resolved = runBlocking(Dispatchers.IO) {
-                    SimpMusicExtractorEngine.resolveStream(videoId)
+                    SimpMusicExtractorEngine.resolveStream(videoId, audioQualityPref)
                 }
-                _streamSourceTier.value = if (resolved.bitrateKbps >= 140) "Ultra HD • ${resolved.bitrateKbps} KBPS" else "High Quality Audio"
+                if (_currentTrack.value?.videoId == videoId) {
+                    applyResolvedAudioMetadata(videoId, resolved)
+                }
 
                 return@Factory dataSpec.buildUpon()
                     .setUri(Uri.parse(resolved.streamUrl))
-                    .setKey(videoId)
+                    .setKey("audio_${videoId}_$audioQualityPref")
                     .build()
             }
 
@@ -296,16 +314,22 @@ object AuraPlayerManager {
                 )
 
                 _isVideoLoading.value = true
+                val videoQualityPref = _videoQuality.value
+                val audioQualityPref = _audioQuality.value
                 val resolvedVideo = runBlocking(Dispatchers.IO) {
-                    SimpMusicExtractorEngine.resolveVideoStream(videoId)
+                    SimpMusicExtractorEngine.resolveVideoStream(videoId, videoQualityPref, audioQualityPref)
                 }
                 _isVideoLoading.value = false
 
                 if (resolvedVideo != null) {
-                    _streamSourceTier.value = "Video HD • ${resolvedVideo.quality}"
+                    if (_currentTrack.value?.videoId == videoId) {
+                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoId) ?: 0f
+                        _streamSourceTier.value = "Video • ${resolvedVideo.quality}"
+                        scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
+                    }
                     return@Factory dataSpec.buildUpon()
                         .setUri(Uri.parse(resolvedVideo.streamUrl))
-                        .setKey("video_$videoId")
+                        .setKey("video_${videoId}_${videoQualityPref}_$audioQualityPref")
                         .build()
                 } else {
                     throw PlaybackException(
@@ -370,12 +394,18 @@ object AuraPlayerManager {
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 fadeJob?.cancel()
-                player.volume = baseVolume
                 val mediaId = mediaItem?.mediaId ?: return
                 val matched = _queue.value.firstOrNull { it.videoId == mediaId || it.id == mediaId }
                 if (matched != null) {
                     _currentTrack.value = matched
                     _durationSec.value = matched.durationSeconds.toFloat().coerceAtLeast(1f)
+                    val cachedStream = SimpMusicExtractorEngine.getCachedStream(matched.videoId, _audioQuality.value)
+                    if (cachedStream != null) {
+                        applyResolvedAudioMetadata(matched.videoId, cachedStream)
+                    } else {
+                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(matched.videoId) ?: 0f
+                        applyEqualizerCurve()
+                    }
                     if (matched.isPendingResolution) {
                         scope.launch {
                             val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(matched)
@@ -918,6 +948,7 @@ object AuraPlayerManager {
     fun setEqualizerEnabled(enabled: Boolean) {
         _eqEnabled.value = enabled
         applyEqualizerCurve()
+        appContext?.let { AuraStorageRepository(it).saveEqualizerEnabled(enabled) }
     }
 
     fun setLoudnessNormalization(enabled: Boolean) {
@@ -927,13 +958,78 @@ object AuraPlayerManager {
     }
 
     fun setAudioQuality(quality: String) {
+        if (_audioQuality.value == quality) return
         _audioQuality.value = quality
         appContext?.let { AuraStorageRepository(it).saveAudioQuality(quality) }
+        reloadCurrentPlaybackForQualityChange(videoOnlyChanged = false)
     }
 
     fun setVideoQuality(quality: String) {
+        if (_videoQuality.value == quality) return
         _videoQuality.value = quality
         appContext?.let { AuraStorageRepository(it).saveVideoQuality(quality) }
+        reloadCurrentPlaybackForQualityChange(videoOnlyChanged = true)
+    }
+
+    private fun applyResolvedAudioMetadata(videoId: String, resolved: ResolvedStream) {
+        currentTrackLoudnessDb = resolved.loudnessDb
+        _streamSourceTier.value = when {
+            resolved.bitrateKbps >= 180 -> "Ultra HD • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
+            resolved.bitrateKbps >= 110 -> "High Quality • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
+            else -> "Data Saver • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
+        }
+        scope.launch(Dispatchers.Main) {
+            val cur = _currentTrack.value
+            if (cur != null && cur.videoId == videoId) {
+                val updated = cur.copy(codec = resolved.codec, bitrateKbps = resolved.bitrateKbps)
+                _currentTrack.value = updated
+                val currentQ = _queue.value.toMutableList()
+                val idx = currentQ.indexOfFirst { it.id == cur.id || it.videoId == videoId }
+                if (idx >= 0) {
+                    currentQ[idx] = updated
+                    _queue.value = currentQ
+                }
+            }
+            applyEqualizerCurve()
+        }
+    }
+
+    private fun reloadCurrentPlaybackForQualityChange(videoOnlyChanged: Boolean) {
+        val player = exoPlayer ?: return
+        val cur = _currentTrack.value ?: return
+        val currentPos = player.currentPosition.coerceAtLeast(0L)
+        val wasPlaying = player.isPlaying || player.playWhenReady
+
+        if (_isVideoMode.value) {
+            val origAudio = originalAudioTrack
+            if (origAudio != null) {
+                playVideoForTrack(cur, origAudio, startPlayback = false)
+            } else {
+                playStandaloneVideo(
+                    videoTrack = cur,
+                    videoQueue = _queue.value.ifEmpty { listOf(cur) },
+                    startPositionMs = currentPos,
+                    autoPlay = wasPlaying
+                )
+            }
+            return
+        }
+
+        if (videoOnlyChanged) return
+        val ctx = appContext
+        if (ctx != null) {
+            val offlineFile = getOfflineFile(ctx, cur.videoId)
+            if (offlineFile.exists() && offlineFile.length() > 10_000L) return
+        }
+
+        val list = _queue.value
+        val curIdx = list.indexOfFirst { it.id == cur.id || it.videoId == cur.videoId }.coerceAtLeast(0)
+        if (list.isEmpty()) return
+        val mediaItems = list.map { buildMediaItem(it) }
+        player.setMediaItems(mediaItems, curIdx, currentPos)
+        player.prepare()
+        if (wasPlaying) player.play() else player.pause()
+        prefetchUpcomingTracks(cur.videoId)
     }
 
     fun setSkipSilence(enabled: Boolean) {
@@ -1005,7 +1101,7 @@ object AuraPlayerManager {
         onProgress: (bytesRead: Long, totalBytes: Long, progress: Float) -> Unit = { _, _, _ -> }
     ): File? = withContext(Dispatchers.IO) {
         try {
-            val resolved = SimpMusicExtractorEngine.resolveStream(track.videoId)
+            val resolved = SimpMusicExtractorEngine.resolveStream(track.videoId, _audioQuality.value)
             val targetFile = getOfflineFile(context, track.videoId)
             val req = Request.Builder()
                 .url(resolved.streamUrl)
@@ -1051,6 +1147,27 @@ object AuraPlayerManager {
         _isVideoLoading.value = loading
     }
 
+    private fun buildVideoMediaSource(
+        resolved: ResolvedVideoStream,
+        dataSourceFactory: DataSource.Factory
+    ): MediaSource {
+        val videoItem = MediaItem.Builder()
+            .setUri(Uri.parse(resolved.streamUrl))
+            .setCustomCacheKey("video_${resolved.videoId}_${resolved.quality}")
+            .build()
+        val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(videoItem)
+        return if (!resolved.audioUrl.isNullOrBlank()) {
+            val audioItem = MediaItem.Builder()
+                .setUri(Uri.parse(resolved.audioUrl))
+                .setCustomCacheKey("video_audio_${resolved.videoId}_${_audioQuality.value}")
+                .build()
+            val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory).createMediaSource(audioItem)
+            MergingMediaSource(videoSource, audioSource)
+        } else {
+            videoSource
+        }
+    }
+
     /**
      * Seamlessly launches official music video playback while preserving the original
      * Spotify song artwork, metadata, and playlist queue.
@@ -1083,32 +1200,29 @@ object AuraPlayerManager {
 
         scope.launch {
             _isVideoLoading.value = true
+            val videoQualityPref = _videoQuality.value
+            val audioQualityPref = _audioQuality.value
             val resolved = withContext(Dispatchers.IO) {
-                SimpMusicExtractorEngine.resolveVideoStream(videoTrack.videoId)
+                SimpMusicExtractorEngine.resolveVideoStream(
+                    videoTrack.videoId,
+                    videoQualityPref,
+                    audioQualityPref
+                )
             }
             _isVideoLoading.value = false
 
-            val player = exoPlayer ?: return@launch
+            val activePlayer = exoPlayer ?: return@launch
             if (resolved != null) {
-                _streamSourceTier.value = "Video HD • ${resolved.quality}"
+                currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
+                applyEqualizerCurve()
+                _streamSourceTier.value = "Video • ${resolved.quality}"
                 val cFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
+                val mediaSource = buildVideoMediaSource(resolved, cFactory)
 
-                val mediaSource = if (!resolved.audioUrl.isNullOrBlank()) {
-                    // Combine HD 1080p/720p video stream + high-fidelity 160kbps audio stream!
-                    val videoSource = ProgressiveMediaSource.Factory(cFactory)
-                        .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.streamUrl)))
-                    val audioSource = ProgressiveMediaSource.Factory(cFactory)
-                        .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.audioUrl)))
-                    MergingMediaSource(videoSource, audioSource)
-                } else {
-                    ProgressiveMediaSource.Factory(cFactory)
-                        .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.streamUrl)))
-                }
-
-                player.setMediaSource(mediaSource, currentPos)
-                player.prepare()
+                activePlayer.setMediaSource(mediaSource, currentPos)
+                activePlayer.prepare()
                 if (wasPlaying) {
-                    player.play()
+                    activePlayer.play()
                 }
             } else {
                 Log.w(TAG, "Could not resolve video ${videoTrack.videoId}; restoring audio playback")
@@ -1151,7 +1265,12 @@ object AuraPlayerManager {
     }
 
     /** Starts a video discovered from the Home carousel as a video player session. */
-    fun playStandaloneVideo(videoTrack: AuraTrack, videoQueue: List<AuraTrack>) {
+    fun playStandaloneVideo(
+        videoTrack: AuraTrack,
+        videoQueue: List<AuraTrack>,
+        startPositionMs: Long = 0L,
+        autoPlay: Boolean = true
+    ) {
         val previousTrack = _currentTrack.value
         val previousQueue = _queue.value
         val wasPlaying = exoPlayer?.isPlaying == true
@@ -1161,7 +1280,7 @@ object AuraPlayerManager {
         originalAudioIndex = -1
         originalQueue = videoQueue
         _queue.value = videoQueue
-        _positionSec.value = 0f
+        _positionSec.value = (startPositionMs / 1000f).coerceAtLeast(0f)
         _bufferedSec.value = 0f
         _durationSec.value = videoTrack.durationSeconds.toFloat().coerceAtLeast(1f)
         _isVideoMode.value = true
@@ -1172,8 +1291,14 @@ object AuraPlayerManager {
 
         scope.launch {
             _isVideoLoading.value = true
+            val videoQualityPref = _videoQuality.value
+            val audioQualityPref = _audioQuality.value
             val resolved = withContext(Dispatchers.IO) {
-                SimpMusicExtractorEngine.resolveVideoStream(videoTrack.videoId)
+                SimpMusicExtractorEngine.resolveVideoStream(
+                    videoTrack.videoId,
+                    videoQualityPref,
+                    audioQualityPref
+                )
             }
             _isVideoLoading.value = false
 
@@ -1188,21 +1313,18 @@ object AuraPlayerManager {
                 return@launch
             }
 
-            _streamSourceTier.value = "Video HD • ${resolved.quality}"
+            currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
+            applyEqualizerCurve()
+            _streamSourceTier.value = "Video • ${resolved.quality}"
             val dataSourceFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
-            val mediaSource = if (!resolved.audioUrl.isNullOrBlank()) {
-                val videoSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.streamUrl)))
-                val audioSource = ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.audioUrl)))
-                MergingMediaSource(videoSource, audioSource)
-            } else {
-                ProgressiveMediaSource.Factory(dataSourceFactory)
-                    .createMediaSource(MediaItem.fromUri(Uri.parse(resolved.streamUrl)))
-            }
-            player.setMediaSource(mediaSource, 0L)
+            val mediaSource = buildVideoMediaSource(resolved, dataSourceFactory)
+            player.setMediaSource(mediaSource, startPositionMs)
             player.prepare()
-            player.play()
+            if (autoPlay) {
+                player.play()
+            } else {
+                player.pause()
+            }
         }
     }
 
@@ -1294,79 +1416,63 @@ object AuraPlayerManager {
         val idx = list.indexOfFirst {
             (curTrack != null && it.id == curTrack.id) || it.videoId == currentVideoId
         }
-        if (idx >= 0) {
-            val nextTrack = list.getOrNull(idx + 1)
-            if (nextTrack != null) {
-                if (nextTrack.isPendingResolution) {
-                    // Auto-prefetch: Silently resolve the next track's YouTube ID in background
-                    scope.launch {
-                        val resolvedNext = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(nextTrack)
-                        if (!resolvedNext.isPendingResolution) {
-                            withContext(Dispatchers.Main) {
-                                val currentQ = _queue.value.toMutableList()
-                                val qIdx = currentQ.indexOfFirst { it.id == nextTrack.id }
-                                if (qIdx >= 0) {
-                                    currentQ[qIdx] = resolvedNext
-                                    _queue.value = currentQ
-                                }
-                                val origIdx = originalQueue.indexOfFirst { it.id == nextTrack.id }
-                                if (origIdx >= 0 && origIdx < originalQueue.size) {
-                                    val origList = originalQueue.toMutableList()
-                                    origList[origIdx] = resolvedNext
-                                    originalQueue = origList
-                                }
-                                onTrackResolvedCallback?.invoke(resolvedNext)
-                            }
-                            SimpMusicExtractorEngine.prefetchStream(resolvedNext.videoId)
-                        }
-                    }
-                } else {
-                    SimpMusicExtractorEngine.prefetchStream(nextTrack.videoId)
-                }
-            }
+        if (idx < 0) return
 
-            val nextNextTrack = list.getOrNull(idx + 2)
-            if (nextNextTrack != null) {
-                if (nextNextTrack.isPendingResolution) {
-                    scope.launch {
-                        val resolvedNextNext = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(nextNextTrack)
-                        if (!resolvedNextNext.isPendingResolution) {
-                            withContext(Dispatchers.Main) {
-                                val currentQ = _queue.value.toMutableList()
-                                val qIdx = currentQ.indexOfFirst { it.id == nextNextTrack.id }
-                                if (qIdx >= 0) {
-                                    currentQ[qIdx] = resolvedNextNext
-                                    _queue.value = currentQ
-                                }
-                                val origIdx = originalQueue.indexOfFirst { it.id == nextNextTrack.id }
-                                if (origIdx >= 0 && origIdx < originalQueue.size) {
-                                    val origList = originalQueue.toMutableList()
-                                    origList[origIdx] = resolvedNextNext
-                                    originalQueue = origList
-                                }
-                                onTrackResolvedCallback?.invoke(resolvedNextNext)
+        val qualityPref = _audioQuality.value
+        for (offset in 1..2) {
+            val upcoming = list.getOrNull(idx + offset) ?: continue
+            if (upcoming.isPendingResolution) {
+                scope.launch {
+                    val resolvedUpcoming = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(upcoming)
+                    if (!resolvedUpcoming.isPendingResolution) {
+                        withContext(Dispatchers.Main) {
+                            val currentQ = _queue.value.toMutableList()
+                            val qIdx = currentQ.indexOfFirst { it.id == upcoming.id }
+                            if (qIdx >= 0) {
+                                currentQ[qIdx] = resolvedUpcoming
+                                _queue.value = currentQ
                             }
-                            SimpMusicExtractorEngine.prefetchStream(resolvedNextNext.videoId)
+                            val origIdx = originalQueue.indexOfFirst { it.id == upcoming.id }
+                            if (origIdx >= 0 && origIdx < originalQueue.size) {
+                                val origList = originalQueue.toMutableList()
+                                origList[origIdx] = resolvedUpcoming
+                                originalQueue = origList
+                            }
+                            onTrackResolvedCallback?.invoke(resolvedUpcoming)
                         }
+                        SimpMusicExtractorEngine.prefetchStream(resolvedUpcoming.videoId, qualityPref)
                     }
-                } else {
-                    SimpMusicExtractorEngine.prefetchStream(nextNextTrack.videoId)
                 }
+            } else {
+                SimpMusicExtractorEngine.prefetchStream(upcoming.videoId, qualityPref)
             }
         }
     }
 
     private fun bindHardwareEqualizer(audioSessionId: Int) {
         if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) return
+        if (boundAudioSessionId == audioSessionId && hardwareEq != null && loudnessEnhancer != null) {
+            applyEqualizerCurve()
+            return
+        }
+        boundAudioSessionId = audioSessionId
         try {
             hardwareEq?.release()
             hardwareEq = Equalizer(0, audioSessionId).apply {
                 enabled = _eqEnabled.value
             }
-            applyEqualizerCurve()
         } catch (e: Exception) {
             Log.w(TAG, "Hardware Equalizer binding notice: ${e.message}")
         }
+        try {
+            loudnessEnhancer?.release()
+            loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                enabled = _loudnessNormalization.value
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "LoudnessEnhancer binding notice: ${e.message}")
+        }
+        applyEqualizerCurve()
     }
 
     private fun applyEqualizerCurve() {
@@ -1374,6 +1480,7 @@ object AuraPlayerManager {
         val enabled = _eqEnabled.value
         val bands = _equalizerBands.value
         val preampDb = _equalizerPreamp.value
+        val normEnabled = _loudnessNormalization.value
 
         try {
             val eq = hardwareEq
@@ -1396,13 +1503,32 @@ object AuraPlayerManager {
             Log.w(TAG, "Equalizer curve apply notice: ${e.message}")
         }
 
-        // Anti-Clipping Headroom: calculate max band boost and apply negative headroom
-        // so boosted low/high frequencies never clip against 0 dBFS ceiling
+        // Loudness Normalization (ReplayGain via YouTube loudnessDb + hardware LoudnessEnhancer)
+        val normDb = if (normEnabled) (-currentTrackLoudnessDb).coerceIn(-10f, 8f) else 0f
+        try {
+            loudnessEnhancer?.let { enhancer ->
+                enhancer.enabled = normEnabled
+                if (normEnabled) {
+                    val targetMb = when {
+                        currentTrackLoudnessDb == 0f -> 250 // Gentle +2.5 dB dynamic leveling when metadata is absent
+                        normDb > 0f -> (normDb * 100f).toInt().coerceIn(0, 800)
+                        else -> 0
+                    }
+                    enhancer.setTargetGain(targetMb)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "LoudnessEnhancer apply notice: ${e.message}")
+        }
+
+        // Anti-Clipping Headroom + loudness attenuation for tracks louder than -14 LUFS
         val maxBoost = if (enabled) bands.maxOrNull()?.coerceAtLeast(0f) ?: 0f else 0f
-        val safeHeadroom = if (maxBoost > 0f) Math.pow(10.0, -maxBoost.toDouble() / 20.0).toFloat() else 1.0f
-        val preampFactor = if (enabled) Math.pow(10.0, preampDb.toDouble() / 20.0).toFloat() else 1.0f
-        val gain = if (enabled) (preampFactor * safeHeadroom) else 1.0f
-        baseVolume = gain.coerceIn(0.15f, 1.0f)
+        val safeHeadroom = if (maxBoost > 0f) 10.0.pow(-maxBoost.toDouble() / 20.0).toFloat() else 1.0f
+        val preampFactor = if (enabled) 10.0.pow(preampDb.toDouble() / 20.0).toFloat() else 1.0f
+        val eqGain = if (enabled) (preampFactor * safeHeadroom) else 1.0f
+        val normAttenuation = if (normEnabled && normDb < 0f) 10.0.pow(normDb.toDouble() / 20.0).toFloat() else 1.0f
+
+        baseVolume = (eqGain * normAttenuation).coerceIn(0.15f, 1.0f)
         if (fadeJob?.isActive != true) {
             player.volume = baseVolume
         }

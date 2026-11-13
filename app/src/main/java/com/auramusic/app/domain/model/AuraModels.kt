@@ -412,20 +412,34 @@ data class ArtistMotion(
     val widePreviewUrl: String? = null
 )
 
+enum class AuraCommentSort(val label: String) {
+    TOP("Top"),
+    NEWEST("Newest")
+}
+
 data class AuraYouTubeComment(
     val id: String,
     val author: String,
     val avatarUrl: String?,
     val text: String,
     val publishedTime: String,
-    val likeCount: String
+    val likeCount: String,
+    val replyCountText: String = "",
+    val repliesContinuation: String? = null,
+    val replies: List<AuraYouTubeComment> = emptyList(),
+    val repliesNextContinuation: String? = null,
+    val isLoadingReplies: Boolean = false,
+    val isRepliesExpanded: Boolean = false
 )
 
 data class AuraCommentsPage(
     val countText: String?,
     val comments: List<AuraYouTubeComment>,
     val continuation: String? = null,
-    val commentsDisabled: Boolean = false
+    val commentsDisabled: Boolean = false,
+    val activeSort: AuraCommentSort = AuraCommentSort.TOP,
+    val topSortToken: String? = null,
+    val newestSortToken: String? = null
 )
 
 data class PlaylistTrackItem(

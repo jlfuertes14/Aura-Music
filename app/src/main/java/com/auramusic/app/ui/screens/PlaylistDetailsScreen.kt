@@ -156,6 +156,7 @@ fun PlaylistDetailsScreen(
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onToggleFavorite: (AuraTrack) -> Unit,
     onDownloadTrack: (AuraTrack) -> Unit,
+    onDownloadAll: (List<AuraTrack>) -> Unit = { tracks -> tracks.forEach(onDownloadTrack) },
     onRemoveDownload: ((AuraTrack) -> Unit)? = null,
     onRemoveTrackFromPlaylist: ((videoId: String) -> Unit)? = null,
     onUpdateCover: (newCoverUrl: String) -> Unit,
@@ -616,11 +617,7 @@ fun PlaylistDetailsScreen(
                     ) {
                         // Download All
                         IconButton(
-                            onClick = {
-                                val notDownloaded = playlist.tracks.filterNot { track -> downloads.any { it.videoId == track.videoId && it.isDownloaded } }
-                                notDownloaded.forEach { onDownloadTrack(it) }
-                                Toast.makeText(context, "Downloading ${notDownloaded.size} tracks…", Toast.LENGTH_SHORT).show()
-                            },
+                            onClick = { onDownloadAll(playlist.tracks) },
                             modifier = Modifier.size(38.dp)
                         ) {
                             Icon(
@@ -873,8 +870,7 @@ fun PlaylistDetailsScreen(
             },
             onDownloadAll = {
                 showMenu = false
-                playlist.tracks.forEach { onDownloadTrack(it) }
-                Toast.makeText(context, "Downloading ${playlist.tracks.size} songs for offline listening…", Toast.LENGTH_SHORT).show()
+                onDownloadAll(playlist.tracks)
             },
             onChangeCover = {
                 showMenu = false

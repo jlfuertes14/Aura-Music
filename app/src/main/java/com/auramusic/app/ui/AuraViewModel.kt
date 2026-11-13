@@ -21,7 +21,9 @@ import com.auramusic.app.core.update.UpdateState
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.ArtistCarouselItem
 import com.auramusic.app.domain.model.ArtistDetail
+import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
+import com.auramusic.app.domain.model.AuraYouTubeComment
 import com.auramusic.app.domain.model.ArtistSong
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraPlaylist
@@ -289,6 +291,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private var downloadedApkFile: File? = null
 
     private var searchJob: Job? = null
+
+    private data class DownloadTask(
+        val track: AuraTrack,
+        val suppressPerItemToast: Boolean,
+        val batchId: Long? = null
+    )
+
+    private val downloadQueue = ArrayDeque<DownloadTask>()
+    private var downloadWorkerJob: Job? = null
+    private val batchRemainingCounts = mutableMapOf<Long, Int>()
+    private var nextBatchId = 1L
 
     init {
         AuraPlayerManager.initialize(application)
@@ -701,6 +714,131 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 .onFailure { error -> if (commentsVideoId == videoId) _commentsError.value = error.message ?: "Could not load more comments" }
             if (commentsVideoId == videoId) _areCommentsLoading.value = false
         }
+    }
+
+    fun selectCommentSort(sort: AuraCommentSort) {
+        val page = _playerComments.value ?: return
+        val videoId = commentsVideoId ?: return
+        if (_areCommentsLoading.value) return
+        if (page.activeSort == sort && page.comments.isNotEmpty()) return
+        val token = when (sort) {
+            AuraCommentSort.TOP -> page.topSortToken
+            AuraCommentSort.NEWEST -> page.newestSortToken
+        } ?: return
+
+        _commentsError.value = null
+        _areCommentsLoading.value = true
+        _playerComments.value = page.copy(
+            activeSort = sort,
+            comments = emptyList(),
+            continuation = null
+        )
+        viewModelScope.launch {
+            runCatching { YouTubeCommentsRepository.nextPage(token) }
+                .onSuccess { sorted ->
+                    if (commentsVideoId == videoId) {
+                        _playerComments.value = sorted.copy(
+                            countText = sorted.countText ?: page.countText,
+                            activeSort = sort,
+                            topSortToken = sorted.topSortToken ?: page.topSortToken,
+                            newestSortToken = sorted.newestSortToken ?: page.newestSortToken
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (commentsVideoId == videoId) {
+                        _playerComments.value = page
+                        Toast.makeText(
+                            getApplication(),
+                            error.message ?: "Could not sort comments",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            if (commentsVideoId == videoId) _areCommentsLoading.value = false
+        }
+    }
+
+    fun toggleCommentReplies(commentId: String) {
+        val page = _playerComments.value ?: return
+        val videoId = commentsVideoId ?: return
+        val target = page.comments.firstOrNull { it.id == commentId } ?: return
+
+        if (target.replies.isNotEmpty()) {
+            updateCommentInPage(videoId, commentId) {
+                it.copy(isRepliesExpanded = !it.isRepliesExpanded)
+            }
+            return
+        }
+
+        val token = target.repliesContinuation ?: return
+        if (target.isLoadingReplies) return
+        fetchRepliesForComment(videoId, commentId, token, append = false)
+    }
+
+    fun loadMoreCommentReplies(commentId: String) {
+        val page = _playerComments.value ?: return
+        val videoId = commentsVideoId ?: return
+        val target = page.comments.firstOrNull { it.id == commentId } ?: return
+        val token = target.repliesNextContinuation ?: return
+        if (target.isLoadingReplies) return
+        fetchRepliesForComment(videoId, commentId, token, append = true)
+    }
+
+    private fun fetchRepliesForComment(
+        videoId: String,
+        commentId: String,
+        token: String,
+        append: Boolean
+    ) {
+        updateCommentInPage(videoId, commentId) {
+            it.copy(isLoadingReplies = true, isRepliesExpanded = true)
+        }
+        viewModelScope.launch {
+            runCatching { YouTubeCommentsRepository.loadReplies(token) }
+                .onSuccess { res ->
+                    updateCommentInPage(videoId, commentId) { current ->
+                        val merged = if (append) {
+                            (current.replies + res.replies).distinctBy { it.id }
+                        } else {
+                            res.replies
+                        }
+                        current.copy(
+                            replies = merged,
+                            repliesNextContinuation = res.continuation,
+                            isLoadingReplies = false,
+                            isRepliesExpanded = true
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    updateCommentInPage(videoId, commentId) { current ->
+                        current.copy(
+                            isLoadingReplies = false,
+                            isRepliesExpanded = if (append) current.isRepliesExpanded else false
+                        )
+                    }
+                    if (commentsVideoId == videoId) {
+                        Toast.makeText(
+                            getApplication(),
+                            error.message ?: "Could not load replies",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+        }
+    }
+
+    private fun updateCommentInPage(
+        videoId: String,
+        commentId: String,
+        transform: (AuraYouTubeComment) -> AuraYouTubeComment
+    ) {
+        if (commentsVideoId != videoId) return
+        val currentPage = _playerComments.value ?: return
+        _playerComments.value = currentPage.copy(
+            comments = currentPage.comments.map { if (it.id == commentId) transform(it) else it }
+        )
     }
 
     fun clearPlayerComments() {
@@ -1405,77 +1543,156 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         return _downloads.value.any { it.videoId == videoId && it.isDownloaded }
     }
 
-    fun downloadTrack(track: AuraTrack) {
-        if (_downloadingIds.value.contains(track.videoId)) return
-        val isAlreadyDownloaded = _downloads.value.any {
+    private fun isTrackAlreadyDownloaded(track: AuraTrack): Boolean {
+        return _downloads.value.any {
             it.videoId == track.videoId && it.isDownloaded && it.localFilePath?.let { p -> File(p).exists() } == true
         }
-        if (isAlreadyDownloaded) {
+    }
+
+    fun downloadTrack(track: AuraTrack) {
+        if (_downloadingIds.value.contains(track.videoId)) return
+        if (isTrackAlreadyDownloaded(track)) {
             Toast.makeText(getApplication(), "Already downloaded", Toast.LENGTH_SHORT).show()
             return
         }
+        enqueueDownloadTasks(listOf(track), suppressPerItemToast = false, batchId = null)
+    }
 
-        viewModelScope.launch {
-            // Immediate feedback: add placeholder to downloads list so it appears in "Downloaded" pill right away!
-            val placeholder = track.copy(isDownloaded = false)
-            val currentDownloads = _downloads.value.filterNot { it.videoId == track.videoId }
-            _downloads.value = listOf(placeholder) + currentDownloads
+    fun downloadAllTracks(tracks: List<AuraTrack>) {
+        if (tracks.isEmpty()) return
+        val toDownload = tracks
+            .distinctBy { it.videoId }
+            .filterNot { isTrackAlreadyDownloaded(it) || _downloadingIds.value.contains(it.videoId) }
 
-            _downloadingIds.value = _downloadingIds.value + track.videoId
-            _downloadProgress.value = _downloadProgress.value + (track.videoId to 0.02f)
-
-            // Cache lyrics and color palette for offline self-sufficiency in parallel
-            val lyricsJob = async {
-                try {
-                    SimpMusicLyricsRepository.getLyrics(
-                        videoId = track.videoId,
-                        title = track.title,
-                        artist = track.artist,
-                        durationSeconds = track.durationSeconds
-                    )?.let { storage.saveOfflineLyrics(track.videoId, it) }
-                } catch (e: Exception) {
-                    Log.w("AuraViewModel", "Failed to cache offline lyrics for ${track.videoId}: ${e.message}")
-                }
+        if (toDownload.isEmpty()) {
+            val anyInProgress = tracks.any { _downloadingIds.value.contains(it.videoId) }
+            if (!anyInProgress) {
+                Toast.makeText(getApplication(), "All songs are already downloaded", Toast.LENGTH_SHORT).show()
             }
+            return
+        }
 
-            val paletteJob = async {
-                try {
-                    val pal = extractAuraPaletteFromUrl(track.highResArtworkUrl)
-                    storage.saveOfflinePalette(track.videoId, pal)
-                } catch (e: Exception) {
-                    Log.w("AuraViewModel", "Failed to cache offline palette for ${track.videoId}: ${e.message}")
-                }
+        val batchId = nextBatchId++
+        batchRemainingCounts[batchId] = toDownload.size
+        Toast.makeText(getApplication(), "Downloading all songs", Toast.LENGTH_SHORT).show()
+        enqueueDownloadTasks(toDownload, suppressPerItemToast = true, batchId = batchId)
+    }
+
+    private fun enqueueDownloadTasks(
+        tracks: List<AuraTrack>,
+        suppressPerItemToast: Boolean,
+        batchId: Long?
+    ) {
+        val currentList = _downloads.value.toMutableList()
+        val addedIds = mutableSetOf<String>()
+        val progressUpdates = mutableMapOf<String, Float>()
+
+        for (track in tracks) {
+            if (_downloadingIds.value.contains(track.videoId) || addedIds.contains(track.videoId)) continue
+            addedIds.add(track.videoId)
+            progressUpdates[track.videoId] = 0f
+            if (currentList.none { it.videoId == track.videoId }) {
+                currentList.add(0, track.copy(isDownloaded = false))
             }
+            downloadQueue.addLast(DownloadTask(track, suppressPerItemToast, batchId))
+        }
 
-            val file = AuraPlayerManager.downloadTrackOffline(getApplication(), track) { _, _, progress ->
-                _downloadProgress.value = _downloadProgress.value + (track.videoId to progress)
-            }
+        if (addedIds.isEmpty()) return
+        _downloads.value = currentList
+        _downloadingIds.value = _downloadingIds.value + addedIds
+        _downloadProgress.value = _downloadProgress.value + progressUpdates
 
-            lyricsJob.await()
-            paletteJob.await()
+        if (downloadWorkerJob?.isActive != true) {
+            startDownloadWorker()
+        }
+    }
 
-            _downloadingIds.value = _downloadingIds.value - track.videoId
-            _downloadProgress.value = _downloadProgress.value - track.videoId
+    private fun startDownloadWorker() {
+        downloadWorkerJob = viewModelScope.launch {
+            while (downloadQueue.isNotEmpty()) {
+                val task = downloadQueue.removeFirst()
+                val track = task.track
+                _downloadProgress.value = _downloadProgress.value + (track.videoId to 0.02f)
 
-            if (file != null && file.exists() && file.length() > 10_000L) {
-                val downloadedTrack = track.copy(isDownloaded = true, localFilePath = file.absolutePath)
-                val updated = listOf(downloadedTrack) + _downloads.value.filterNot { it.videoId == track.videoId }
-                _downloads.value = updated
-                storage.saveDownloads(updated.filter { it.isDownloaded })
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(getApplication(), "Downloaded: ${track.title}", Toast.LENGTH_SHORT).show()
+                // Cache lyrics and color palette in parallel for this single track, sequentially across the queue
+                val lyricsJob = async {
+                    try {
+                        SimpMusicLyricsRepository.getLyrics(
+                            videoId = track.videoId,
+                            title = track.title,
+                            artist = track.artist,
+                            durationSeconds = track.durationSeconds
+                        )?.let { storage.saveOfflineLyrics(track.videoId, it) }
+                    } catch (e: Exception) {
+                        Log.w("AuraViewModel", "Failed to cache offline lyrics for ${track.videoId}: ${e.message}")
+                    }
                 }
-            } else {
-                // If failed, remove placeholder
-                _downloads.value = _downloads.value.filterNot { it.videoId == track.videoId && !it.isDownloaded }
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(getApplication(), "Download failed for ${track.title}", Toast.LENGTH_SHORT).show()
+
+                val paletteJob = async {
+                    try {
+                        val pal = extractAuraPaletteFromUrl(track.highResArtworkUrl)
+                        storage.saveOfflinePalette(track.videoId, pal)
+                    } catch (e: Exception) {
+                        Log.w("AuraViewModel", "Failed to cache offline palette for ${track.videoId}: ${e.message}")
+                    }
+                }
+
+                val file = AuraPlayerManager.downloadTrackOffline(getApplication(), track) { _, _, progress ->
+                    _downloadProgress.value = _downloadProgress.value + (track.videoId to progress.coerceAtLeast(0.02f))
+                }
+
+                lyricsJob.await()
+                paletteJob.await()
+
+                _downloadingIds.value = _downloadingIds.value - track.videoId
+                _downloadProgress.value = _downloadProgress.value - track.videoId
+
+                if (file != null && file.exists() && file.length() > 10_000L) {
+                    val downloadedTrack = track.copy(isDownloaded = true, localFilePath = file.absolutePath)
+                    val updated = listOf(downloadedTrack) + _downloads.value.filterNot { it.videoId == track.videoId }
+                    _downloads.value = updated
+                    storage.saveDownloads(updated.filter { it.isDownloaded })
+                    if (!task.suppressPerItemToast) {
+                        Toast.makeText(getApplication(), "Downloaded: ${track.title}", Toast.LENGTH_SHORT).show()
+                    }
+                } else {
+                    _downloads.value = _downloads.value.filterNot { it.videoId == track.videoId && !it.isDownloaded }
+                    if (!task.suppressPerItemToast) {
+                        Toast.makeText(getApplication(), "Download failed for ${track.title}", Toast.LENGTH_SHORT).show()
+                    }
+                }
+
+                val bId = task.batchId
+                if (bId != null) {
+                    val remaining = (batchRemainingCounts[bId] ?: 1) - 1
+                    if (remaining <= 0) {
+                        batchRemainingCounts.remove(bId)
+                        Toast.makeText(
+                            getApplication(),
+                            "Downloaded all songs in the playlist",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    } else {
+                        batchRemainingCounts[bId] = remaining
+                    }
                 }
             }
         }
     }
 
     fun removeDownload(track: AuraTrack) {
+        val queuedMatches = downloadQueue.filter { it.track.videoId == track.videoId }
+        if (queuedMatches.isNotEmpty()) {
+            downloadQueue.removeAll { it.track.videoId == track.videoId }
+            queuedMatches.forEach { removed ->
+                removed.batchId?.let { bId ->
+                    val remaining = (batchRemainingCounts[bId] ?: 1) - 1
+                    if (remaining <= 0) batchRemainingCounts.remove(bId) else batchRemainingCounts[bId] = remaining
+                }
+            }
+            _downloadingIds.value = _downloadingIds.value - track.videoId
+            _downloadProgress.value = _downloadProgress.value - track.videoId
+        }
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // 1. Delete by localFilePath
