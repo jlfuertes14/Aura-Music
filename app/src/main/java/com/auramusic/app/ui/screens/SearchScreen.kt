@@ -34,7 +34,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.AddCircleOutline
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
@@ -42,8 +45,11 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.NorthWest
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SmartDisplay
+import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -71,6 +77,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -178,6 +185,7 @@ fun SearchScreen(
     query: String,
     filter: String,
     results: List<AuraTrack>,
+    suggestions: List<String> = emptyList(),
     isSearching: Boolean,
     favorites: List<AuraTrack>,
     downloads: List<AuraTrack>,
@@ -263,6 +271,7 @@ fun SearchScreen(
                 query = query,
                 filter = filter,
                 results = results,
+                suggestions = suggestions,
                 isSearching = isSearching,
                 favorites = favorites,
                 recentlyPlayed = recentlyPlayed,
@@ -285,6 +294,7 @@ fun SearchScreen(
                 onToggleFavorite = onToggleFavorite,
                 onRemoveRecentlyPlayed = onRemoveRecentlyPlayed,
                 onOptionsClick = { selectedModalTrack = it },
+                onAddToPlaylistClick = { trackForAddToPlaylist = it },
                 onOpenArtist = onOpenArtist,
                 onOpenCommunityPlaylist = onOpenCommunityPlaylist,
                 playlists = playlists,
@@ -794,6 +804,7 @@ private fun DedicatedSearchingView(
     query: String,
     filter: String,
     results: List<AuraTrack>,
+    suggestions: List<String> = emptyList(),
     isSearching: Boolean,
     favorites: List<AuraTrack>,
     recentlyPlayed: List<AuraTrack>,
@@ -813,6 +824,7 @@ private fun DedicatedSearchingView(
     onToggleFavorite: (AuraTrack) -> Unit,
     onRemoveRecentlyPlayed: (AuraTrack) -> Unit,
     onOptionsClick: (AuraTrack) -> Unit,
+    onAddToPlaylistClick: (AuraTrack) -> Unit = {},
     onOpenArtist: (String, String) -> Unit,
     onOpenCommunityPlaylist: (YtmCommunityPlaylist) -> Unit = {},
     playlists: List<AuraPlaylist> = emptyList(),
@@ -822,8 +834,15 @@ private fun DedicatedSearchingView(
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    var isSearchSubmitted by rememberSaveable { mutableStateOf(false) }
     val uniqueRecent = remember(recentlyPlayed) {
         recentlyPlayed.distinctBy { it.videoId.ifBlank { it.id } }
+    }
+
+    LaunchedEffect(query) {
+        if (query.isBlank()) {
+            isSearchSubmitted = false
+        }
     }
 
     // Request keyboard focus when dedicated search screen is mounted
@@ -923,8 +942,21 @@ private fun DedicatedSearchingView(
 
                             BasicTextField(
                                 value = query,
-                                onValueChange = onQueryChange,
+                                onValueChange = { newValue ->
+                                    isSearchSubmitted = false
+                                    onQueryChange(newValue)
+                                },
                                 singleLine = true,
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                                keyboardActions = KeyboardActions(
+                                    onSearch = {
+                                        if (query.isNotBlank()) {
+                                            isSearchSubmitted = true
+                                        }
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                    }
+                                ),
                                 textStyle = MaterialTheme.typography.bodyMedium.copy(
                                     color = Color.White,
                                     fontSize = 14.sp
@@ -938,7 +970,10 @@ private fun DedicatedSearchingView(
 
                         if (query.isNotEmpty()) {
                             IconButton(
-                                onClick = { onQueryChange("") },
+                                onClick = {
+                                    isSearchSubmitted = false
+                                    onQueryChange("")
+                                },
                                 modifier = Modifier.size(28.dp)
                             ) {
                                 Icon(
@@ -955,42 +990,45 @@ private fun DedicatedSearchingView(
                 Spacer(modifier = Modifier.width(8.dp))
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            if (query.isBlank() || isSearchSubmitted) {
+                Spacer(modifier = Modifier.height(10.dp))
 
-            // Filter Pills pinned inside the header below search field matching Image 2
-            val filterOptions = listOf(
-                "all" to "All",
-                "artists" to "Artists",
-                "songs" to "Songs",
-                "videos" to "Videos",
-                "playlists" to "Playlists",
-                "albums" to "Albums"
-            )
+                // Filter Pills pinned inside the header below search field matching Image 2
+                val filterOptions = listOf(
+                    "all" to "All",
+                    "artists" to "Artists",
+                    "songs" to "Songs",
+                    "videos" to "Videos",
+                    "playlists" to "Playlists",
+                    "albums" to "Albums"
+                )
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(filterOptions) { (key, label) ->
-                    val isSelected = filter == key
-                    Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = if (isSelected) AuraNeonLime else Color(0xFF262832),
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(16.dp))
-                            .clickable {
-                                focusManager.clearFocus()
-                                keyboardController?.hide()
-                                onFilterChange(key)
-                            }
-                    ) {
-                        Text(
-                            text = label,
-                            color = if (isSelected) Color(0xFF111215) else Color(0xFFC0C4CC),
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
-                        )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(filterOptions) { (key, label) ->
+                        val isSelected = filter == key
+                        Surface(
+                            shape = RoundedCornerShape(16.dp),
+                            color = if (isSelected) AuraNeonLime else Color(0xFF262832),
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    focusManager.clearFocus()
+                                    keyboardController?.hide()
+                                    if (query.isNotBlank()) isSearchSubmitted = true
+                                    onFilterChange(key)
+                                }
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color(0xFF111215) else Color(0xFFC0C4CC),
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 12.sp,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -1047,6 +1085,94 @@ private fun DedicatedSearchingView(
                             onToggleFavorite = { onToggleFavorite(track) },
                             onRemove = { onRemoveRecentlyPlayed(track) }
                         )
+                    }
+                }
+            } else if (!isSearchSubmitted) {
+                // -------------------------------------------------------------
+                // TYPING STATE: AUTOCOMPLETE SUGGESTIONS + QUICK RESULTS
+                // -------------------------------------------------------------
+                val topSuggestions = suggestions.take(5)
+                items(topSuggestions, key = { "sug_$it" }) { suggestion ->
+                    SearchSuggestionRow(
+                        suggestion = suggestion,
+                        onClick = {
+                            onQueryChange(suggestion)
+                            isSearchSubmitted = true
+                            focusManager.clearFocus()
+                            keyboardController?.hide()
+                        },
+                        onFillQuery = {
+                            onQueryChange(suggestion)
+                        }
+                    )
+                }
+
+                val quickTracks = results.distinctBy { it.videoId }.take(6)
+                val quickArtists = matchedArtists.distinctBy { it.id }.take(2)
+                if (isSearching && quickTracks.isEmpty() && quickArtists.isEmpty()) {
+                    items(4) {
+                        TrackItemSkeleton()
+                    }
+                } else {
+                    val interleaved = buildList<Any> {
+                        val maxLen = maxOf(quickTracks.size, quickArtists.size)
+                        for (idx in 0 until maxLen) {
+                            if (idx < quickTracks.size) add(quickTracks[idx])
+                            if (idx < quickArtists.size) add(quickArtists[idx])
+                        }
+                    }
+                    items(
+                        items = interleaved,
+                        key = { item ->
+                            when (item) {
+                                is AuraTrack -> "quick_t_${item.videoId}"
+                                is YtmTopArtist -> "quick_a_${item.id}"
+                                else -> item.hashCode()
+                            }
+                        }
+                    ) { item ->
+                        when (item) {
+                            is AuraTrack -> {
+                                val isActualVideoType = item.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                                    item.musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
+                                val isVideoItem = filter == "videos" || (filter != "songs" && isActualVideoType)
+                                SearchQuickTrackRow(
+                                    track = item,
+                                    isCurrent = currentPlayingId == item.videoId,
+                                    isPlaying = isPlaying,
+                                    isVideo = isVideoItem,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        if (isVideoItem) {
+                                            onPlayMusicVideo(item, results)
+                                        } else {
+                                            onPlaySearchTrack(item, results)
+                                        }
+                                    },
+                                    onOptionsClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onOptionsClick(item)
+                                    },
+                                    onAddToPlaylistClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onAddToPlaylistClick(item)
+                                    }
+                                )
+                            }
+                            is YtmTopArtist -> {
+                                SearchQuickArtistRow(
+                                    artist = item,
+                                    onClick = {
+                                        focusManager.clearFocus()
+                                        keyboardController?.hide()
+                                        onOpenArtist(item.name, "")
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             } else {
@@ -1159,7 +1285,9 @@ private fun DedicatedSearchingView(
                     items(results.distinctBy { it.videoId }, key = { "res_${it.videoId}" }) { track ->
                         val isFav = favorites.any { it.videoId == track.videoId }
                         val isCurrent = currentPlayingId == track.videoId
-                        val isVideoItem = filter == "videos" || (track.musicVideoType != null && track.musicVideoType != "PODCAST")
+                        val isActualVideoType = track.musicVideoType == "MUSIC_VIDEO_TYPE_OMV" ||
+                            track.musicVideoType == "MUSIC_VIDEO_TYPE_UGC"
+                        val isVideoItem = filter == "videos" || (filter != "songs" && isActualVideoType)
 
                         SearchResultSongTile(
                             track = track,
@@ -1186,6 +1314,203 @@ private fun DedicatedSearchingView(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun SearchSuggestionRow(
+    suggestion: String,
+    onClick: () -> Unit,
+    onFillQuery: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 20.dp, end = 12.dp, top = 11.dp, bottom = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.Search,
+            contentDescription = null,
+            tint = Color(0xFFA0A5B5),
+            modifier = Modifier.size(20.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = suggestion,
+            color = Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Normal,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        IconButton(
+            onClick = onFillQuery,
+            modifier = Modifier.size(36.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.NorthWest,
+                contentDescription = "Fill search query",
+                tint = Color(0xFFA0A5B5),
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchQuickTrackRow(
+    track: AuraTrack,
+    isCurrent: Boolean,
+    isPlaying: Boolean,
+    isVideo: Boolean,
+    onClick: () -> Unit,
+    onOptionsClick: () -> Unit,
+    onAddToPlaylistClick: () -> Unit
+) {
+    val isTrackPlaying = isCurrent && isPlaying
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(start = 20.dp, end = 12.dp, top = 7.dp, bottom = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color(0xFF202127)),
+            contentAlignment = Alignment.Center
+        ) {
+            AsyncImage(
+                model = track.highResArtworkUrl.ifBlank { "https://i.ytimg.com/vi/${track.videoId}/hqdefault.jpg" },
+                contentDescription = track.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            if (isTrackPlaying) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AudioPlayingIndicator(
+                        modifier = Modifier.fillMaxSize(0.70f),
+                        color = AuraNeonLime
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = track.title,
+                fontSize = 14.5.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (isCurrent) AuraNeonLime else Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+            val typeTag = when {
+                isVideo -> "Video"
+                track.isPodcast || track.musicVideoType == "PODCAST" -> "Podcast"
+                else -> "Song"
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.SmartDisplay,
+                    contentDescription = null,
+                    tint = Color(0xFFA0A5B5),
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "$typeTag • ${track.artist}",
+                    fontSize = 12.5.sp,
+                    color = Color(0xFFA0A5B5),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        IconButton(
+            onClick = onOptionsClick,
+            modifier = Modifier.size(36.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.MoreVert,
+                contentDescription = "Song options",
+                tint = Color(0xFFA0A5B5),
+                modifier = Modifier.size(19.dp)
+            )
+        }
+        IconButton(
+            onClick = onAddToPlaylistClick,
+            modifier = Modifier.size(36.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.AddCircleOutline,
+                contentDescription = "Add to playlist",
+                tint = Color(0xFFA0A5B5),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchQuickArtistRow(
+    artist: YtmTopArtist,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 7.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        AsyncImage(
+            model = artist.highResAvatarUrl,
+            contentDescription = artist.name,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(Color(0xFF202127))
+        )
+        Spacer(modifier = Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = artist.name,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color.White,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+                Icon(
+                    imageVector = Icons.Rounded.CheckCircle,
+                    contentDescription = "Verified Artist",
+                    tint = AuraNeonLime,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = "Artist",
+                fontSize = 12.5.sp,
+                color = Color(0xFFA0A5B5),
+                maxLines = 1
+            )
         }
     }
 }
@@ -1567,7 +1892,7 @@ private fun SearchResultSongTile(
             Spacer(modifier = Modifier.height(3.dp))
 
             val typeTag = when {
-                isVideo || (track.musicVideoType != null && track.musicVideoType != "PODCAST") -> "Video"
+                isVideo -> "Video"
                 track.isPodcast || track.musicVideoType == "PODCAST" -> "Podcast"
                 else -> "Song"
             }

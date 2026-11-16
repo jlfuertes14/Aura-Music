@@ -276,6 +276,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val searchQuery by viewModel.searchQuery.collectAsState()
     val searchFilter by viewModel.searchFilter.collectAsState()
     val searchResults by viewModel.searchResults.collectAsState()
+    val searchSuggestions by viewModel.searchSuggestions.collectAsState()
     val isSearching by viewModel.isSearching.collectAsState()
     val searchMatchedArtist by viewModel.searchMatchedArtist.collectAsState()
     val searchMatchedArtists by viewModel.searchMatchedArtists.collectAsState()
@@ -472,6 +473,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             query = searchQuery,
                             filter = searchFilter,
                             results = searchResults,
+                            suggestions = searchSuggestions,
                             isSearching = isSearching,
                             favorites = favorites,
                             downloads = downloads,

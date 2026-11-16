@@ -3077,6 +3077,62 @@ object SimpMusicExtractorEngine {
     }
 
     /**
+     * Fetches YouTube Music autocomplete query suggestions via `music/get_search_suggestions`.
+     */
+    suspend fun fetchSearchSuggestions(query: String): List<String> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        val suggestions = mutableListOf<String>()
+        try {
+            val payload = JSONObject().apply {
+                put("context", JSONObject().apply {
+                    put("client", JSONObject().apply {
+                        put("clientName", "WEB_REMIX")
+                        put("clientVersion", "1.20250312.01.00")
+                        put("hl", "en")
+                        put("gl", "US")
+                    })
+                })
+                put("input", query.trim())
+            }
+            val req = Request.Builder()
+                .url("https://music.youtube.com/youtubei/v1/music/get_search_suggestions?prettyPrint=false")
+                .header("User-Agent", USER_AGENT)
+                .header("Origin", "https://music.youtube.com")
+                .header("Referer", "https://music.youtube.com/")
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(req).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    val root = JSONObject(resp.body?.string() ?: "{}")
+                    val contents = root.optJSONArray("contents") ?: return@use
+                    for (i in 0 until contents.length()) {
+                        val section = contents.optJSONObject(i)
+                            ?.optJSONObject("searchSuggestionsSectionRenderer") ?: continue
+                        val items = section.optJSONArray("contents") ?: continue
+                        for (j in 0 until items.length()) {
+                            val renderer = items.optJSONObject(j)
+                                ?.optJSONObject("searchSuggestionRenderer") ?: continue
+                            val runs = renderer.optJSONObject("suggestion")?.optJSONArray("runs") ?: continue
+                            val sb = StringBuilder()
+                            for (k in 0 until runs.length()) {
+                                sb.append(runs.optJSONObject(k)?.optString("text") ?: "")
+                            }
+                            val text = sb.toString().trim()
+                            if (text.isNotBlank() && suggestions.none { it.equals(text, ignoreCase = true) }) {
+                                suggestions.add(text)
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "fetchSearchSuggestions failed: ${e.message}")
+        }
+        suggestions.take(5)
+    }
+
+    /**
      * Searches YouTube Music specifically for matching artist channels.
      * Uses WEB_REMIX with artist filter params `EgWKAQIgAWoKEAkQChAFEAMQBA%3D%3D`.
      * Inspects both `musicCardShelfRenderer` (top hero artist) and `musicShelfRenderer` / `itemSectionRenderer`.

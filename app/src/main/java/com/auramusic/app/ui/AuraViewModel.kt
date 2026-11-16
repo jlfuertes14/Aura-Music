@@ -192,6 +192,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val _searchResults = MutableStateFlow<List<AuraTrack>>(SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS)
     val searchResults: StateFlow<List<AuraTrack>> = _searchResults.asStateFlow()
 
+    private val _searchSuggestions = MutableStateFlow<List<String>>(emptyList())
+    val searchSuggestions: StateFlow<List<String>> = _searchSuggestions.asStateFlow()
+
     private val _searchExploreCoverTracks = MutableStateFlow<Map<String, List<AuraTrack>>>(emptyMap())
     val searchExploreCoverTracks: StateFlow<Map<String, List<AuraTrack>>> = _searchExploreCoverTracks.asStateFlow()
     private var searchExploreCoversLoaded = false
@@ -1411,17 +1414,27 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             _searchMatchedArtists.value = emptyList()
             _artistFeaturingItems.value = emptyList()
             _searchPlaylistResults.value = emptyList()
+            _searchSuggestions.value = emptyList()
             _searchResults.value = _chartSections.value.firstOrNull()?.tracks
                 ?: SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS
             return
         }
         searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(150L)
             _isSearching.value = true
             _searchResults.value = emptyList()
             _searchMatchedArtist.value = null
             _searchMatchedArtists.value = emptyList()
             _artistFeaturingItems.value = emptyList()
             _searchPlaylistResults.value = emptyList()
+
+            val suggestionsDeferred = async {
+                try {
+                    SimpMusicExtractorEngine.fetchSearchSuggestions(query.trim())
+                } catch (_: Exception) {
+                    emptyList()
+                }
+            }
 
             // If Playlists filter pill is active, fetch ONLY playlists (no songs, no artist featuring shelf)
             if (_searchFilter.value == "playlists") {
@@ -1450,6 +1463,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             val artists = artistDeferred.await()
+            _searchSuggestions.value = suggestionsDeferred.await()
             val matched = artists.firstOrNull()
             _searchMatchedArtists.value = artists
             _searchMatchedArtist.value = matched
