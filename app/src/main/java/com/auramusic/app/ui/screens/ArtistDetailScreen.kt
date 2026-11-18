@@ -84,9 +84,12 @@ import com.auramusic.app.ui.components.ArtistCarouselSkeleton
 import com.auramusic.app.ui.components.TrackItemSkeleton
 import com.auramusic.app.ui.components.auraShimmer
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import com.auramusic.app.ui.theme.auraGlassSurface
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -99,7 +102,8 @@ fun ArtistDetailScreen(
     onPlayMusicVideo: (AuraTrack, List<AuraTrack>) -> Unit = onPlayTrack,
     onToggleFavorite: (AuraTrack) -> Unit,
     onOpenArtist: (String) -> Unit = {},
-    onOpenPlaylist: (ArtistCarouselItem) -> Unit = {}
+    onOpenPlaylist: (ArtistCarouselItem) -> Unit = {},
+    enableBackHandler: Boolean = true
 ) {
     val context = LocalContext.current
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
@@ -110,7 +114,7 @@ fun ArtistDetailScreen(
         artistDetail.topSongs.map { it.track }
     }
 
-    BackHandler {
+    BackHandler(enabled = enableBackHandler) {
         onClose()
     }
 
@@ -167,20 +171,34 @@ fun ArtistDetailScreen(
                             )
                     )
 
-                    // Back button at top-left
-                    IconButton(
-                        onClick = onClose,
+                    // Back button at top-left (44.dp touch target, compact 34.dp frosted circle)
+                    val isGlass = LocalLiquidGlassEnabled.current
+                    Box(
                         modifier = Modifier
                             .statusBarsPadding()
-                            .padding(start = 8.dp, top = 4.dp)
+                            .padding(start = 10.dp, top = 2.dp)
                             .size(44.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .then(
+                                    if (isGlass) {
+                                        Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                    } else Modifier
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
 
                     // Artist name on bottom right & subscriber count directly below it
@@ -657,7 +675,7 @@ fun ArtistDetailScreen(
             ModalBottomSheet(
                 onDismissRequest = { selectedModalTrack = null },
                 sheetState = sheetState,
-                containerColor = Color(0xFF14161C),
+                containerColor = auraGlassSheetColor(Color(0xFF14161C)),
                 dragHandle = {
                     Surface(
                         modifier = Modifier.padding(vertical = 10.dp),

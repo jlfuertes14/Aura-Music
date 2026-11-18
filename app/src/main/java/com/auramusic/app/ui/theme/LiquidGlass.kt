@@ -4,6 +4,7 @@ import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.CornerBasedShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +42,7 @@ import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.fastFirstOrNull
 import androidx.compose.ui.util.lerp
@@ -86,6 +89,49 @@ fun rememberGlassBackdrop(color: Color = AuraObsidianBg): LayerBackdrop =
  * Never place glass surfaces inside the source itself, to avoid a RuntimeShader feedback loop.
  */
 fun Modifier.glassBackdropSource(backdrop: LayerBackdrop): Modifier = this.layerBackdrop(backdrop)
+
+/**
+ * Frosted glass card/panel modifier for in-content surfaces across screens when Liquid Glass is active.
+ * Uses translucent fill + vertical specular hairline highlight so it never creates RuntimeShader
+ * feedback loops when placed inside a [glassBackdropSource].
+ */
+@Composable
+fun Modifier.auraGlassSurface(
+    shape: Shape = RoundedCornerShape(18.dp),
+    selected: Boolean = false,
+    fallbackColor: Color = Color(0xFF1A1D26),
+    glassAlpha: Float = if (selected) 0.16f else 0.085f,
+    borderTopAlpha: Float = if (selected) 0.34f else 0.22f,
+    borderBottomAlpha: Float = 0.06f,
+    borderWidth: Dp = 0.75.dp,
+): Modifier {
+    if (!LocalLiquidGlassEnabled.current) {
+        return this
+            .clip(shape)
+            .background(fallbackColor)
+    }
+    return this
+        .clip(shape)
+        .background(Color.White.copy(alpha = glassAlpha))
+        .border(
+            width = borderWidth,
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    Color.White.copy(alpha = borderTopAlpha),
+                    Color.White.copy(alpha = borderBottomAlpha),
+                ),
+            ),
+            shape = shape,
+        )
+}
+
+/**
+ * Returns a translucent glass-tinted modal sheet container color when Liquid Glass is active,
+ * or [defaultColor] under the Default theme.
+ */
+@Composable
+fun auraGlassSheetColor(defaultColor: Color = Color(0xFF14161E)): Color =
+    if (LocalLiquidGlassEnabled.current) Color(0xFF151822).copy(alpha = 0.90f) else defaultColor
 
 /**
  * Applies the Liquid Glass effect (vibrancy, color controls, blur, AGSL lens refraction on API 33+,
@@ -267,8 +313,10 @@ fun rememberGlassInteraction(): GlassInteraction {
 }
 
 /**
- * Core modifier applying Kyant `drawBackdrop` with luminance-adaptive blur, vibrancy, color
- * controls, API 33+ lens refraction, theme-aware scrim, and pointer-tracking `Plus` glow.
+ * Core modifier applying 3-tier adaptive glass across Android versions:
+ * - **Android 13+ (API 33+)**: True Liquid Glass with AGSL `lens` refraction, `vibrancy`, `colorControls`, and `RenderEffect` blur.
+ * - **Android 12 / 12L (API 31–32)**: Frosted Glass Blur using `RenderEffect` `blur` + `colorControls` + frosted sheen (no AGSL shaders).
+ * - **Android 8.0–11 (API 26–30)**: Static Frosted Glass look using translucent frosted layers and specular borders without `drawBackdrop`.
  */
 fun Modifier.drawInteractiveGlass(
     isDark: Boolean,
@@ -282,8 +330,48 @@ fun Modifier.drawInteractiveGlass(
     blurScale: Float = 1f,
     minScrim: Float = 0.12f,
     maxScrim: Float = 0.50f,
-): Modifier =
-    this
+): Modifier {
+    // Tier 3: Android 8.0–11 (API 26–30) — Static Frosted Glass fallback (no RenderEffect or AGSL)
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        val baseColor = if (isDark) {
+            Color(0xFF1C202B).copy(alpha = 0.90f)
+        } else {
+            Color(0xFFF3F5FA).copy(alpha = 0.90f)
+        }
+        return this
+            .clip(shape)
+            .background(baseColor, shape)
+            .background(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = if (isDark) 0.15f else 0.35f),
+                        Color.White.copy(alpha = if (isDark) 0.05f else 0.12f),
+                    ),
+                ),
+                shape = shape,
+            )
+            .border(
+                width = 0.75.dp,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.32f),
+                        Color.White.copy(alpha = 0.08f),
+                    ),
+                ),
+                shape = shape,
+            )
+            .then(
+                if (interaction != null) {
+                    Modifier.pointerInput(interaction) { interaction.detectPress(this) }
+                } else {
+                    Modifier
+                },
+            )
+    }
+
+    // Tier 1 (Android 13+ / API 33+: AGSL Liquid Glass) & Tier 2 (Android 12 / API 31–32: Frosted Blur Glass)
+    val supportsAgslRefraction = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+    return this
         .drawBackdrop(
             backdrop = backdrop,
             shape = { shape },
@@ -291,12 +379,15 @@ fun Modifier.drawInteractiveGlass(
             effects = {
                 val l = (luminance() * 2f - 1f).let { sign(it) * it * it }
                 val press = interaction?.pressProgress ?: 0f
-                vibrancy()
+                if (supportsAgslRefraction) {
+                    vibrancy()
+                }
                 colorControls(
-                    brightness = 0.05f,
+                    brightness = if (supportsAgslRefraction) 0.05f else 0.03f,
                     contrast = 1f,
-                    saturation = 1.5f,
+                    saturation = if (supportsAgslRefraction) 1.5f else 1.25f,
                 )
+                val effectiveBlurScale = if (supportsAgslRefraction) blurScale else (blurScale * 1.25f)
                 blur(
                     (
                         if (l > 0f) {
@@ -304,9 +395,9 @@ fun Modifier.drawInteractiveGlass(
                         } else {
                             lerp(8f.dp.toPx(), 2f.dp.toPx(), -l)
                         }
-                    ) * blurScale + 2f.dp.toPx() * press,
+                    ) * effectiveBlurScale + 2f.dp.toPx() * press,
                 )
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                if (supportsAgslRefraction &&
                     shape is CornerBasedShape &&
                     size.minDimension > 0f
                 ) {
@@ -323,13 +414,16 @@ fun Modifier.drawInteractiveGlass(
             },
             onDrawSurface = {
                 val baseDarken = lerp(minScrim, maxScrim, ((luminance() - 0.3f) / 0.5f).coerceIn(0f, 1f))
-                // Below Android 12, RenderEffect blur is unavailable; raise scrim floor to keep text legible.
-                val darken = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-                    maxOf(baseDarken, 0.72f)
+                val darken = if (!supportsAgslRefraction) {
+                    // Android 12 frosted blur look: slightly stronger frosted scrim + soft white frost veil
+                    maxOf(baseDarken, 0.24f)
                 } else {
                     baseDarken
                 }
                 drawRect((if (isDark) Color.Black else Color.White).copy(alpha = darken))
+                if (!supportsAgslRefraction) {
+                    drawRect(Color.White.copy(alpha = if (isDark) 0.08f else 0.16f))
+                }
                 val press = interaction?.pressProgress ?: 0f
                 if (press > 0f) {
                     drawRect(
@@ -362,6 +456,7 @@ fun Modifier.drawInteractiveGlass(
                 Modifier
             },
         )
+}
 
 internal suspend fun PointerInputScope.inspectDragGestures(
     onDragStart: (down: PointerInputChange) -> Unit = {},

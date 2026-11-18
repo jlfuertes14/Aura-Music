@@ -77,8 +77,15 @@ import com.auramusic.app.domain.model.PlaylistDetail
 import com.auramusic.app.ui.components.AudioPlayingIndicator
 import com.auramusic.app.ui.components.LazyColumnScrollbar
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import com.auramusic.app.ui.theme.auraGlassSurface
+import com.auramusic.app.ui.theme.barBlurStyle
+import com.auramusic.app.ui.theme.hazeBlurBar
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -93,7 +100,8 @@ fun PlaylistDetailScreen(
     onClose: () -> Unit,
     onPlayTrack: (AuraTrack, List<AuraTrack>) -> Unit,
     onToggleFavorite: (AuraTrack) -> Unit,
-    onToggleSave: () -> Unit = {}
+    onToggleSave: () -> Unit = {},
+    enableBackHandler: Boolean = true
 ) {
     val context = LocalContext.current
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
@@ -101,6 +109,8 @@ fun PlaylistDetailScreen(
     var isDescriptionExpanded by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val listState = rememberLazyListState()
+    val isGlass = LocalLiquidGlassEnabled.current
+    val hazeState = rememberHazeState()
 
     val allTracks = remember(playlistDetail.tracks, playlistDetail.title) {
         playlistDetail.tracks.map { it.track.copy(album = playlistDetail.title) }
@@ -128,7 +138,7 @@ fun PlaylistDetailScreen(
         }
     }
 
-    BackHandler {
+    BackHandler(enabled = enableBackHandler) {
         onClose()
     }
 
@@ -139,7 +149,9 @@ fun PlaylistDetailScreen(
     ) {
         LazyColumn(
             state = listState,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .then(if (isGlass) Modifier.hazeSource(hazeState) else Modifier),
             contentPadding = PaddingValues(bottom = 128.dp)
         ) {
             if (playlistDetail.isPodcast) {
@@ -161,12 +173,18 @@ fun PlaylistDetailScreen(
                             )
                     ) {
                         // Top back button
+                        val isGlass = LocalLiquidGlassEnabled.current
                         IconButton(
                             onClick = onClose,
                             modifier = Modifier
                                 .statusBarsPadding()
-                                .padding(start = 8.dp, top = 4.dp)
+                                .padding(start = 12.dp, top = 8.dp)
                                 .size(44.dp)
+                                .then(
+                                    if (isGlass) {
+                                        Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                    } else Modifier
+                                )
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
@@ -505,20 +523,33 @@ fun PlaylistDetailScreen(
                                 )
                         )
 
-                        // Back button at top-left
-                        IconButton(
-                            onClick = onClose,
+                        // Back button at top-left (44.dp touch target, compact 34.dp frosted circle)
+                        Box(
                             modifier = Modifier
                                 .statusBarsPadding()
-                                .padding(start = 8.dp, top = 4.dp)
+                                .padding(start = 10.dp, top = 2.dp)
                                 .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable(onClick = onClose),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "Back",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .then(
+                                        if (isGlass) {
+                                            Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                        } else Modifier
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = "Back",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         }
 
                         // Playlist title on bottom right & views/author directly below it
@@ -604,13 +635,19 @@ fun PlaylistDetailScreen(
                             // Like / Save Playlist Button
                             IconButton(
                                 onClick = onToggleSave,
-                                modifier = Modifier.size(42.dp)
+                                modifier = Modifier
+                                    .size(44.dp)
+                                    .then(
+                                        if (isGlass) {
+                                            Modifier.auraGlassSurface(shape = CircleShape, selected = isSaved, glassAlpha = 0.10f)
+                                        } else Modifier
+                                    )
                             ) {
                                 Icon(
                                     imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                     contentDescription = if (isSaved) "Remove from Library" else "Save to Library",
                                     tint = if (isSaved) AuraNeonLime else Color.White,
-                                    modifier = Modifier.size(24.dp)
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
 
@@ -627,7 +664,13 @@ fun PlaylistDetailScreen(
                                             isRepeatMode = false
                                         }
                                     },
-                                    modifier = Modifier.size(42.dp)
+                                    modifier = Modifier
+                                        .size(44.dp)
+                                        .then(
+                                            if (isGlass) {
+                                                Modifier.auraGlassSurface(shape = CircleShape, selected = isRepeatMode, glassAlpha = 0.10f)
+                                            } else Modifier
+                                        )
                                 ) {
                                     Icon(
                                         imageVector = if (isRepeatMode) Icons.Rounded.Repeat else Icons.Rounded.Shuffle,
@@ -785,28 +828,79 @@ fun PlaylistDetailScreen(
             onlyWhenTrackScrolling = playlistDetail.isPodcast
         )
 
-        // Pinned floating back button so it's always accessible when scrolled down into tracks
+        // Pinned floating bar / back button when scrolled down into tracks
         AnimatedVisibility(
             visible = listState.firstVisibleItemIndex > 0,
             enter = fadeIn(tween(200)),
             exit = fadeOut(tween(200)),
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .statusBarsPadding()
-                .padding(start = 12.dp, top = 6.dp)
+                .fillMaxWidth()
         ) {
-            IconButton(
-                onClick = onClose,
-                modifier = Modifier
-                    .size(40.dp)
-                    .background(Color.Black.copy(alpha = 0.65f), CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                    contentDescription = "Back",
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
+            if (isGlass) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .hazeBlurBar(
+                            state = hazeState,
+                            style = barBlurStyle(SpotifyPitchBlack, tintAlpha = 0.52f)
+                        )
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .clickable(onClick = onClose),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = playlistDetail.title,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .padding(start = 12.dp, top = 6.dp)
+                ) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
             }
         }
 
@@ -815,7 +909,7 @@ fun PlaylistDetailScreen(
             ModalBottomSheet(
                 onDismissRequest = { selectedModalTrack = null },
                 sheetState = sheetState,
-                containerColor = Color(0xFF14161E),
+                containerColor = auraGlassSheetColor(Color(0xFF14161E)),
                 scrimColor = Color.Black.copy(alpha = 0.75f)
             ) {
                 com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect()

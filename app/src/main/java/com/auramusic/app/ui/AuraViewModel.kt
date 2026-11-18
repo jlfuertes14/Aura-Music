@@ -20,6 +20,7 @@ import com.auramusic.app.core.update.UpdateDownloadProgress
 import com.auramusic.app.core.update.UpdateState
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.ArtistCarouselItem
+import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.ArtistDetail
 import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
@@ -35,6 +36,7 @@ import com.auramusic.app.domain.model.ChartSupportedCountries
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.ListeningStats
 import com.auramusic.app.domain.model.LyricsData
+import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.MoodCategory
 import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.domain.model.PlaylistDetail
@@ -63,6 +65,28 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+
+sealed interface DetailScreenEntry {
+    val stackKey: String
+
+    data class Catalog(
+        override val stackKey: String,
+        val detail: CatalogDetail,
+        val isLoading: Boolean = false
+    ) : DetailScreenEntry
+
+    data class Playlist(
+        override val stackKey: String,
+        val detail: PlaylistDetail,
+        val isLoading: Boolean = false
+    ) : DetailScreenEntry
+
+    data class Artist(
+        override val stackKey: String,
+        val detail: ArtistDetail,
+        val isLoading: Boolean = false
+    ) : DetailScreenEntry
+}
 
 class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val storage = AuraStorageRepository(application)
@@ -94,6 +118,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedArtistDetail = MutableStateFlow<ArtistDetail?>(null)
     val selectedArtistDetail: StateFlow<ArtistDetail?> = _selectedArtistDetail.asStateFlow()
+
+    private val detailStackLock = Any()
+    private var nextDetailStackId = 0L
+    private val _detailStack = MutableStateFlow<List<DetailScreenEntry>>(emptyList())
+    val detailStack: StateFlow<List<DetailScreenEntry>> = _detailStack.asStateFlow()
 
     private val _nowPlayingArtistDetail = MutableStateFlow<ArtistDetail?>(null)
     val nowPlayingArtistDetail: StateFlow<ArtistDetail?> = _nowPlayingArtistDetail.asStateFlow()
@@ -265,8 +294,17 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val _rydData = MutableStateFlow<ReturnYouTubeDislikeData?>(null)
     val rydData: StateFlow<ReturnYouTubeDislikeData?> = _rydData.asStateFlow()
 
-    private val _nowPlayingStyle = MutableStateFlow(NowPlayingStyle.SPOTIFY)
+    private val _appThemeStyle = MutableStateFlow(storage.loadAppThemeStyle())
+    val appThemeStyle: StateFlow<AppThemeStyle> = _appThemeStyle.asStateFlow()
+
+    private val _nowPlayingStyle = MutableStateFlow(storage.loadNowPlayingStyle())
     val nowPlayingStyle: StateFlow<NowPlayingStyle> = _nowPlayingStyle.asStateFlow()
+
+    private val _liquidGlassEnabled = MutableStateFlow(storage.loadLiquidGlassEnabled())
+    val liquidGlassEnabled: StateFlow<Boolean> = _liquidGlassEnabled.asStateFlow()
+
+    private val _lyricsStyle = MutableStateFlow(storage.loadLyricsStyle())
+    val lyricsStyle: StateFlow<LyricsStyle> = _lyricsStyle.asStateFlow()
 
     val isVideoMode: StateFlow<Boolean> = AuraPlayerManager.isVideoMode
     val isVideoLoading: StateFlow<Boolean> = AuraPlayerManager.isVideoLoading
@@ -320,7 +358,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         _playlists.value = storage.loadPlaylists()
         _recentlyPlayed.value = storage.loadRecentlyPlayed()
         _listeningStats.value = storage.loadListeningStats()
+        _appThemeStyle.value = storage.loadAppThemeStyle()
         _nowPlayingStyle.value = storage.loadNowPlayingStyle()
+        _liquidGlassEnabled.value = storage.loadLiquidGlassEnabled()
+        _lyricsStyle.value = storage.loadLyricsStyle()
         _visibleRecentlyPlayed.value = _recentlyPlayed.value
         _visibleUserPlaylists.value = _playlists.value
 
@@ -624,11 +665,60 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         AuraPlayerManager.playStandaloneVideo(track, videoQueue)
     }
 
+    private fun nextStackKey(prefix: String): String = synchronized(detailStackLock) {
+        "${prefix}_${++nextDetailStackId}"
+    }
+
+    private fun updateDetailStack(transform: (List<DetailScreenEntry>) -> List<DetailScreenEntry>) {
+        val updated = synchronized(detailStackLock) {
+            val next = transform(_detailStack.value)
+            _detailStack.value = next
+            next
+        }
+        _selectedArtistDetail.value = (updated.lastOrNull { it is DetailScreenEntry.Artist } as? DetailScreenEntry.Artist)?.detail
+        _selectedPlaylistDetail.value = (updated.lastOrNull { it is DetailScreenEntry.Playlist } as? DetailScreenEntry.Playlist)?.detail
+        _selectedCatalogDetail.value = (updated.lastOrNull { it is DetailScreenEntry.Catalog } as? DetailScreenEntry.Catalog)?.detail
+        _isArtistLoading.value = (updated.lastOrNull() as? DetailScreenEntry.Artist)?.isLoading == true
+        _isPlaylistLoading.value = (updated.lastOrNull() as? DetailScreenEntry.Playlist)?.isLoading == true
+        _isCatalogLoading.value = (updated.lastOrNull() as? DetailScreenEntry.Catalog)?.isLoading == true
+    }
+
+    private fun updateDetailEntry(stackKey: String, transform: (DetailScreenEntry) -> DetailScreenEntry) {
+        updateDetailStack { stack ->
+            stack.map { entry ->
+                if (entry.stackKey == stackKey) transform(entry) else entry
+            }
+        }
+    }
+
+    fun popTopDetail() {
+        updateDetailStack { stack ->
+            if (stack.isEmpty()) stack else stack.dropLast(1)
+        }
+    }
+
+    fun closeDetail(stackKey: String) {
+        updateDetailStack { stack ->
+            stack.filterNot { it.stackKey == stackKey }
+        }
+    }
+
+    fun clearDetailStack() {
+        updateDetailStack { emptyList() }
+    }
+
     fun openArtistDetail(artist: YtmTopArtist) {
+        val topArtist = _detailStack.value.lastOrNull() as? DetailScreenEntry.Artist
+        if (topArtist != null &&
+            ((artist.id.isNotBlank() && topArtist.detail.id == artist.id) ||
+             topArtist.detail.name.equals(artist.name, ignoreCase = true))
+        ) {
+            return
+        }
+        val stackKey = nextStackKey("artist")
         viewModelScope.launch {
-            _isArtistLoading.value = true
-            // Immediately set a preliminary state so transition is instant
-            _selectedArtistDetail.value = ArtistDetail(
+            // Immediately push a preliminary state so transition is instant
+            val preliminary = ArtistDetail(
                 id = artist.id,
                 name = artist.name,
                 subscribers = artist.subscribers,
@@ -636,10 +726,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 topSongs = emptyList(),
                 albums = emptyList()
             )
+            updateDetailStack { it + DetailScreenEntry.Artist(stackKey, preliminary, isLoading = true) }
             val fullDetail = SimpMusicExtractorEngine.fetchArtistDetail(artist)
-            _selectedArtistDetail.value = fullDetail
-            _isArtistLoading.value = false
-            loadArtistEditorial(fullDetail.name)
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Artist) entry.copy(detail = fullDetail, isLoading = false) else entry
+            }
+            if (_detailStack.value.any { it.stackKey == stackKey }) {
+                loadArtistEditorial(fullDetail.name, stackKey)
+            }
         }
     }
 
@@ -650,9 +744,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             openArtistDetail(existingInTop)
             return
         }
+        val topArtist = _detailStack.value.lastOrNull() as? DetailScreenEntry.Artist
+        if (topArtist != null && topArtist.detail.name.equals(artistName, ignoreCase = true)) {
+            return
+        }
+        val stackKey = nextStackKey("artist")
         viewModelScope.launch {
-            _isArtistLoading.value = true
-            _selectedArtistDetail.value = ArtistDetail(
+            val preliminary = ArtistDetail(
                 id = "",
                 name = artistName,
                 subscribers = "",
@@ -660,10 +758,14 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 topSongs = emptyList(),
                 albums = emptyList()
             )
+            updateDetailStack { it + DetailScreenEntry.Artist(stackKey, preliminary, isLoading = true) }
             val fullDetail = SimpMusicExtractorEngine.fetchArtistByName(artistName, songTitle, fallbackArtwork)
-            _selectedArtistDetail.value = fullDetail
-            _isArtistLoading.value = false
-            loadArtistEditorial(fullDetail.name)
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Artist) entry.copy(detail = fullDetail, isLoading = false) else entry
+            }
+            if (_detailStack.value.any { it.stackKey == stackKey }) {
+                loadArtistEditorial(fullDetail.name, stackKey)
+            }
         }
     }
 
@@ -691,16 +793,19 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadArtistEditorial(artistName: String) {
+    private fun loadArtistEditorial(artistName: String, stackKey: String) {
         viewModelScope.launch {
-            val selectedId = _selectedArtistDetail.value?.id
-            val current = _selectedArtistDetail.value ?: return@launch
+            val current = (_detailStack.value.firstOrNull { it.stackKey == stackKey } as? DetailScreenEntry.Artist)?.detail ?: return@launch
             if (current.name != artistName) return@launch
-            _selectedArtistDetail.value = current.copy(motionLoading = true)
+            val selectedId = current.id
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Artist) entry.copy(detail = entry.detail.copy(motionLoading = true)) else entry
+            }
             val motion = ArtistEditorialRepository.fetch(getApplication(), artistName)
-            val latest = _selectedArtistDetail.value
-            if (latest?.name == artistName && latest.id == selectedId) {
-                _selectedArtistDetail.value = latest.copy(motion = motion, motionLoading = false)
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Artist && entry.detail.name == artistName && entry.detail.id == selectedId) {
+                    entry.copy(detail = entry.detail.copy(motion = motion, motionLoading = false))
+                } else entry
             }
         }
     }
@@ -875,7 +980,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeArtistDetail() {
-        _selectedArtistDetail.value = null
+        updateDetailStack { stack ->
+            val idx = stack.indexOfLast { it is DetailScreenEntry.Artist }
+            if (idx >= 0) stack.toMutableList().apply { removeAt(idx) } else stack
+        }
     }
 
     fun selectUserPlaylist(playlist: AuraPlaylist?) {
@@ -891,9 +999,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openPlaylistDetail(playlist: YtmCommunityPlaylist) {
+        val topPlaylist = _detailStack.value.lastOrNull() as? DetailScreenEntry.Playlist
+        if (topPlaylist != null && topPlaylist.detail.id == playlist.id && playlist.id.isNotBlank()) {
+            return
+        }
+        val stackKey = nextStackKey("playlist")
         viewModelScope.launch {
-            _isPlaylistLoading.value = true
-            _selectedPlaylistDetail.value = PlaylistDetail(
+            val preliminary = PlaylistDetail(
                 id = playlist.id,
                 title = playlist.title,
                 author = playlist.author,
@@ -902,9 +1014,11 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 tracks = emptyList(),
                 isPodcast = playlist.id.startsWith("MPSP") || playlist.id.startsWith("MP_") || playlist.id.contains("podcast", ignoreCase = true)
             )
+            updateDetailStack { it + DetailScreenEntry.Playlist(stackKey, preliminary, isLoading = true) }
             val fullDetail = SimpMusicExtractorEngine.fetchPlaylistDetail(playlist)
-            _selectedPlaylistDetail.value = fullDetail
-            _isPlaylistLoading.value = false
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Playlist) entry.copy(detail = fullDetail, isLoading = false) else entry
+            }
         }
     }
 
@@ -947,7 +1061,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePlaylistDetail() {
-        _selectedPlaylistDetail.value = null
+        updateDetailStack { stack ->
+            val idx = stack.indexOfLast { it is DetailScreenEntry.Playlist }
+            if (idx >= 0) stack.toMutableList().apply { removeAt(idx) } else stack
+        }
     }
 
     fun openCatalogCategory(
@@ -955,30 +1072,48 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         params: String = "",
         browseId: String = "FEmusic_moods_and_genres_category"
     ) {
+        val topCatalog = _detailStack.value.lastOrNull() as? DetailScreenEntry.Catalog
+        val isRetryOnTop = topCatalog != null &&
+            topCatalog.detail.browseId == browseId &&
+            topCatalog.detail.params == params &&
+            topCatalog.detail.title == title
+        if (isRetryOnTop && (topCatalog.isLoading || topCatalog.detail.shelves.isNotEmpty())) {
+            return
+        }
+        val stackKey = if (isRetryOnTop) topCatalog.stackKey else nextStackKey("catalog")
         val cacheKey = "${browseId}_${params}_${title}"
         val cached = catalogDetailCache[cacheKey]
         if (cached != null && cached.isNotEmpty()) {
-            _selectedCatalogDetail.value = CatalogDetail(
+            val detail = CatalogDetail(
                 title = title,
                 params = params,
                 browseId = browseId,
                 shelves = cached,
                 isLoading = false
             )
+            if (isRetryOnTop) {
+                updateDetailEntry(stackKey) { DetailScreenEntry.Catalog(stackKey, detail, isLoading = false) }
+            } else {
+                updateDetailStack { it + DetailScreenEntry.Catalog(stackKey, detail, isLoading = false) }
+            }
             return
         }
 
-        _selectedCatalogDetail.value = CatalogDetail(
+        val loadingDetail = CatalogDetail(
             title = title,
             params = params,
             browseId = browseId,
             shelves = emptyList(),
             isLoading = true
         )
-        _isCatalogLoading.value = true
+        if (isRetryOnTop) {
+            updateDetailEntry(stackKey) { DetailScreenEntry.Catalog(stackKey, loadingDetail, isLoading = true) }
+        } else {
+            updateDetailStack { it + DetailScreenEntry.Catalog(stackKey, loadingDetail, isLoading = true) }
+        }
 
         viewModelScope.launch {
-            try {
+            val resolvedDetail = try {
                 val shelves = SimpMusicExtractorEngine.fetchMoodCategoryDetails(
                     browseId = browseId,
                     params = params.ifBlank { null },
@@ -987,7 +1122,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 if (shelves.isNotEmpty()) {
                     catalogDetailCache[cacheKey] = shelves
                 }
-                _selectedCatalogDetail.value = CatalogDetail(
+                CatalogDetail(
                     title = title,
                     params = params,
                     browseId = browseId,
@@ -996,7 +1131,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } catch (e: Exception) {
                 android.util.Log.e("AuraViewModel", "Error fetching catalog category $title: ${e.message}")
-                _selectedCatalogDetail.value = CatalogDetail(
+                CatalogDetail(
                     title = title,
                     params = params,
                     browseId = browseId,
@@ -1004,14 +1139,18 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     isLoading = false,
                     error = e.message ?: "Failed to load"
                 )
-            } finally {
-                _isCatalogLoading.value = false
+            }
+            updateDetailEntry(stackKey) { entry ->
+                if (entry is DetailScreenEntry.Catalog) entry.copy(detail = resolvedDetail, isLoading = false) else entry
             }
         }
     }
 
     fun closeCatalogDetail() {
-        _selectedCatalogDetail.value = null
+        updateDetailStack { stack ->
+            val idx = stack.indexOfLast { it is DetailScreenEntry.Catalog }
+            if (idx >= 0) stack.toMutableList().apply { removeAt(idx) } else stack
+        }
     }
 
     fun setActivePlaylistDetail(detail: PlaylistDetail) {
@@ -1038,7 +1177,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         if (activeCommunity != null &&
             (activeCommunity.title.equals(track.album, ignoreCase = true) ||
              activeCommunity.tracks.any { it.track.videoId == track.videoId || it.track.id == track.id })) {
-            _selectedPlaylistDetail.value = activeCommunity
+            val topPlaylist = _detailStack.value.lastOrNull() as? DetailScreenEntry.Playlist
+            if (topPlaylist?.detail?.id != activeCommunity.id) {
+                updateDetailStack { it + DetailScreenEntry.Playlist(nextStackKey("playlist"), activeCommunity, isLoading = false) }
+            }
             return true
         }
 
@@ -1048,6 +1190,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             (activeUser.name.equals(track.album, ignoreCase = true) ||
              activeUser.tracks.any { it.videoId == track.videoId || it.id == track.id })) {
             _selectedUserPlaylist.value = activeUser
+            clearDetailStack()
             return true
         }
 
@@ -1059,6 +1202,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         if (matchingUserPl != null) {
             _activePlayingUserPlaylist.value = matchingUserPl
             _selectedUserPlaylist.value = matchingUserPl
+            clearDetailStack()
             return true
         }
 
@@ -1068,6 +1212,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             (currentDetail.title.equals(track.album, ignoreCase = true) ||
              currentDetail.tracks.any { it.track.videoId == track.videoId || it.track.id == track.id })) {
             _activePlayingPlaylistDetail.value = currentDetail
+            val topPlaylist = _detailStack.value.lastOrNull() as? DetailScreenEntry.Playlist
+            if (topPlaylist?.detail?.id != currentDetail.id) {
+                updateDetailStack { it + DetailScreenEntry.Playlist(nextStackKey("playlist"), currentDetail, isLoading = false) }
+            }
             return true
         }
 
@@ -2116,9 +2264,25 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         storage.saveRomanizationLanguages(languages)
     }
 
+    fun setAppThemeStyle(style: AppThemeStyle) {
+        _appThemeStyle.value = style
+        val isGlass = style == AppThemeStyle.LIQUID_GLASS
+        _liquidGlassEnabled.value = isGlass
+        _nowPlayingStyle.value = if (isGlass) NowPlayingStyle.LIQUID_GLASS else NowPlayingStyle.SPOTIFY
+        _lyricsStyle.value = if (isGlass) LyricsStyle.APPLE_MUSIC else LyricsStyle.CLASSIC
+        storage.saveAppThemeStyle(style)
+    }
+
     fun setNowPlayingStyle(style: NowPlayingStyle) {
-        _nowPlayingStyle.value = style
-        storage.saveNowPlayingStyle(style)
+        setAppThemeStyle(if (style == NowPlayingStyle.LIQUID_GLASS) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
+    }
+
+    fun setLiquidGlassEnabled(enabled: Boolean) {
+        setAppThemeStyle(if (enabled) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
+    }
+
+    fun setLyricsStyle(style: LyricsStyle) {
+        setAppThemeStyle(if (style == LyricsStyle.APPLE_MUSIC) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
     }
 
     fun selectEqualizerPreset(preset: EqualizerPreset) {

@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.SpotifyCard
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
  * Mobile Sheet Modal for choosing between "Create a playlist" and "Import Playlist from Spotify".
@@ -65,7 +66,7 @@ fun AuraCreateOrImportModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
+        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
         scrimColor = Color.Black.copy(alpha = 0.75f),
         dragHandle = {
             Box(
@@ -140,7 +141,7 @@ fun AuraCreatePlaylistModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
+        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
         scrimColor = Color.Black.copy(alpha = 0.75f),
         dragHandle = {
             Box(

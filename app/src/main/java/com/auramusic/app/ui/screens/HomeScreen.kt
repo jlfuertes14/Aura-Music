@@ -146,6 +146,7 @@ import com.auramusic.app.ui.theme.AuraPlayGreen
 import com.auramusic.app.ui.theme.AuraSageGreen
 import com.auramusic.app.ui.theme.BadgeExplicitBg
 import com.auramusic.app.ui.theme.BadgeLyricsBg
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.PillActiveBg
 import com.auramusic.app.ui.theme.PillActiveText
 import com.auramusic.app.ui.theme.PillInactiveBg
@@ -155,6 +156,11 @@ import com.auramusic.app.ui.theme.SpotifyHeroCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSurface
+import com.auramusic.app.ui.theme.barBlurStyle
+import com.auramusic.app.ui.theme.hazeBlurBar
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import java.util.Calendar
 
 private val EaseOutCubic = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
@@ -284,6 +290,8 @@ fun HomeScreen(
 
     val listState = rememberLazyListState()
     val moodRowState = rememberLazyListState()
+    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val homeHazeState = rememberHazeState()
 
     LaunchedEffect(activeCategory) {
         val preloadUrl = YtmMoodBrowseParams.DEFAULT_BACKGROUNDS[activeCategory]
@@ -418,7 +426,9 @@ fun HomeScreen(
 
             LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (liquidGlassEnabled) Modifier.hazeSource(homeHazeState) else Modifier),
                 contentPadding = PaddingValues(bottom = 140.dp)
             ) {
                 // Top spacer matching the uncollapsed header height
@@ -1623,12 +1633,20 @@ fun HomeScreen(
         }
 
         if (effectiveHeaderHeight > 0.dp) {
+            val headerChromeModifier = if (liquidGlassEnabled && !isAllCategory && darkFraction > 0.05f) {
+                Modifier.hazeBlurBar(
+                    state = homeHazeState,
+                    style = barBlurStyle(SpotifyPitchBlack, tintAlpha = (0.48f * darkFraction).coerceIn(0.08f, 0.52f))
+                )
+            } else {
+                Modifier.background(SpotifyPitchBlack.copy(alpha = headerBgAlpha))
+            }
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .height(effectiveHeaderHeight)
-                    .background(SpotifyPitchBlack.copy(alpha = headerBgAlpha))
+                    .then(headerChromeModifier)
                     .scrollable(state = listState, orientation = Orientation.Vertical)
             ) {
                 // Greeting text: full unclipped height, smoothly scrolls up into transparent status bar
@@ -1702,7 +1720,16 @@ fun HomeScreen(
                     .align(Alignment.TopCenter)
                     .fillMaxWidth()
                     .height(statusBarTop)
-                    .background(SpotifyPitchBlack)
+                    .then(
+                        if (liquidGlassEnabled) {
+                            Modifier.hazeBlurBar(
+                                state = homeHazeState,
+                                style = barBlurStyle(SpotifyPitchBlack, tintAlpha = 0.42f)
+                            )
+                        } else {
+                            Modifier.background(SpotifyPitchBlack)
+                        }
+                    )
             )
         }
         }
@@ -2738,11 +2765,13 @@ private fun AuraMoodCategoryPill(
         label = "pillPressScale"
     )
 
-    // Un-tapped pill fill: Gray (#353945) when sticky header is dark; translucent dark over mood image at resting state
-    val unselectedFill = if (isHeaderDark) {
-        Color(0xFF353945) // Modern gray fill
-    } else {
-        if (hasMoodBackground) Color.Black.copy(alpha = 0.45f) else Color(0xFF353945)
+    val isGlass = LocalLiquidGlassEnabled.current
+    // Un-tapped pill fill: translucent frosted fill in Liquid Glass mode; gray (#353945) in Default mode
+    val unselectedFill = when {
+        isGlass -> Color.White.copy(alpha = if (isHeaderDark) 0.12f else 0.14f)
+        isHeaderDark -> Color(0xFF353945)
+        hasMoodBackground -> Color.Black.copy(alpha = 0.45f)
+        else -> Color(0xFF353945)
     }
 
     val pillBgColor by animateColorAsState(
@@ -2812,6 +2841,20 @@ private fun AuraMoodCategoryPill(
                 }
             }
             .background(pillBgColor, CircleShape)
+            .then(
+                if (isGlass && !isSelected) {
+                    Modifier.border(
+                        width = 0.75.dp,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.28f),
+                                Color.White.copy(alpha = 0.06f)
+                            )
+                        ),
+                        shape = CircleShape
+                    )
+                } else Modifier
+            )
             .padding(horizontal = 16.dp, vertical = 7.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -2825,13 +2868,6 @@ private fun AuraMoodCategoryPill(
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Medium
             )
-            if (showLoadingBorder) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(10.dp),
-                    color = Color.Black,
-                    strokeWidth = 1.5.dp
-                )
-            }
         }
     }
 }

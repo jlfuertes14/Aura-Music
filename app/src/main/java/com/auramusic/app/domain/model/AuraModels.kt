@@ -2,6 +2,11 @@ package com.auramusic.app.domain.model
 
 import androidx.compose.ui.graphics.Color
 
+enum class AppThemeStyle(val label: String, val subtitle: String) {
+    DEFAULT("Default", "Classic dark interface, Spotify Encore player & classic lyrics"),
+    LIQUID_GLASS("Liquid Glass", "Frosted glass UI, Apple Music player & depth-of-field lyrics")
+}
+
 enum class NowPlayingStyle(val label: String) {
     SPOTIFY("Spotify Encore"),
     LIQUID_GLASS("Apple Music")
@@ -446,7 +451,8 @@ data class AuraYouTubeComment(
     val replies: List<AuraYouTubeComment> = emptyList(),
     val repliesNextContinuation: String? = null,
     val isLoadingReplies: Boolean = false,
-    val isRepliesExpanded: Boolean = false
+    val isRepliesExpanded: Boolean = false,
+    val translateActionToken: String? = null
 )
 
 data class AuraCommentsPage(

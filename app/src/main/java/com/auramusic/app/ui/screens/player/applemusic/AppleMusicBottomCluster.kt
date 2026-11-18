@@ -45,17 +45,17 @@ import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeMute
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.FastForward
-import androidx.compose.material.icons.rounded.FastRewind
+import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Lyrics
-import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
-import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
+import androidx.compose.material.icons.rounded.SkipNext
+import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -94,7 +94,7 @@ import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.liquidGlass
 import kotlin.math.roundToInt
 
-private val DOCK_BUTTON_SIZE = 40.dp
+private val DOCK_BUTTON_SIZE = 44.dp
 private val CAPSULE_SEGMENT_WIDTH = 64.dp
 
 /**
@@ -263,8 +263,8 @@ fun AppleMusicTimesRow(
 }
 
 /**
- * Centered Apple Music transport cluster: `FastRewind` (46.dp), plain crisp white
- * `PlayArrow`/`Pause` (66.dp) with [appleMusicPressInflate], and `FastForward` (46.dp) at 58.dp spacing.
+ * Centered Apple Music transport cluster: `SkipPrevious` (46.dp), plain crisp white
+ * `PlayArrow`/`Pause` (66.dp) with [appleMusicPressInflate], and `SkipNext` (46.dp) at 58.dp spacing.
  */
 @Composable
 fun AppleMusicTransportRow(
@@ -306,7 +306,7 @@ fun AppleMusicTransportRow(
                 .clip(CircleShape),
         ) {
             Icon(
-                imageVector = Icons.Rounded.FastRewind,
+                imageVector = Icons.Rounded.SkipPrevious,
                 contentDescription = "Previous track",
                 tint = Color.White.copy(alpha = if (isPreviousAvailable) 1f else 0.4f),
                 modifier = Modifier.size(46.dp),
@@ -339,7 +339,7 @@ fun AppleMusicTransportRow(
                 .clip(CircleShape),
         ) {
             Icon(
-                imageVector = Icons.Rounded.FastForward,
+                imageVector = Icons.Rounded.SkipNext,
                 contentDescription = "Next track",
                 tint = Color.White.copy(alpha = if (isNextAvailable) 1f else 0.4f),
                 modifier = Modifier.size(46.dp),
@@ -421,7 +421,7 @@ fun AppleMusicVolumeRow(
             onClick = { applyVolume((volumeFraction - 1f / maxVolume).coerceAtLeast(0f)) },
             modifier = Modifier
                 .appleMusicPressInflate(1.2f)
-                .size(28.dp),
+                .size(44.dp),
         ) {
             Icon(
                 imageVector = if (volumeFraction <= 0.01f) {
@@ -434,7 +434,7 @@ fun AppleMusicVolumeRow(
                 modifier = Modifier.size(18.dp),
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(2.dp))
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -448,12 +448,12 @@ fun AppleMusicVolumeRow(
                 modifier = Modifier.fillMaxWidth(),
             )
         }
-        Spacer(modifier = Modifier.width(8.dp))
+        Spacer(modifier = Modifier.width(2.dp))
         IconButton(
             onClick = { applyVolume((volumeFraction + 1f / maxVolume).coerceAtMost(1f)) },
             modifier = Modifier
                 .appleMusicPressInflate(1.2f)
-                .size(28.dp),
+                .size(44.dp),
         ) {
             Icon(
                 imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
@@ -514,7 +514,7 @@ fun AppleMusicDockButton(
 
 /**
  * Bottom navigation dock:
- * `Lyrics toggle pill · centered [Comments / More / Share] Liquid Glass or tinted capsule · Queue toggle pill`.
+ * `Lyrics toggle pill · centered [Comments / More] Liquid Glass or tinted capsule · Queue toggle pill`.
  * Active Lyrics/Queue pills highlight with `lerp(seedColor, White, 0.75f)` container and
  * `lerp(seedColor, Black, 0.6f)` icon tint.
  */
@@ -528,16 +528,22 @@ fun AppleMusicActionRow(
     onOpenOptions: () -> Unit,
     onShareTrack: () -> Unit,
     modifier: Modifier = Modifier,
+    isVideoMode: Boolean = false,
+    onToggleVideoMode: () -> Unit = {},
 ) {
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredShare = onShareTrack
+    @Suppress("UNUSED_PARAMETER")
+    val ignoredOptions = onOpenOptions
     val activePillContainer = remember(seedColor) { lerp(seedColor, Color.White, 0.75f) }
     val activePillContent = remember(seedColor) { lerp(seedColor, Color.Black, 0.6f) }
     val glassBackdrop = LocalGlassBackdrop.current
     val useGlass = LocalLiquidGlassEnabled.current && glassBackdrop != null
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val segmentWidth = ((maxWidth - DOCK_BUTTON_SIZE * 2 - 2.dp - 16.dp) / 3)
-            .coerceIn(36.dp, CAPSULE_SEGMENT_WIDTH)
-        val contentWidth = DOCK_BUTTON_SIZE * 2 + segmentWidth * 3 + 2.dp
+        val segmentWidth = ((maxWidth - DOCK_BUTTON_SIZE * 2 - 1.dp - 16.dp) / 2)
+            .coerceIn(46.dp, 64.dp)
+        val contentWidth = DOCK_BUTTON_SIZE * 2 + segmentWidth * 2 + 1.dp
         val edgeInset = ((maxWidth - contentWidth) / 4).coerceAtLeast(0.dp)
 
         Row(
@@ -594,22 +600,10 @@ fun AppleMusicActionRow(
                         .background(Color.White.copy(alpha = 0.20f)),
                 )
                 AppleMusicCapsuleSegment(
-                    icon = Icons.Rounded.MoreHoriz,
-                    contentDescription = "More options",
+                    icon = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
+                    contentDescription = if (isVideoMode) "Switch to audio" else "Switch to video",
                     width = segmentWidth,
-                    onClick = onOpenOptions,
-                )
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .background(Color.White.copy(alpha = 0.20f)),
-                )
-                AppleMusicCapsuleSegment(
-                    icon = Icons.Rounded.Share,
-                    contentDescription = "Share track",
-                    width = segmentWidth,
-                    onClick = onShareTrack,
+                    onClick = onToggleVideoMode,
                 )
             }
 
@@ -690,6 +684,8 @@ fun AppleMusicBottomCluster(
     onOpenOptions: () -> Unit,
     onShareTrack: () -> Unit,
     modifier: Modifier = Modifier,
+    isVideoMode: Boolean = false,
+    onToggleVideoMode: () -> Unit = {},
     typography: AppleMusicTypography = rememberAppleMusicTypography(),
     topPadding: Dp = 8.dp,
     outputDeviceLabel: String? = null,
@@ -772,6 +768,8 @@ fun AppleMusicBottomCluster(
             onOpenComments = onOpenComments,
             onOpenOptions = onOpenOptions,
             onShareTrack = onShareTrack,
+            isVideoMode = isVideoMode,
+            onToggleVideoMode = onToggleVideoMode,
         )
 
         Spacer(modifier = Modifier.height(12.dp))

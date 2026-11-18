@@ -779,6 +779,78 @@ object AuraPlayerManager {
     }
 
     /**
+     * Removes a non-active track at [index] from the queue and syncs ExoPlayer's playlist.
+     */
+    fun removeQueueItem(index: Int) {
+        val list = _queue.value
+        if (index !in list.indices || list.size <= 1) return
+        val cur = _currentTrack.value
+        val curIdx = cur?.let { c ->
+            list.indexOfFirst { it.id == c.id && it.videoId == c.videoId }
+                .takeIf { it >= 0 }
+                ?: list.indexOfFirst { it.videoId == c.videoId }
+        } ?: -1
+        if (index == curIdx) return
+
+        val mutable = list.toMutableList()
+        val removed = mutable.removeAt(index)
+        _queue.value = mutable
+        originalQueue = originalQueue.filterNot { it.id == removed.id && it.videoId == removed.videoId }
+
+        if (!_isVideoMode.value) {
+            val player = exoPlayer ?: return
+            try {
+                if (player.mediaItemCount == list.size && index in 0 until player.mediaItemCount) {
+                    player.removeMediaItem(index)
+                } else if (curIdx >= 0 && index > curIdx) {
+                    syncUpcomingItemsInPlayer(mutable.drop(curIdx + 1))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Non-critical error removing queue item from player: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Reorders a queue item from [fromIndex] to [toIndex] without interrupting active playback.
+     */
+    fun moveQueueItem(fromIndex: Int, toIndex: Int) {
+        val list = _queue.value
+        if (fromIndex == toIndex || fromIndex !in list.indices || toIndex !in list.indices) return
+        val mutable = list.toMutableList()
+        val moved = mutable.removeAt(fromIndex)
+        mutable.add(toIndex, moved)
+        _queue.value = mutable
+        if (!_isShuffleEnabled.value && originalQueue.size == list.size) {
+            originalQueue = mutable
+        }
+
+        if (!_isVideoMode.value) {
+            val player = exoPlayer ?: return
+            try {
+                if (player.mediaItemCount == list.size &&
+                    fromIndex in 0 until player.mediaItemCount &&
+                    toIndex in 0 until player.mediaItemCount
+                ) {
+                    player.moveMediaItem(fromIndex, toIndex)
+                } else {
+                    val cur = _currentTrack.value
+                    val curIdx = cur?.let { c ->
+                        mutable.indexOfFirst { it.id == c.id && it.videoId == c.videoId }
+                            .takeIf { it >= 0 }
+                            ?: mutable.indexOfFirst { it.videoId == c.videoId }
+                    } ?: -1
+                    if (curIdx >= 0) {
+                        syncUpcomingItemsInPlayer(mutable.drop(curIdx + 1))
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Non-critical error moving queue item in player: ${e.message}")
+            }
+        }
+    }
+
+    /**
      * Seamlessly updates upcoming items in ExoPlayer timeline WITHOUT calling setMediaItems.
      * Calling setMediaItems would re-initialize the media source, causing playback to pause,
      * re-buffer, and glitch the slider/play-pause icon.
@@ -1395,6 +1467,28 @@ object AuraPlayerManager {
             originalAudioQueue = _queue.value
             originalAudioIndex = _queue.value.indexOfFirst { it.videoId == currentAudio.videoId }
         }
+        originalAudioTrack?.let { orig ->
+            if (SimpMusicExtractorEngine.isVideoThumbnailUrl(orig.artworkUrl)) {
+                scope.launch(Dispatchers.IO) {
+                    val officialAudio = SimpMusicExtractorEngine.findOfficialAudioTrack(orig)
+                    if (officialAudio != null && !SimpMusicExtractorEngine.isVideoThumbnailUrl(officialAudio.artworkUrl)) {
+                        withContext(Dispatchers.Main) {
+                            if (originalAudioTrack?.videoId == orig.videoId) {
+                                val enriched = orig.copy(
+                                    artworkUrl = officialAudio.artworkUrl,
+                                    album = officialAudio.album.ifBlank { orig.album },
+                                    musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+                                )
+                                originalAudioTrack = enriched
+                                originalAudioQueue = originalAudioQueue?.map {
+                                    if (it.id == orig.id || it.videoId == orig.videoId) enriched else it
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
         _isVideoMode.value = true
         val wasPlaying = player?.isPlaying == true || startPlayback
         player?.pause()
@@ -1499,6 +1593,21 @@ object AuraPlayerManager {
             musicVideoType = videoTrack.musicVideoType ?: "MUSIC_VIDEO_TYPE_OMV"
         )
 
+        scope.launch(Dispatchers.IO) {
+            val officialAudio = SimpMusicExtractorEngine.findOfficialAudioTrack(videoTrack)
+            if (officialAudio != null && !SimpMusicExtractorEngine.isVideoThumbnailUrl(officialAudio.artworkUrl)) {
+                withContext(Dispatchers.Main) {
+                    if (_isVideoMode.value && _currentTrack.value?.videoId == videoTrack.videoId && originalAudioTrack == null) {
+                        originalAudioTrack = videoTrack.copy(
+                            artworkUrl = officialAudio.artworkUrl,
+                            album = officialAudio.album.ifBlank { videoTrack.album },
+                            musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+                        )
+                    }
+                }
+            }
+        }
+
         scope.launch {
             _isVideoLoading.value = true
             val videoQualityPref = _videoQuality.value
@@ -1568,6 +1677,9 @@ object AuraPlayerManager {
             if (wasPlaying) {
                 player.play()
             }
+            if (SimpMusicExtractorEngine.isVideoThumbnailUrl(origTrack.artworkUrl)) {
+                resolveAndApplyOfficialAudioArtwork(origTrack)
+            }
         } else {
             val cur = currentTrack.value ?: return
             val mediaItem = buildMediaItem(cur)
@@ -1575,6 +1687,45 @@ object AuraPlayerManager {
             player.prepare()
             if (wasPlaying) {
                 player.play()
+            }
+            if (SimpMusicExtractorEngine.isVideoThumbnailUrl(cur.artworkUrl)) {
+                resolveAndApplyOfficialAudioArtwork(cur)
+            }
+        }
+    }
+
+    private fun resolveAndApplyOfficialAudioArtwork(targetTrack: AuraTrack) {
+        scope.launch(Dispatchers.IO) {
+            val officialAudio = SimpMusicExtractorEngine.findOfficialAudioTrack(targetTrack) ?: return@launch
+            if (SimpMusicExtractorEngine.isVideoThumbnailUrl(officialAudio.artworkUrl)) return@launch
+            withContext(Dispatchers.Main) {
+                if (!_isVideoMode.value && _currentTrack.value?.videoId == targetTrack.videoId) {
+                    val active = _currentTrack.value ?: return@withContext
+                    val updated = active.copy(
+                        artworkUrl = officialAudio.artworkUrl,
+                        album = officialAudio.album.ifBlank { active.album },
+                        musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+                    )
+                    _currentTrack.value = updated
+                    _queue.value = _queue.value.map {
+                        if (it.id == active.id || it.videoId == active.videoId) {
+                            it.copy(
+                                artworkUrl = officialAudio.artworkUrl,
+                                album = officialAudio.album.ifBlank { it.album },
+                                musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+                            )
+                        } else it
+                    }
+                    originalQueue = originalQueue.map {
+                        if (it.id == active.id || it.videoId == active.videoId) {
+                            it.copy(
+                                artworkUrl = officialAudio.artworkUrl,
+                                album = officialAudio.album.ifBlank { it.album },
+                                musicVideoType = "MUSIC_VIDEO_TYPE_ATV"
+                            )
+                        } else it
+                    }
+                }
             }
         }
     }

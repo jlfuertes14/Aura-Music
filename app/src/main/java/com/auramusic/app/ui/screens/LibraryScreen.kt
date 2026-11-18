@@ -85,6 +85,7 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.geometry.CornerRadius
@@ -112,10 +113,12 @@ import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPillInactive
 import com.auramusic.app.ui.theme.AuraPillInactiveText
 import com.auramusic.app.ui.theme.AuraPlayGreen
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSurface
 
 @Composable
 fun LibraryScreen(
@@ -295,7 +298,7 @@ fun LibraryScreen(
             }
         }
 
-        // Flat Designed Spotify Link & Playlist Import Section
+        // Spotify Link & Playlist Import Section
         AnimatedVisibility(
             visible = showImportCard,
             enter = fadeIn(tween(200)) + expandVertically(
@@ -306,14 +309,17 @@ fun LibraryScreen(
             )
         ) {
             val isImporting = spotifyImportStatus?.contains("…") == true
+            val isGlass = LocalLiquidGlassEnabled.current
 
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = Color(0xFF14161E),
-                shadowElevation = 0.dp,
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 6.dp)
+                    .auraGlassSurface(
+                        shape = RoundedCornerShape(if (isGlass) 16.dp else 14.dp),
+                        fallbackColor = Color(0xFF14161E),
+                        glassAlpha = 0.10f
+                    )
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -337,13 +343,17 @@ fun LibraryScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Lower height link input field (no paste button, clean compact row)
+                    // Lower height link input field
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(40.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF0D0E13))
+                            .auraGlassSurface(
+                                shape = RoundedCornerShape(if (isGlass) 10.dp else 8.dp),
+                                fallbackColor = Color(0xFF0D0E13),
+                                glassAlpha = 0.12f,
+                                borderTopAlpha = 0.24f
+                            )
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -351,6 +361,7 @@ fun LibraryScreen(
                             value = linkInput,
                             onValueChange = { linkInput = it },
                             singleLine = true,
+                            cursorBrush = SolidColor(AuraNeonLime),
                             textStyle = TextStyle(
                                 color = TextPrimary,
                                 fontSize = 12.5.sp
@@ -478,11 +489,21 @@ fun LibraryScreen(
             items(tabLabels.size) { idx ->
                 val selected = activeTab == idx
                 val label = tabLabels[idx]
-                Surface(
-                    shape = CircleShape,
-                    color = if (selected) AuraNeonLime else AuraPillInactive,
+                Box(
                     modifier = Modifier
-                        .clip(CircleShape)
+                        .then(
+                            if (selected) {
+                                Modifier
+                                    .clip(CircleShape)
+                                    .background(AuraNeonLime)
+                            } else {
+                                Modifier.auraGlassSurface(
+                                    shape = CircleShape,
+                                    selected = false,
+                                    fallbackColor = AuraPillInactive
+                                )
+                            }
+                        )
                         .clickable { activeTab = idx }
                 ) {
                     Text(
@@ -940,8 +961,11 @@ private fun LibraryOverviewTile(
 ) {
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(Color(0xFF24272D))
+            .auraGlassSurface(
+                shape = RoundedCornerShape(20.dp),
+                selected = false,
+                fallbackColor = Color(0xFF24272D)
+            )
             .clickable(onClick = onClick)
             .padding(14.dp)
     ) {

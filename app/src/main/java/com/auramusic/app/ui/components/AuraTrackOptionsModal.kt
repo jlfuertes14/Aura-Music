@@ -45,6 +45,7 @@ import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
  * Universal 3-Dot Track Options Bottom Sheet Modal
@@ -73,7 +74,7 @@ fun AuraTrackOptionsModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
+        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
         scrimColor = Color.Black.copy(alpha = 0.75f),
         dragHandle = {
             Box(

@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPoppinsFontFamily
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -220,8 +221,8 @@ fun appleMusicSmoothScrimBrush(
  * [BlendMode.DstIn] layer with a 24-step smoothstep curve.
  */
 fun Modifier.appleMusicVerticalFadeEdges(
-    topFadeHeight: Dp,
-    bottomFadeHeight: Dp,
+    topFadeHeight: Dp = 28.dp,
+    bottomFadeHeight: Dp = 18.dp,
 ): Modifier =
     graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         .drawWithContent {
@@ -327,7 +328,7 @@ fun AppleMusicGlyphButton(
         onClick = onClick,
         modifier = modifier
             .appleMusicPressInflate()
-            .size(size)
+            .size(size.coerceAtLeast(44.dp))
             .clip(CircleShape),
     ) {
         Icon(
@@ -377,7 +378,7 @@ fun AppleMusicCompactHeader(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 12.dp),
+            .padding(horizontal = 20.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Box(
@@ -470,13 +471,13 @@ fun AppleMusicHeaderActions(
     Row(
         modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         if (onAddToPlaylist != null) {
             Box(
                 modifier = Modifier
                     .appleMusicPressInflate()
-                    .size(28.dp)
+                    .size(44.dp)
                     .clip(CircleShape)
                     .clickable(onClick = onAddToPlaylist),
                 contentAlignment = Alignment.Center,
@@ -493,7 +494,7 @@ fun AppleMusicHeaderActions(
         Box(
             modifier = Modifier
                 .appleMusicPressInflate()
-                .size(32.dp)
+                .size(44.dp)
                 .appleMusicHeartBurst(likeBurst)
                 .clip(CircleShape)
                 .clickable {
@@ -506,7 +507,7 @@ fun AppleMusicHeaderActions(
                 Icon(
                     imageVector = if (liked) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                     contentDescription = if (liked) "Remove from liked songs" else "Like song",
-                    tint = if (liked) Color(0xFFFF4D6D) else Color.White,
+                    tint = if (liked) AuraNeonLime else Color.White,
                     modifier = Modifier.size(24.dp),
                 )
             }
@@ -515,7 +516,7 @@ fun AppleMusicHeaderActions(
             icon = Icons.Rounded.MoreVert,
             contentDescription = "More options",
             onClick = onOptionsClick,
-            size = 28.dp,
+            size = 44.dp,
         )
     }
 }
@@ -550,10 +551,9 @@ fun rememberAppleMusicHeartBurstState(): AppleMusicHeartBurstState {
 }
 
 private val DefaultHeartBurstColors = listOf(
-    Color(0xFFFFD54F),
-    Color(0xFFFFF59D),
-    Color(0xFFFF8A80),
-    Color(0xFFF48FB1),
+    AuraNeonLime,
+    Color(0xFFE6FF80),
+    Color(0xFFB2FF59),
     Color.White,
 )
 

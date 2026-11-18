@@ -3,6 +3,8 @@ package com.auramusic.app.ui.screens.player.applemusic
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -12,6 +14,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,11 +36,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Audiotrack
-import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material.icons.rounded.Videocam
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -45,6 +44,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -56,6 +57,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -80,6 +82,7 @@ import com.auramusic.app.ui.theme.liquidGlass
 import com.auramusic.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 private val GRABBER_HEIGHT = 28.dp
 private val TOP_BAND_STRIP = 32.dp
@@ -133,6 +136,7 @@ fun AppleMusicNowPlayingView(
     activeView: AppleMusicView? = null,
     onActiveViewChange: ((AppleMusicView) -> Unit)? = null,
     outputDeviceLabel: String? = null,
+    onSheetDragOffsetChange: (Float) -> Unit = {},
     lyricStripSlot: @Composable (onOpenLyrics: () -> Unit) -> Unit = {},
     lyricsTabSlot: @Composable (
         compactHeader: @Composable () -> Unit,
@@ -171,7 +175,9 @@ fun AppleMusicNowPlayingView(
     )
 
     val typography = rememberAppleMusicTypography()
-    var artworkBitmap by remember(track.videoId) { mutableStateOf<ImageBitmap?>(null) }
+    var artworkBitmap by remember(track.videoId, track.highResArtworkUrl) {
+        mutableStateOf(getCachedAppleMusicBitmap(track.highResArtworkUrl))
+    }
 
     // Sibling backdrop source for Liquid Glass pills inside bottom cluster & top-right chrome
     val glassBackdrop = rememberGlassBackdrop(Color.Black)
@@ -194,6 +200,8 @@ fun AppleMusicNowPlayingView(
             onOpenComments = onOpenComments,
             onOpenOptions = onOptionsClick,
             onShareTrack = onShareTrack,
+            isVideoMode = isVideoMode,
+            onToggleVideoMode = { onToggleVideoMode?.invoke() },
             typography = typography,
             outputDeviceLabel = outputDeviceLabel,
         )
@@ -216,6 +224,38 @@ fun AppleMusicNowPlayingView(
         )
     }
 
+    val sheetDragScope = rememberCoroutineScope()
+    val sheetDragOffsetY = remember { Animatable(0f) }
+    val isSheetDragging = sheetDragOffsetY.value > 0.5f
+
+    val handleSheetVerticalDrag: (Float) -> Unit = { dragAmount ->
+        sheetDragScope.launch {
+            val next = (sheetDragOffsetY.value + dragAmount).coerceAtLeast(0f)
+            sheetDragOffsetY.snapTo(next)
+            onSheetDragOffsetChange(next)
+        }
+    }
+    val finishSheetVerticalDrag: () -> Unit = {
+        sheetDragScope.launch {
+            if (sheetDragOffsetY.value > 130f) {
+                onCollapse()
+                sheetDragOffsetY.snapTo(0f)
+                onSheetDragOffsetChange(0f)
+            } else {
+                sheetDragOffsetY.animateTo(
+                    targetValue = 0f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioNoBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) {
+                    onSheetDragOffsetChange(value)
+                }
+                onSheetDragOffsetChange(0f)
+            }
+        }
+    }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -230,7 +270,10 @@ fun AppleMusicNowPlayingView(
             AppleMusicArtworkBackdrop(
                 artworkUrl = track.highResArtworkUrl,
                 seedColor = seedColor,
-                onArtworkBitmap = { bmp -> artworkBitmap = bmp },
+                onArtworkBitmap = { bmp ->
+                    cacheAppleMusicBitmap(track.highResArtworkUrl, bmp)
+                    artworkBitmap = bmp
+                },
             )
         }
 
@@ -252,13 +295,22 @@ fun AppleMusicNowPlayingView(
                             durationSec = durationSec,
                             seedColor = seedColor,
                             artworkBitmap = artworkBitmap,
-                            onArtworkBitmap = { artworkBitmap = it },
+                            onArtworkBitmap = { bmp ->
+                                cacheAppleMusicBitmap(track.highResArtworkUrl, bmp)
+                                artworkBitmap = bmp
+                            },
                             lyricsAvailable = lyricsAvailable,
                             isFavorite = isFavorite,
                             playbackMode = playbackMode,
                             isVideoMode = isVideoMode,
+                            onToggleVideoMode = { onToggleVideoMode?.invoke() },
                             hideArtworkForTransition = hideArtworkForTransition,
-                            onArtworkPositioned = onArtworkPositioned,
+                            isSheetDragging = isSheetDragging,
+                            onArtworkPositioned = { rect ->
+                                if (!isSheetDragging) {
+                                    onArtworkPositioned(rect)
+                                }
+                            },
                             onSelectView = selectView,
                             onTogglePlayPause = onTogglePlayPause,
                             onSeekTo = onSeekTo,
@@ -275,6 +327,8 @@ fun AppleMusicNowPlayingView(
                             outputDeviceLabel = outputDeviceLabel,
                             lyricStripSlot = lyricStripSlot,
                             videoOverlaySlot = videoOverlaySlot,
+                            onVerticalSheetDrag = handleSheetVerticalDrag,
+                            onVerticalSheetDragEnd = finishSheetVerticalDrag,
                         )
                     }
 
@@ -283,7 +337,7 @@ fun AppleMusicNowPlayingView(
                             Spacer(
                                 modifier = Modifier
                                     .statusBarsPadding()
-                                    .height(24.dp),
+                                    .height(20.dp),
                             )
                             Box(modifier = Modifier.weight(1f)) {
                                 lyricsTabSlot(
@@ -321,75 +375,43 @@ fun AppleMusicNowPlayingView(
                 }
             }
 
-            // 3. Top floating grabber (persistent across all 3 views)
+            // 3. Top floating grabber (persistent & grabbable like a mobile bottom sheet across all 3 views)
             Box(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
                     .statusBarsPadding()
-                    .size(width = 64.dp, height = GRABBER_HEIGHT)
+                    .fillMaxWidth()
+                    .height(44.dp)
                     .semantics {
                         contentDescription = "Collapse player"
                         role = Role.Button
+                    }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                if (sheetDragOffsetY.value + dragAmount >= 0f) {
+                                    change.consume()
+                                    handleSheetVerticalDrag(dragAmount)
+                                }
+                            },
+                            onDragEnd = { finishSheetVerticalDrag() },
+                            onDragCancel = { finishSheetVerticalDrag() },
+                        )
                     }
                     .clickable(
                         indication = null,
                         interactionSource = remember { MutableInteractionSource() },
                         onClick = onCollapse,
                     ),
-                contentAlignment = Alignment.Center,
+                contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(width = 36.dp, height = 5.dp)
+                        .padding(top = 10.dp)
+                        .size(width = 40.dp, height = 5.dp)
                         .clip(RoundedCornerShape(50))
-                        .background(Color.White.copy(alpha = 0.40f)),
+                        .background(Color.White.copy(alpha = 0.45f)),
                 )
-            }
-
-            // 4. Optional top-right video/options pill on MAIN
-            if (currentView == AppleMusicView.MAIN && (onToggleVideoMode != null || isVideoMode)) {
-                val useGlass = LocalLiquidGlassEnabled.current
-                val pillModifier = if (useGlass) {
-                    Modifier.liquidGlass(
-                        backdrop = glassBackdrop,
-                        shape = CircleShape,
-                        interactive = true,
-                        fallbackColor = Color.White.copy(alpha = 0.16f),
-                    )
-                } else {
-                    Modifier
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.16f))
-                }
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(top = 6.dp, end = 16.dp)
-                        .then(pillModifier)
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (onToggleVideoMode != null) {
-                        Icon(
-                            imageVector = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
-                            contentDescription = if (isVideoMode) "Switch to audio mode" else "Switch to video mode",
-                            tint = Color.White,
-                            modifier = Modifier
-                                .size(18.dp)
-                                .clickable(onClick = onToggleVideoMode),
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.Rounded.MoreHoriz,
-                        contentDescription = "More options",
-                        tint = Color.White,
-                        modifier = Modifier
-                            .size(18.dp)
-                            .clickable(onClick = onOptionsClick),
-                    )
-                }
             }
         }
     }
@@ -411,7 +433,9 @@ private fun AppleMusicMainView(
     isFavorite: Boolean,
     playbackMode: PlaybackMode,
     isVideoMode: Boolean,
+    onToggleVideoMode: () -> Unit = {},
     hideArtworkForTransition: Boolean,
+    isSheetDragging: Boolean = false,
     onArtworkPositioned: (Rect) -> Unit,
     onSelectView: (AppleMusicView) -> Unit,
     onTogglePlayPause: () -> Unit,
@@ -429,6 +453,8 @@ private fun AppleMusicMainView(
     outputDeviceLabel: String?,
     lyricStripSlot: @Composable (onOpenLyrics: () -> Unit) -> Unit,
     videoOverlaySlot: @Composable () -> Unit,
+    onVerticalSheetDrag: (Float) -> Unit = {},
+    onVerticalSheetDragEnd: () -> Unit = {},
 ) {
     val density = LocalDensity.current
     val context = LocalContext.current
@@ -444,22 +470,42 @@ private fun AppleMusicMainView(
             ?: pagerQueue.indexOfFirst { it.videoId == track.videoId }.coerceAtLeast(0)
     }
     val pagerState = rememberPagerState(initialPage = currentIndex) { pagerQueue.size }
-    var programmaticTargetPage by remember { mutableIntStateOf(-1) }
+    val latestCurrentIndex by rememberUpdatedState(currentIndex)
+    val latestPagerQueue by rememberUpdatedState(pagerQueue)
+    var isProgrammaticScroll by remember { mutableStateOf(false) }
+    var userDraggedPager by remember { mutableStateOf(false) }
 
-    LaunchedEffect(currentIndex, pagerQueue.size) {
-        if (pagerState.currentPage != currentIndex && currentIndex in pagerQueue.indices) {
-            programmaticTargetPage = currentIndex
-            pagerState.animateScrollToPage(currentIndex)
-            programmaticTargetPage = -1
+    LaunchedEffect(pagerState) {
+        pagerState.interactionSource.interactions.collect { interaction ->
+            if (interaction is DragInteraction.Start) {
+                userDraggedPager = true
+            }
         }
     }
 
-    LaunchedEffect(pagerState, currentIndex, pagerQueue) {
-        snapshotFlow { pagerState.settledPage }
+    LaunchedEffect(currentIndex, pagerQueue.size) {
+        userDraggedPager = false
+        if (pagerState.currentPage != currentIndex && currentIndex in pagerQueue.indices) {
+            isProgrammaticScroll = true
+            try {
+                pagerState.animateScrollToPage(currentIndex)
+            } finally {
+                isProgrammaticScroll = false
+            }
+        }
+    }
+
+    LaunchedEffect(pagerState) {
+        snapshotFlow {
+            Triple(pagerState.settledPage, pagerState.isScrollInProgress, userDraggedPager)
+        }
             .distinctUntilChanged()
-            .collect { settled ->
-                if (settled != currentIndex && settled != programmaticTargetPage && settled in pagerQueue.indices) {
-                    onPlayQueueTrack(pagerQueue[settled])
+            .collect { (settled, inProgress, dragged) ->
+                if (dragged && !inProgress && !isProgrammaticScroll) {
+                    userDraggedPager = false
+                    if (settled != latestCurrentIndex && settled in latestPagerQueue.indices) {
+                        onPlayQueueTrack(latestPagerQueue[settled])
+                    }
                 }
             }
     }
@@ -487,6 +533,7 @@ private fun AppleMusicMainView(
             rememberAppleMusicMesh(
                 artwork = artworkBitmap,
                 seed = track.highResArtworkUrl.hashCode(),
+                artworkUrl = track.highResArtworkUrl,
             )
         } else {
             null
@@ -507,7 +554,11 @@ private fun AppleMusicMainView(
                     .padding(top = statusBarHeight + GRABBER_HEIGHT + 12.dp)
                     .fillMaxWidth()
                     .height(artworkHeight)
-                    .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
+                    .onGloballyPositioned {
+                        if (!isSheetDragging) {
+                            onArtworkPositioned(it.boundsInRoot())
+                        }
+                    },
                 contentAlignment = Alignment.Center,
             ) {
                 videoOverlaySlot()
@@ -515,7 +566,20 @@ private fun AppleMusicMainView(
         } else {
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(isSheetDragging) {
+                        detectVerticalDragGestures(
+                            onVerticalDrag = { change, dragAmount ->
+                                if (isSheetDragging || dragAmount > 0f) {
+                                    change.consume()
+                                    onVerticalSheetDrag(dragAmount)
+                                }
+                            },
+                            onDragEnd = { onVerticalSheetDragEnd() },
+                            onDragCancel = { onVerticalSheetDragEnd() },
+                        )
+                    },
                 beyondViewportPageCount = 1,
                 userScrollEnabled = !isRepeatOne && pagerQueue.size > 1,
                 key = { idx ->
@@ -536,33 +600,36 @@ private fun AppleMusicMainView(
                             .padding(top = topInset)
                             .fillMaxWidth()
                             .height(artworkHeight)
-                            .graphicsLayer {
-                                if (isCurrentPage) {
-                                    scaleX = artworkPlayScale
-                                    scaleY = artworkPlayScale
-                                    alpha = if (hideArtworkForTransition) 0f else 1f
-                                }
-                            }
                             .then(
                                 if (isCurrentPage) {
-                                    Modifier.onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) }
+                                    Modifier.onGloballyPositioned {
+                                        if (!isSheetDragging) {
+                                            onArtworkPositioned(it.boundsInRoot())
+                                        }
+                                    }
                                 } else {
                                     Modifier
                                 },
-                            ),
+                            )
+                            .graphicsLayer {
+                                if (isCurrentPage) {
+                                    alpha = if (hideArtworkForTransition) 0f else 1f
+                                }
+                            },
                     ) {
                         AsyncImage(
                             model = ImageRequest.Builder(context)
                                 .data(pageUrl)
                                 .allowHardware(false)
                                 .diskCachePolicy(CachePolicy.ENABLED)
-                                .crossfade(550)
                                 .build(),
                             contentDescription = pageTrack.title,
                             contentScale = ContentScale.Crop,
                             onSuccess = { success ->
-                                if (isCurrentPage) {
-                                    drawableToSoftwareImageBitmap(success.result.drawable)?.let { bmp ->
+                                drawableToSoftwareImageBitmap(success.result.drawable)?.let { bmp ->
+                                    cacheAppleMusicBitmap(pageTrack.highResArtworkUrl, bmp)
+                                    cacheAppleMusicBitmap(pageUrl, bmp)
+                                    if (isCurrentPage) {
                                         onArtworkBitmap(bmp)
                                     }
                                 }
@@ -627,6 +694,8 @@ private fun AppleMusicMainView(
                 onOpenComments = onOpenComments,
                 onOpenOptions = onOptionsClick,
                 onShareTrack = onShareTrack,
+                isVideoMode = isVideoMode,
+                onToggleVideoMode = onToggleVideoMode,
                 typography = typography,
                 topPadding = 2.dp,
                 outputDeviceLabel = outputDeviceLabel,

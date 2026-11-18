@@ -98,9 +98,11 @@ import com.auramusic.app.ui.components.TrackItemSkeleton
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPillInactive
 import com.auramusic.app.ui.theme.AuraPillInactiveText
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSurface
 
 private val FluidEasing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 
@@ -432,15 +434,18 @@ private fun SearchExploreView(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Gray Search Bar matching active search bar design
-                Surface(
+                // Search Bar matching Liquid Glass or Default theme
+                val isGlass = LocalLiquidGlassEnabled.current
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onSearchFieldClick),
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF262832)
+                        .auraGlassSurface(
+                            shape = RoundedCornerShape(if (isGlass) 14.dp else 8.dp),
+                            selected = false,
+                            fallbackColor = Color(0xFF262832)
+                        )
+                        .clickable(onClick = onSearchFieldClick)
                 ) {
                     Row(
                         modifier = Modifier
@@ -914,12 +919,16 @@ private fun DedicatedSearchingView(
                 Spacer(modifier = Modifier.width(4.dp))
 
                 // Search Text Box
-                Surface(
+                val isGlass = LocalLiquidGlassEnabled.current
+                Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(42.dp),
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF262832)
+                        .height(42.dp)
+                        .auraGlassSurface(
+                            shape = RoundedCornerShape(if (isGlass) 14.dp else 8.dp),
+                            selected = false,
+                            fallbackColor = Color(0xFF262832)
+                        )
                 ) {
                     Row(
                         modifier = Modifier
@@ -1009,11 +1018,21 @@ private fun DedicatedSearchingView(
                 ) {
                     items(filterOptions) { (key, label) ->
                         val isSelected = filter == key
-                        Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = if (isSelected) AuraNeonLime else Color(0xFF262832),
+                        Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(16.dp))
+                                .then(
+                                    if (isSelected) {
+                                        Modifier
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(AuraNeonLime)
+                                    } else {
+                                        Modifier.auraGlassSurface(
+                                            shape = RoundedCornerShape(16.dp),
+                                            selected = false,
+                                            fallbackColor = Color(0xFF262832)
+                                        )
+                                    }
+                                )
                                 .clickable {
                                     focusManager.clearFocus()
                                     keyboardController?.hide()

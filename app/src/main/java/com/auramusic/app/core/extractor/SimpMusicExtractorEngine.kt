@@ -1053,6 +1053,68 @@ object SimpMusicExtractorEngine {
         }
     }
 
+    private val videoToOfficialAudioCache = java.util.concurrent.ConcurrentHashMap<String, AuraTrack>()
+
+    fun isVideoThumbnailUrl(url: String): Boolean {
+        val clean = url.trim()
+        if (clean.isBlank()) return true
+        return (clean.contains("ytimg.com") || clean.contains("youtube.com")) && clean.contains("/vi/")
+    }
+
+    /**
+     * Resolves the official YouTube Music InnerTube audio song counterpart (with square
+     * `googleusercontent.com` / `ggpht.com` album cover artwork and `MUSIC_VIDEO_TYPE_ATV`)
+     * for a music video track when switching from Video Mode to Audio Mode.
+     */
+    suspend fun findOfficialAudioTrack(track: AuraTrack): AuraTrack? = withContext(Dispatchers.IO) {
+        try {
+            if (!isVideoThumbnailUrl(track.artworkUrl) &&
+                (track.artworkUrl.contains("googleusercontent.com") ||
+                    track.artworkUrl.contains("ggpht.com") ||
+                    track.artworkUrl.contains("i.scdn.co"))
+            ) {
+                return@withContext track
+            }
+            if (track.videoId.isNotBlank()) {
+                videoToOfficialAudioCache[track.videoId]?.let { return@withContext it }
+            }
+
+            val cleanArtist = primaryArtistName(track.artist).ifBlank { track.artist }
+            val cleanTitle = cleanSongTitleForVideoSearch(track.title, track.artist).ifBlank { track.title }
+            val query = "$cleanTitle $cleanArtist".trim()
+            if (query.isBlank()) return@withContext null
+
+            val results = searchYouTubeMusic(query, filter = "songs", prefetchTopResult = false)
+            val squareCandidates = results.filter { candidate ->
+                !isVideoThumbnailUrl(candidate.artworkUrl) &&
+                    (candidate.artworkUrl.contains("googleusercontent.com") ||
+                        candidate.artworkUrl.contains("ggpht.com"))
+            }
+
+            val best = squareCandidates.maxByOrNull { candidate ->
+                var score = officialVideoMatchScore(candidate.title, cleanTitle) * 6f
+                if (candidate.musicVideoType?.equals("MUSIC_VIDEO_TYPE_ATV", ignoreCase = true) == true) {
+                    score += 10f
+                }
+                val wantedArtistWords = normalizedVideoMatchText(cleanArtist)
+                    .split(Regex("\\s+")).filter(String::isNotBlank).toSet()
+                val foundArtistWords = normalizedVideoWords(candidate.artist)
+                if (wantedArtistWords.isNotEmpty() && foundArtistWords.isNotEmpty()) {
+                    score += (wantedArtistWords.intersect(foundArtistWords).size.toFloat() / wantedArtistWords.size) * 5f
+                }
+                score
+            } ?: results.firstOrNull { !isVideoThumbnailUrl(it.artworkUrl) }
+
+            if (best != null && track.videoId.isNotBlank()) {
+                videoToOfficialAudioCache[track.videoId] = best
+            }
+            best
+        } catch (e: Exception) {
+            Log.w(TAG, "findOfficialAudioTrack notice: ${e.message}")
+            null
+        }
+    }
+
     /**
      * Searches YouTube Music for live performances, concert footage, and official music videos for a track.
      */

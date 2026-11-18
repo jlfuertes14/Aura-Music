@@ -484,7 +484,7 @@ private fun AppleMusicQueueRowContent(
         if (showRemove) {
             IconButton(
                 onClick = onRemove,
-                modifier = Modifier.size(38.dp),
+                modifier = Modifier.size(44.dp),
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,
@@ -498,7 +498,7 @@ private fun AppleMusicQueueRowContent(
         if (showDragHandle) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
+                    .size(44.dp)
                     .pointerInput(track.videoId, track.id) {
                         detectDragGestures(
                             onDragStart = { onHandleDragStart() },

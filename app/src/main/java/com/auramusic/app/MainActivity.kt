@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -80,7 +81,13 @@ class MainActivity : ComponentActivity() {
 
         val openedFromUpdate = isUpdateNotificationIntent(intent)
         setContent {
-            AuraMusicTheme {
+            val liquidGlassEnabled by auraViewModel.liquidGlassEnabled.collectAsState()
+            val lyricsStyle by auraViewModel.lyricsStyle.collectAsState()
+
+            AuraMusicTheme(
+                liquidGlassEnabled = liquidGlassEnabled,
+                lyricsStyle = lyricsStyle,
+            ) {
                 var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate) }
 
                 Box(modifier = Modifier.fillMaxSize()) {

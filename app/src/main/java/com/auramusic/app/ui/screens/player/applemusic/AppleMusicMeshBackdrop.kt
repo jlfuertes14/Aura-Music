@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.BlurredEdgeTreatment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
@@ -70,6 +71,56 @@ private const val TOP_WASH_STEPS = 24
 private const val TOP_WASH_MIN_ALPHA = 0.16f
 private const val TOP_WASH_MAX_ALPHA = 0.65f
 private const val TOP_WASH_FADE_MS = 900
+
+private val appleMusicBitmapCache = android.util.LruCache<String, ImageBitmap>(24)
+private val appleMusicMeshCache = android.util.LruCache<String, AppleMusicMesh>(24)
+
+fun getCachedAppleMusicBitmap(artworkUrl: String): ImageBitmap? {
+    if (artworkUrl.isBlank()) return null
+    return appleMusicBitmapCache.get(artworkUrl)
+}
+
+fun cacheAppleMusicBitmap(artworkUrl: String, bitmap: ImageBitmap) {
+    if (artworkUrl.isNotBlank()) {
+        appleMusicBitmapCache.put(artworkUrl, bitmap)
+    }
+}
+
+fun getCachedAppleMusicMesh(artworkUrl: String, seed: Int): AppleMusicMesh? {
+    if (artworkUrl.isBlank()) return null
+    return appleMusicMeshCache.get("${artworkUrl}_$seed")
+}
+
+suspend fun prewarmAppleMusicArtwork(context: android.content.Context, artworkUrl: String) {
+    if (artworkUrl.isBlank()) return
+    val seed = artworkUrl.hashCode()
+    val meshKey = "${artworkUrl}_$seed"
+    if (appleMusicBitmapCache.get(artworkUrl) != null && appleMusicMeshCache.get(meshKey) != null) {
+        return
+    }
+    withContext(Dispatchers.IO) {
+        val bmp = appleMusicBitmapCache.get(artworkUrl) ?: run {
+            val request = ImageRequest.Builder(context)
+                .data(artworkUrl)
+                .allowHardware(false)
+                .diskCachePolicy(CachePolicy.ENABLED)
+                .build()
+            val result = coil.Coil.imageLoader(context).execute(request)
+            val drawable = result.drawable ?: return@withContext
+            drawableToSoftwareImageBitmap(drawable)?.also { decoded ->
+                appleMusicBitmapCache.put(artworkUrl, decoded)
+            }
+        } ?: return@withContext
+
+        if (appleMusicMeshCache.get(meshKey) == null) {
+            withContext(Dispatchers.Default) {
+                runCatching { meshOf(bmp, seed) }.getOrNull()?.let { computed ->
+                    appleMusicMeshCache.put(meshKey, computed)
+                }
+            }
+        }
+    }
+}
 
 /**
  * Mesh extracted from an album artwork:
@@ -125,6 +176,8 @@ fun BoxScope.AppleMusicArtworkBackdrop(
                 contentScale = ContentScale.Crop,
                 onSuccess = { success ->
                     drawableToSoftwareImageBitmap(success.result.drawable)?.let { bmp ->
+                        cacheAppleMusicBitmap(artworkUrl, bmp)
+                        cacheAppleMusicBitmap(resolvedUrl, bmp)
                         onArtworkBitmap(bmp)
                     }
                 },
@@ -134,7 +187,8 @@ fun BoxScope.AppleMusicArtworkBackdrop(
                 },
                 modifier = modifier
                     .fillMaxSize()
-                    .blur(BACKDROP_BLUR_RADIUS, BlurredEdgeTreatment.Unbounded),
+                    .clipToBounds()
+                    .blur(BACKDROP_BLUR_RADIUS, BlurredEdgeTreatment.Rectangle),
             )
         } else {
             // API 26–30: keep a hidden/zero-alpha Coil loader to decode the bitmap safely,
@@ -145,6 +199,8 @@ fun BoxScope.AppleMusicArtworkBackdrop(
                 contentScale = ContentScale.Crop,
                 onSuccess = { success ->
                     drawableToSoftwareImageBitmap(success.result.drawable)?.let { bmp ->
+                        cacheAppleMusicBitmap(artworkUrl, bmp)
+                        cacheAppleMusicBitmap(resolvedUrl, bmp)
                         onArtworkBitmap(bmp)
                         fallbackBlurredBitmap = boxBlurThumbnail(bmp.asAndroidBitmap())
                     }
@@ -186,14 +242,25 @@ fun BoxScope.AppleMusicArtworkBackdrop(
 fun rememberAppleMusicMesh(
     artwork: ImageBitmap?,
     seed: Int,
+    artworkUrl: String = "",
 ): AppleMusicMesh? {
-    var mesh by remember { mutableStateOf<AppleMusicMesh?>(null) }
-    LaunchedEffect(artwork, seed) {
-        val source = artwork ?: return@LaunchedEffect
+    var mesh by remember(artworkUrl, seed) {
+        mutableStateOf(getCachedAppleMusicMesh(artworkUrl, seed))
+    }
+    LaunchedEffect(artwork, seed, artworkUrl) {
+        val cached = getCachedAppleMusicMesh(artworkUrl, seed)
+        if (cached != null) {
+            mesh = cached
+            return@LaunchedEffect
+        }
+        val source = artwork ?: getCachedAppleMusicBitmap(artworkUrl) ?: return@LaunchedEffect
         val computed = withContext(Dispatchers.Default) {
             runCatching { meshOf(source, seed) }.getOrNull()
         }
         if (computed != null) {
+            if (artworkUrl.isNotBlank()) {
+                appleMusicMeshCache.put("${artworkUrl}_$seed", computed)
+            }
             mesh = computed
         }
     }
@@ -215,6 +282,10 @@ fun AppleMusicMeshBackdrop(
     var shown by remember { mutableStateOf(mesh) }
     var incoming by remember { mutableStateOf<AppleMusicMesh?>(null) }
     val fade = remember { Animatable(0f) }
+
+    if (shown == null && mesh != null) {
+        shown = mesh
+    }
 
     LaunchedEffect(mesh) {
         val next = mesh ?: return@LaunchedEffect
@@ -238,7 +309,7 @@ fun AppleMusicMeshBackdrop(
     Canvas(
         modifier = modifier
             .fillMaxSize()
-            .background(MeshFallback)
+            .background(if (shown == null && incoming == null) Color.Transparent else MeshFallback)
             .then(blurModifier),
     ) {
         val seamY = seam.toPx().coerceIn(0f, size.height)

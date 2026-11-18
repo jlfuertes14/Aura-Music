@@ -16,6 +16,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -34,12 +35,18 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,10 +86,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -93,21 +102,30 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.BlurredEdgeTreatment
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.ui.components.AudioPlayingIndicator
+import com.auramusic.app.ui.components.AuraLiquidGlassTabBar
+import com.auramusic.app.ui.components.AuraNavTabItem
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -119,14 +137,60 @@ import com.auramusic.app.core.update.AuraUpdateManager
 import com.auramusic.app.domain.model.ArtistCarouselItem
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.AuraViewModel
+import com.auramusic.app.ui.DetailScreenEntry
 import com.auramusic.app.ui.components.AuraUpdateModal
+import com.auramusic.app.ui.screens.player.applemusic.appleMusicVerticalFadeEdges
+import com.auramusic.app.ui.screens.player.applemusic.prewarmAppleMusicArtwork
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPlayGreen
 import com.auramusic.app.ui.theme.AuraViolet
+import com.auramusic.app.ui.theme.LocalGlassBackdrop
+import com.auramusic.app.ui.theme.LocalIsDarkTheme
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.glassBackdropSource
+import com.auramusic.app.ui.theme.isLyricsBlurSupported
+import com.auramusic.app.ui.theme.liquidGlass
+import com.auramusic.app.ui.theme.rememberGlassBackdrop
+import com.auramusic.app.ui.theme.rememberGlassLuminance
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import kotlin.math.abs
+import kotlin.math.roundToInt
+
+private data class RenderedDetailEntry(
+    val entry: DetailScreenEntry,
+    val transitionState: MutableTransitionState<Boolean>
+)
+
+private class NonUniformScaledRoundedShape(
+    private val cornerRadiusPx: Float,
+    private val scaleX: Float,
+    private val scaleY: Float
+) : androidx.compose.ui.graphics.Shape {
+    override fun createOutline(
+        size: androidx.compose.ui.geometry.Size,
+        layoutDirection: androidx.compose.ui.unit.LayoutDirection,
+        density: androidx.compose.ui.unit.Density
+    ): androidx.compose.ui.graphics.Outline {
+        val rx = (cornerRadiusPx / scaleX.coerceAtLeast(0.04f)).coerceAtMost(size.width / 2f)
+        val ry = (cornerRadiusPx / scaleY.coerceAtLeast(0.04f)).coerceAtMost(size.height / 2f)
+        val path = androidx.compose.ui.graphics.Path().apply {
+            addRoundRect(
+                androidx.compose.ui.geometry.RoundRect(
+                    left = 0f,
+                    top = 0f,
+                    right = size.width,
+                    bottom = size.height,
+                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(rx, ry)
+                )
+            )
+        }
+        return androidx.compose.ui.graphics.Outline.Generic(path)
+    }
+}
 
 @Composable
 fun AuraMainScreen(viewModel: AuraViewModel) {
@@ -138,6 +202,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     var miniPlayerArtworkBounds by remember { mutableStateOf<Rect?>(null) }
     var fullPlayerContainerBounds by remember { mutableStateOf<Rect?>(null) }
     var miniPlayerContainerBounds by remember { mutableStateOf<Rect?>(null) }
+    var playerSheetDragOffsetY by remember { mutableFloatStateOf(0f) }
+    var collapseStartDragY by remember { mutableFloatStateOf(0f) }
     val collapseProgress = remember { Animatable(1f) }
     val isVideoMode by viewModel.isVideoMode.collectAsState()
     val playerChromePushProgress = when {
@@ -151,6 +217,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
 
     val expandFullPlayer: () -> Unit = {
         screenScope.launch {
+            playerSheetDragOffsetY = 0f
+            collapseStartDragY = 0f
             collapseProgress.snapTo(1f)
             isPlayerCollapseTransition = false
             isPlayerExpandTransition = true
@@ -163,6 +231,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             if (event == Lifecycle.Event.ON_RESUME) {
                 isPlayerCollapseTransition = false
                 isPlayerExpandTransition = false
+                playerSheetDragOffsetY = 0f
+                collapseStartDragY = 0f
                 screenScope.launch {
                     collapseProgress.snapTo(if (isPlayerExpanded) 0f else 1f)
                 }
@@ -179,6 +249,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 animationSpec = tween(440, easing = CubicBezierEasing(0.4f, 0f, 0.2f, 1f))
             )
             isPlayerCollapseTransition = false
+            collapseStartDragY = 0f
         }
     }
 
@@ -237,28 +308,18 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val topArtists by viewModel.topArtists.collectAsState()
     val communityPlaylists by viewModel.communityPlaylists.collectAsState()
     val homeMusicVideos by viewModel.homeMusicVideos.collectAsState()
-    val selectedArtistDetail by viewModel.selectedArtistDetail.collectAsState()
-    val isArtistLoading by viewModel.isArtistLoading.collectAsState()
     val nowPlayingArtistDetail by viewModel.nowPlayingArtistDetail.collectAsState()
     val nowPlayingVideoInfo by viewModel.nowPlayingVideoInfo.collectAsState()
     val isNowPlayingArtistLoading by viewModel.isNowPlayingArtistLoading.collectAsState()
     val playerComments by viewModel.playerComments.collectAsState()
     val areCommentsLoading by viewModel.areCommentsLoading.collectAsState()
     val commentsError by viewModel.commentsError.collectAsState()
-    val selectedPlaylistDetail by viewModel.selectedPlaylistDetail.collectAsState()
-    val selectedCatalogDetail by viewModel.selectedCatalogDetail.collectAsState()
-    val isCatalogLoading by viewModel.isCatalogLoading.collectAsState()
     val playlistScrollTargetTrackId by viewModel.playlistScrollTargetTrackId.collectAsState()
+    val detailStack by viewModel.detailStack.collectAsState()
 
-    BackHandler(enabled = !isPlayerExpanded && (selectedArtistDetail != null || selectedPlaylistDetail != null || selectedCatalogDetail != null || selectedTab != 0)) {
-        when {
-            selectedArtistDetail != null -> viewModel.closeArtistDetail()
-            selectedPlaylistDetail != null -> viewModel.closePlaylistDetail()
-            selectedCatalogDetail != null -> viewModel.closeCatalogDetail()
-            selectedTab != 0 -> selectedTab = 0
-        }
+    BackHandler(enabled = !isPlayerExpanded && detailStack.isEmpty() && selectedTab != 0) {
+        selectedTab = 0
     }
-    val isPlaylistLoading by viewModel.isPlaylistLoading.collectAsState()
     val activeCategory by viewModel.activeCategory.collectAsState()
     val homeCategoryBackground by viewModel.homeCategoryBackground.collectAsState()
     val categoryTracks by viewModel.categoryTracks.collectAsState()
@@ -331,6 +392,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
 
     val collapseFullPlayer: () -> Unit = {
         if (isPlayerExpanded && !isPlayerCollapseTransition && !isPlayerExpandTransition) {
+            collapseStartDragY = playerSheetDragOffsetY
+            playerSheetDragOffsetY = 0f
             screenScope.launch {
                 collapseProgress.snapTo(0f)
                 isPlayerCollapseTransition = true
@@ -338,9 +401,12 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             }
         }
     }
-    BackHandler(enabled = isPlayerExpanded, onBack = collapseFullPlayer)
 
     val context = LocalContext.current
+    LaunchedEffect(currentTrack?.highResArtworkUrl) {
+        val artworkUrl = currentTrack?.highResArtworkUrl ?: return@LaunchedEffect
+        prewarmAppleMusicArtwork(context, artworkUrl)
+    }
     var pendingDownloadAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     val storagePermissionLauncher = rememberLauncherForActivityResult(
@@ -372,16 +438,32 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
     }
 
+    val glassBackdrop = rememberGlassBackdrop(SpotifyPitchBlack)
+    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val dockGlassLayer = rememberGraphicsLayer()
+    val dockLuminance = rememberGlassLuminance(
+        source = dockGlassLayer,
+        enabled = liquidGlassEnabled && !isPlayerExpanded && !isPlayerExpandTransition,
+    )
+
+    CompositionLocalProvider(LocalGlassBackdrop provides glassBackdrop) {
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(SpotifyPitchBlack)
     ) {
+        // Sibling backdrop source: contains ONLY the main tabs + detail navigation stack.
+        // Never place any .liquidGlass(...) surface inside this Box to prevent RuntimeShader feedback loops.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .glassBackdropSource(glassBackdrop)
+        ) {
         // 1. Screens Content (full screen underneath floating controls) with directional slide transitions
         val saveableStateHolder = rememberSaveableStateHolder()
         val navSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
         val mainContentOffsetX by animateFloatAsState(
-            targetValue = if (selectedPlaylistDetail != null || selectedCatalogDetail != null) -1f else 0f,
+            targetValue = if (detailStack.isNotEmpty()) -1f else 0f,
             animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
             label = "MainContentSlideOffset"
         )
@@ -571,142 +653,157 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             }
         }
 
-        // 1b. Full-Screen Slide-in Catalog Detail Screen (Search Catalog & Moods)
-        var cachedCatalogDetail by remember { mutableStateOf<com.auramusic.app.domain.model.CatalogDetail?>(null) }
-        if (selectedCatalogDetail != null) {
-            cachedCatalogDetail = selectedCatalogDetail
-        }
-        val catalogDetailOffsetX by animateFloatAsState(
-            targetValue = if (selectedPlaylistDetail != null) -1f else 0f,
-            animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
-            label = "CatalogDetailPlaylistSlideOffset"
-        )
-        AnimatedVisibility(
-            visible = selectedCatalogDetail != null,
-            enter = slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
-            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
-            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    translationX = size.width * catalogDetailOffsetX
+        // 1b. Dynamic Full-Screen Detail Navigation Stack (Catalog, Playlist/Album/Single, Artist)
+        var renderedDetailEntries by remember { mutableStateOf<List<RenderedDetailEntry>>(emptyList()) }
+        LaunchedEffect(detailStack) {
+            val activeByKey = detailStack.associateBy { it.stackKey }
+            val merged = mutableListOf<RenderedDetailEntry>()
+            for (existing in renderedDetailEntries) {
+                val updated = activeByKey[existing.entry.stackKey]
+                if (updated != null) {
+                    existing.transitionState.targetState = true
+                    merged.add(existing.copy(entry = updated))
+                } else if (!existing.transitionState.isIdle || existing.transitionState.currentState) {
+                    existing.transitionState.targetState = false
+                    merged.add(existing)
                 }
-        ) {
-            (selectedCatalogDetail ?: cachedCatalogDetail)?.let { detail ->
-                SearchCatalogDetailScreen(
-                    catalogDetail = detail,
-                    isLoading = isCatalogLoading,
-                    currentPlayingId = currentTrack?.videoId,
-                    isPlaying = isPlaying,
-                    favorites = favorites,
-                    downloads = downloads,
-                    playlists = playlists,
-                    onClose = { viewModel.closeCatalogDetail() },
-                    onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
-                    onPlayMusicVideo = { track, queue ->
-                        viewModel.playHomeMusicVideo(track, queue)
-                        expandFullPlayer()
-                    },
-                    onOpenPlaylist = { playlist -> viewModel.openPlaylistDetail(playlist) },
-                    onOpenAlbum = { albumTrack -> viewModel.openAlbum(albumTrack) },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
-                    onOpenArtist = { artist, title -> viewModel.openArtistByName(artist, title) },
-                    onAddTrackToPlaylist = { plId, track -> viewModel.addTrackToPlaylist(plId, track) },
-                    onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) },
-                    onRetry = {
-                        viewModel.openCatalogCategory(
-                            title = detail.title,
-                            params = detail.params,
-                            browseId = detail.browseId
+            }
+            val existingKeys = merged.map { it.entry.stackKey }.toHashSet()
+            for (entry in detailStack) {
+                if (entry.stackKey !in existingKeys) {
+                    merged.add(
+                        RenderedDetailEntry(
+                            entry = entry,
+                            transitionState = MutableTransitionState(false).apply { targetState = true }
                         )
+                    )
+                }
+            }
+            renderedDetailEntries = merged
+        }
+
+        renderedDetailEntries.forEach { rendered ->
+            key(rendered.entry.stackKey) {
+                LaunchedEffect(
+                    rendered.transitionState.isIdle,
+                    rendered.transitionState.currentState,
+                    rendered.transitionState.targetState
+                ) {
+                    if (rendered.transitionState.isIdle &&
+                        !rendered.transitionState.currentState &&
+                        !rendered.transitionState.targetState
+                    ) {
+                        renderedDetailEntries = renderedDetailEntries.filterNot {
+                            it.entry.stackKey == rendered.entry.stackKey
+                        }
                     }
-                )
-            }
-        }
+                }
 
-        // 1c. Full-Screen Slide-in Playlist Detail Screen (renders on top of Catalog Detail Screen & Home)
-        var cachedPlaylistDetail by remember { mutableStateOf<com.auramusic.app.domain.model.PlaylistDetail?>(null) }
-        if (selectedPlaylistDetail != null) {
-            cachedPlaylistDetail = selectedPlaylistDetail
-        }
-        AnimatedVisibility(
-            visible = selectedPlaylistDetail != null,
-            enter = slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
-            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
-            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            (selectedPlaylistDetail ?: cachedPlaylistDetail)?.let { detail ->
-                PlaylistDetailScreen(
-                    playlistDetail = detail,
-                    isLoading = isPlaylistLoading,
-                    currentPlayingId = currentTrack?.videoId,
-                    isPlaying = isPlaying,
-                    initialScrollToTrackId = playlistScrollTargetTrackId,
-                    onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
-                    isSaved = viewModel.isPlaylistSaved(detail.id),
-                    onClose = { viewModel.closePlaylistDetail() },
-                    onPlayTrack = { track, queue ->
-                        viewModel.setActivePlaylistDetail(detail)
-                        viewModel.playTrack(track, queue)
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onToggleSave = { viewModel.toggleSavePlaylistDetail(detail) }
-                )
-            }
-        }
-
-        // 1d. Full-Screen Slide-in Artist Detail Screen (renders on top of Playlist Detail Screen & Catalog Detail Screen)
-        AnimatedVisibility(
-            visible = selectedArtistDetail != null,
-            enter = slideInHorizontally(
-                initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
-            ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
-            exit = slideOutHorizontally(
-                targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
-            ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            selectedArtistDetail?.let { detail ->
-                ArtistDetailScreen(
-                    artistDetail = detail,
-                    isLoading = isArtistLoading,
-                    currentPlayingId = currentTrack?.videoId,
-                    onClose = { viewModel.closeArtistDetail() },
-                    onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
-                    onPlayMusicVideo = { track, queue ->
-                        viewModel.playHomeMusicVideo(track, queue)
-                        expandFullPlayer()
-                    },
-                    onToggleFavorite = { viewModel.toggleFavorite(it) },
-                    onOpenArtist = { artistName -> viewModel.openArtistByName(artistName) },
-                    onOpenPlaylist = { item ->
-                        val targetId = item.browseId.ifBlank { item.id }
-                        viewModel.openAlbumOrPlaylist(
-                            id = targetId,
-                            title = item.title,
-                            author = detail.name,
-                            artworkUrl = item.artworkUrl
+                AnimatedVisibility(
+                    visibleState = rendered.transitionState,
+                    enter = slideInHorizontally(
+                        initialOffsetX = { it },
+                        animationSpec = tween(durationMillis = 280, easing = navSlideEasing)
+                    ) + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
+                    exit = slideOutHorizontally(
+                        targetOffsetX = { it },
+                        animationSpec = tween(durationMillis = 250, easing = navSlideEasing)
+                    ) + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                            onClick = {}
                         )
+                ) {
+                    when (val entry = rendered.entry) {
+                        is DetailScreenEntry.Catalog -> {
+                            SearchCatalogDetailScreen(
+                                catalogDetail = entry.detail,
+                                isLoading = entry.isLoading,
+                                currentPlayingId = currentTrack?.videoId,
+                                isPlaying = isPlaying,
+                                favorites = favorites,
+                                downloads = downloads,
+                                playlists = playlists,
+                                onClose = { viewModel.closeDetail(entry.stackKey) },
+                                onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
+                                onPlayMusicVideo = { track, queue ->
+                                    viewModel.playHomeMusicVideo(track, queue)
+                                    expandFullPlayer()
+                                },
+                                onOpenPlaylist = { playlist -> viewModel.openPlaylistDetail(playlist) },
+                                onOpenAlbum = { albumTrack -> viewModel.openAlbum(albumTrack) },
+                                onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                onDownloadTrack = { track -> requestDownloadWithPermission { viewModel.downloadTrack(track) } },
+                                onOpenArtist = { artist, title -> viewModel.openArtistByName(artist, title) },
+                                onAddTrackToPlaylist = { plId, track -> viewModel.addTrackToPlaylist(plId, track) },
+                                onCreatePlaylist = { name, desc, cover -> viewModel.createPlaylist(name, desc, cover) },
+                                onRetry = {
+                                    viewModel.openCatalogCategory(
+                                        title = entry.detail.title,
+                                        params = entry.detail.params,
+                                        browseId = entry.detail.browseId
+                                    )
+                                }
+                            )
+                        }
+                        is DetailScreenEntry.Playlist -> {
+                            PlaylistDetailScreen(
+                                playlistDetail = entry.detail,
+                                isLoading = entry.isLoading,
+                                currentPlayingId = currentTrack?.videoId,
+                                isPlaying = isPlaying,
+                                initialScrollToTrackId = playlistScrollTargetTrackId,
+                                onClearScrollTarget = { viewModel.clearPlaylistScrollTarget() },
+                                isSaved = viewModel.isPlaylistSaved(entry.detail.id),
+                                onClose = { viewModel.closeDetail(entry.stackKey) },
+                                onPlayTrack = { track, queue ->
+                                    viewModel.setActivePlaylistDetail(entry.detail)
+                                    viewModel.playTrack(track, queue)
+                                },
+                                onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                onToggleSave = { viewModel.toggleSavePlaylistDetail(entry.detail) },
+                                enableBackHandler = false
+                            )
+                        }
+                        is DetailScreenEntry.Artist -> {
+                            ArtistDetailScreen(
+                                artistDetail = entry.detail,
+                                isLoading = entry.isLoading,
+                                currentPlayingId = currentTrack?.videoId,
+                                onClose = { viewModel.closeDetail(entry.stackKey) },
+                                onPlayTrack = { track, queue -> viewModel.playTrack(track, queue) },
+                                onPlayMusicVideo = { track, queue ->
+                                    viewModel.playHomeMusicVideo(track, queue)
+                                    expandFullPlayer()
+                                },
+                                onToggleFavorite = { viewModel.toggleFavorite(it) },
+                                onOpenArtist = { artistName -> viewModel.openArtistByName(artistName) },
+                                onOpenPlaylist = { item ->
+                                    val targetId = item.browseId.ifBlank { item.id }
+                                    viewModel.openAlbumOrPlaylist(
+                                        id = targetId,
+                                        title = item.title,
+                                        author = entry.detail.name,
+                                        artworkUrl = item.artworkUrl
+                                    )
+                                },
+                                enableBackHandler = false
+                            )
+                        }
                     }
-                )
+                }
             }
         }
+        } // End sibling glassBackdropSource
 
-        // 2. Dim gradient scrim behind the bottom floating controls (dimmed so background is obscured)
+        BackHandler(enabled = !isPlayerExpanded && detailStack.isNotEmpty()) {
+            viewModel.popTopDetail()
+        }
+
+        // 2. Dim gradient scrim behind the bottom floating controls
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -714,17 +811,26 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 .align(Alignment.BottomCenter)
                 .background(
                     Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            SpotifyPitchBlack.copy(alpha = 0.70f),
-                            SpotifyPitchBlack.copy(alpha = 0.95f),
-                            SpotifyPitchBlack
-                        )
+                        colors = if (liquidGlassEnabled) {
+                            listOf(
+                                Color.Transparent,
+                                SpotifyPitchBlack.copy(alpha = 0.22f),
+                                SpotifyPitchBlack.copy(alpha = 0.45f),
+                                SpotifyPitchBlack.copy(alpha = 0.65f)
+                            )
+                        } else {
+                            listOf(
+                                Color.Transparent,
+                                SpotifyPitchBlack.copy(alpha = 0.70f),
+                                SpotifyPitchBlack.copy(alpha = 0.95f),
+                                SpotifyPitchBlack
+                            )
+                        }
                     )
                 )
         )
 
-        // 3. TRUE FLOATING OVERLAY: Reduced-Size MiniPlayer & Increased Width/Height Capsule Navigation Dock
+        // 3. TRUE FLOATING OVERLAY: Liquid Glass / Flat MiniPlayer & Navigation Dock
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -737,9 +843,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 ),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Reduced-size Floating MiniPlayer (closer with the menu)
             val activeTrack = currentTrack
-            if (activeTrack != null && (!isPlayerExpanded || isPlayerCollapseTransition || isPlayerExpandTransition)) {
+            if (activeTrack != null) {
                 val currentQueue by AuraPlayerManager.queue.collectAsState()
                 val queueTrackId = if (isVideoMode && AuraPlayerManager.originalAudioTrack != null) {
                     AuraPlayerManager.originalAudioTrack?.videoId
@@ -760,10 +865,13 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     isBuffering = isBuffering,
                     progress = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
                     backgroundColor = palette.primary,
+                    backdropTintColor = palette.backgroundTop,
+                    glassBackdrop = glassBackdrop,
                     previousTrack = previousTrack,
                     nextTrack = nextTrack,
                     hideArtworkForTransition = (isPlayerCollapseTransition || isPlayerExpandTransition) && !isVideoMode,
                     isPlayerTransition = isPlayerCollapseTransition || isPlayerExpandTransition,
+                    isCollapsingTransition = isPlayerCollapseTransition,
                     collapseProgress = collapseProgress.value,
                     onArtworkPositioned = { miniPlayerArtworkBounds = it },
                     onPlayerBoundsPositioned = { miniPlayerContainerBounds = it },
@@ -772,10 +880,29 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     onSkipPrevious = { AuraPlayerManager.skipToPrevious() },
                     onSkipNext = { AuraPlayerManager.skipToNext() }
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(6.dp))
             }
 
-            // Floating Dynamic Capsule Navigation Dock with increased width and height
+            val navItems = remember {
+                listOf(
+                    AuraNavTabItem(0, "Home", Icons.Rounded.Home),
+                    AuraNavTabItem(1, "Search", Icons.Rounded.Search),
+                    AuraNavTabItem(2, "My Music", Icons.Rounded.LibraryMusic),
+                    AuraNavTabItem(3, "Settings", Icons.Rounded.Settings)
+                )
+            }
+            val onSelectNavTab: (Int) -> Unit = { idx ->
+                viewModel.clearDetailStack()
+                if (selectedTab != idx) {
+                    openedPlaylistFromHome = false
+                }
+                if (idx == 2 && selectedTab != 2) {
+                    viewModel.clearSelectedUserPlaylist()
+                }
+                selectedTab = idx
+            }
+
+            // Floating Dynamic Capsule Navigation Dock
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -786,101 +913,98 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     },
                 contentAlignment = Alignment.Center
             ) {
-                Surface(
-                    shape = RoundedCornerShape(40.dp),
-                    color = Color(0xFF16181F).copy(alpha = 0.98f),
-                    shadowElevation = 16.dp,
-                    modifier = Modifier.animateContentSize(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioLowBouncy,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
+                if (liquidGlassEnabled) {
+                    AuraLiquidGlassTabBar(
+                        tabs = navItems,
+                        selectedTab = selectedTab,
+                        backdrop = glassBackdrop,
+                        layer = dockGlassLayer,
+                        luminance = dockLuminance,
+                        onTabSelected = onSelectNavTab
                     )
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .padding(vertical = 7.dp, horizontal = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        val navItems = listOf(
-                            Triple(0, "Home", Icons.Rounded.Home),
-                            Triple(1, "Search", Icons.Rounded.Search),
-                            Triple(2, "My Music", Icons.Rounded.LibraryMusic),
-                            Triple(3, "Settings", Icons.Rounded.Settings)
-                        )
-                        navItems.forEach { (idx, label, icon) ->
-                            val isSelected = selectedTab == idx
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (isSelected) 1.08f else 1.0f,
-                                animationSpec = spring(
-                                    dampingRatio = Spring.DampingRatioMediumBouncy,
-                                    stiffness = Spring.StiffnessMediumLow
-                                ),
-                                label = "navIconScale"
+                } else {
+                    Surface(
+                        shape = RoundedCornerShape(40.dp),
+                        color = Color(0xFF16181F).copy(alpha = 0.98f),
+                        shadowElevation = 16.dp,
+                        modifier = Modifier.animateContentSize(
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioLowBouncy,
+                                stiffness = Spring.StiffnessMediumLow
                             )
-
-                            Surface(
-                                onClick = {
-                                    viewModel.closeArtistDetail()
-                                    viewModel.closePlaylistDetail()
-                                    viewModel.closeCatalogDetail()
-                                    if (selectedTab != idx) {
-                                        openedPlaylistFromHome = false
-                                    }
-                                    if (idx == 2 && selectedTab != 2) {
-                                        viewModel.clearSelectedUserPlaylist()
-                                    }
-                                    selectedTab = idx
-                                },
-                                shape = RoundedCornerShape(28.dp),
-                                color = if (isSelected) AuraNeonLime else Color.Transparent
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(
-                                        horizontal = if (isSelected) 18.dp else 14.dp,
-                                        vertical = 13.dp
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .padding(vertical = 7.dp, horizontal = 10.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            navItems.forEach { tab ->
+                                val idx = tab.index
+                                val label = tab.label
+                                val icon = tab.icon
+                                val isSelected = selectedTab == idx
+                                val iconScale by animateFloatAsState(
+                                    targetValue = if (isSelected) 1.08f else 1.0f,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMediumLow
                                     ),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = label,
-                                        tint = if (isSelected) Color.Black else TextSecondary,
-                                        modifier = Modifier
-                                            .size(23.dp)
-                                            .graphicsLayer {
-                                                scaleX = iconScale
-                                                scaleY = iconScale
-                                            }
-                                    )
+                                    label = "navIconScale"
+                                )
 
-                                    AnimatedVisibility(
-                                        visible = isSelected,
-                                        enter = fadeIn(tween(160)) + expandHorizontally(
-                                            animationSpec = tween(
-                                                durationMillis = 200,
-                                                easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
-                                            )
+                                Surface(
+                                    onClick = { onSelectNavTab(idx) },
+                                    shape = RoundedCornerShape(28.dp),
+                                    color = if (isSelected) AuraNeonLime else Color.Transparent
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = if (isSelected) 18.dp else 14.dp,
+                                            vertical = 13.dp
                                         ),
-                                        exit = fadeOut(tween(120)) + shrinkHorizontally(
-                                            animationSpec = tween(
-                                                durationMillis = 180,
-                                                easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
-                                            )
-                                        )
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
                                     ) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Spacer(modifier = Modifier.width(7.dp))
-                                            Text(
-                                                text = label,
-                                                color = Color.Black,
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 13.5.sp,
-                                                maxLines = 1,
-                                                softWrap = false
+                                        Icon(
+                                            imageVector = icon,
+                                            contentDescription = label,
+                                            tint = if (isSelected) Color.Black else TextSecondary,
+                                            modifier = Modifier
+                                                .size(23.dp)
+                                                .graphicsLayer {
+                                                    scaleX = iconScale
+                                                    scaleY = iconScale
+                                                }
+                                        )
+
+                                        AnimatedVisibility(
+                                            visible = isSelected,
+                                            enter = fadeIn(tween(160)) + expandHorizontally(
+                                                animationSpec = tween(
+                                                    durationMillis = 200,
+                                                    easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
+                                                )
+                                            ),
+                                            exit = fadeOut(tween(120)) + shrinkHorizontally(
+                                                animationSpec = tween(
+                                                    durationMillis = 180,
+                                                    easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
+                                                )
                                             )
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Spacer(modifier = Modifier.width(7.dp))
+                                                Text(
+                                                    text = label,
+                                                    color = Color.Black,
+                                                    fontWeight = FontWeight.Bold,
+                                                    fontSize = 13.5.sp,
+                                                    maxLines = 1,
+                                                    softWrap = false
+                                                )
+                                            }
                                         }
                                     }
                                 }
@@ -892,6 +1016,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
 
         // Full-Screen Now Playing Sheet
+        BackHandler(enabled = isPlayerExpanded, onBack = collapseFullPlayer)
         val activeTrack = currentTrack
         AnimatedVisibility(
             visible = (isPlayerExpanded || isPlayerCollapseTransition || isPlayerExpandTransition) && activeTrack != null,
@@ -907,7 +1032,9 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .onGloballyPositioned { coordinates ->
-                    if (isPlayerExpanded && (fullPlayerContainerBounds == null || !isPlayerExpandTransition)) {
+                    if (isPlayerExpanded && !isPlayerCollapseTransition && playerSheetDragOffsetY == 0f &&
+                        (fullPlayerContainerBounds == null || !isPlayerExpandTransition)
+                    ) {
                         fullPlayerContainerBounds = coordinates.boundsInRoot()
                     }
                 }
@@ -918,17 +1045,34 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     if ((isSharedPlayerTransition || (!isPlayerExpanded && collapseProgress.value > 0f)) &&
                         from != null && to != null && from.width > 0f && from.height > 0f) {
                         val progress = collapseProgress.value.coerceIn(0f, 1f)
+                        val dragStart = if (isPlayerCollapseTransition) collapseStartDragY else 0f
+                        val sx = 1f + ((to.width / from.width) - 1f) * progress
+                        val sy = 1f + ((to.height / from.height) - 1f) * progress
                         translationX = (to.left - from.left) * progress
-                        translationY = (to.top - from.top) * progress
-                        scaleX = 1f + ((to.width / from.width) - 1f) * progress
-                        scaleY = 1f + ((to.height / from.height) - 1f) * progress
+                        translationY = dragStart * (1f - progress) + (to.top - from.top) * progress
+                        scaleX = sx
+                        scaleY = sy
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
-                        shape = RoundedCornerShape(16.dp * progress)
-                        clip = progress > 0f
-                        alpha = 1f
+                        val startCorner = (dragStart / 10f).coerceIn(0f, 28f).dp
+                        val cornerPx = (startCorner + (16.dp - startCorner) * progress).toPx()
+                        shape = NonUniformScaledRoundedShape(
+                            cornerRadiusPx = cornerPx,
+                            scaleX = sx,
+                            scaleY = sy
+                        )
+                        clip = progress > 0f || dragStart > 0f
+                        alpha = if (isPlayerCollapseTransition) {
+                            1f - ((progress - 0.68f) / 0.32f).coerceIn(0f, 1f)
+                        } else 1f
                     } else if (isPlayerExpandTransition && from == null) {
                         // Keep the destination hidden until its full-size bounds are measured.
                         alpha = 0f
+                    } else if (playerSheetDragOffsetY > 0f) {
+                        val dragY = playerSheetDragOffsetY
+                        translationY = dragY
+                        val corner = (dragY / 10f).coerceIn(0f, 28f).dp
+                        shape = RoundedCornerShape(topStart = corner, topEnd = corner)
+                        clip = true
                     }
                 }
                 .clickable(
@@ -969,10 +1113,13 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         collapseProgress.value
                     } else 0f,
                     onArtworkPositioned = {
-                        if (isPlayerExpanded && (fullPlayerArtworkBounds == null || !isPlayerExpandTransition)) {
+                        if (isPlayerExpanded && !isPlayerCollapseTransition && playerSheetDragOffsetY == 0f &&
+                            (fullPlayerArtworkBounds == null || !isPlayerExpandTransition)
+                        ) {
                             fullPlayerArtworkBounds = it
                         }
                     },
+                    onSheetDragOffsetChange = { playerSheetDragOffsetY = it },
                     onTogglePlayPause = { AuraPlayerManager.togglePlayPause() },
                     onSeekTo = { AuraPlayerManager.seekToSeconds(it) },
                     onSkipNext = { AuraPlayerManager.skipToNext() },
@@ -988,11 +1135,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         viewModel.setNowPlayingStyle(styles[next])
                     },
                     onOpenArtist = { artistName ->
-                        val isArtistAlreadyOpen = selectedArtistDetail != null
+                        val isTopArtistSame = (detailStack.lastOrNull() as? DetailScreenEntry.Artist)
+                            ?.detail?.name?.equals(artistName, ignoreCase = true) == true
                         collapseFullPlayer()
-                        if (isArtistAlreadyOpen) {
-                            viewModel.openArtistByName(artistName, activeTrack.title, activeTrack.highResArtworkUrl)
-                        } else {
+                        if (!isTopArtistSame) {
                             screenScope.launch {
                                 kotlinx.coroutines.delay(260)
                                 viewModel.openArtistByName(artistName, activeTrack.title, activeTrack.highResArtworkUrl)
@@ -1000,7 +1146,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         }
                     },
                     onOpenCurrentPlaylist = {
-                        val isAlreadyOpen = selectedPlaylistDetail != null || (selectedTab == 2 && selectedUserPlaylist != null)
+                        val isAlreadyOpen = (detailStack.lastOrNull() is DetailScreenEntry.Playlist) ||
+                            (detailStack.isEmpty() && selectedTab == 2 && selectedUserPlaylist != null)
                         collapseFullPlayer()
                         screenScope.launch {
                             if (!isAlreadyOpen) {
@@ -1049,8 +1196,13 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             val startWidth = artworkStart.width.coerceAtLeast(1f)
             val startHeight = artworkStart.height.coerceAtLeast(1f)
             val density = androidx.compose.ui.platform.LocalDensity.current
-            val sourceCorner = if (nowPlayingStyle == com.auramusic.app.domain.model.NowPlayingStyle.SPOTIFY) 8f else 22f
+            val isAppleMusicStyle = nowPlayingStyle == com.auramusic.app.domain.model.NowPlayingStyle.LIQUID_GLASS
+            val sourceCorner = if (isAppleMusicStyle) 0f else 8f
             val corner = sourceCorner + (8f - sourceCorner) * progress
+            val statusBarHeightDp = with(density) { artworkStart.top.coerceAtLeast(0f).toDp() }
+            val startHeightDp = with(density) { startHeight.toDp() }
+            val fadeFactor = (1f - progress * 0.65f).coerceIn(0f, 1f)
+            val dragStart = if (isPlayerCollapseTransition) collapseStartDragY else 0f
 
             AsyncImage(
                 model = activeArtwork.highResArtworkUrl,
@@ -1063,16 +1215,26 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     )
                     .size(
                         width = with(density) { startWidth.toDp() },
-                        height = with(density) { startHeight.toDp() }
+                        height = startHeightDp
                     )
                     .graphicsLayer {
                         translationX = (artworkEnd.left - artworkStart.left) * progress
-                        translationY = (artworkEnd.top - artworkStart.top) * progress
+                        translationY = dragStart * (1f - progress) + (artworkEnd.top - artworkStart.top) * progress
                         scaleX = 1f + ((artworkEnd.width / startWidth) - 1f) * progress
                         scaleY = 1f + ((artworkEnd.height / startHeight) - 1f) * progress
                         transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0f, 0f)
                     }
                     .clip(RoundedCornerShape(corner.dp))
+                    .then(
+                        if (isAppleMusicStyle) {
+                            Modifier.appleMusicVerticalFadeEdges(
+                                topFadeHeight = statusBarHeightDp * fadeFactor,
+                                bottomFadeHeight = (startHeightDp * 0.25f) * fadeFactor
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
                     .zIndex(20f)
             )
         }
@@ -1099,8 +1261,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             onInstallNow = { release -> viewModel.installDownloadedApk(release) }
         )
     }
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun AuraMiniPlayer(
     track: AuraTrack,
@@ -1108,10 +1272,13 @@ private fun AuraMiniPlayer(
     isBuffering: Boolean,
     progress: Float,
     backgroundColor: Color,
+    backdropTintColor: Color = backgroundColor,
+    glassBackdrop: LayerBackdrop,
     previousTrack: AuraTrack? = null,
     nextTrack: AuraTrack? = null,
     hideArtworkForTransition: Boolean = false,
     isPlayerTransition: Boolean = false,
+    isCollapsingTransition: Boolean = false,
     collapseProgress: Float = 0f,
     onArtworkPositioned: (Rect) -> Unit = {},
     onPlayerBoundsPositioned: (Rect) -> Unit = {},
@@ -1120,50 +1287,168 @@ private fun AuraMiniPlayer(
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit
 ) {
+    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val isDarkTheme = LocalIsDarkTheme.current
+    val glassLayer = rememberGraphicsLayer()
+    val luminance = rememberGlassLuminance(
+        source = glassLayer,
+        enabled = liquidGlassEnabled && !isPlayerTransition
+    )
+
+    val artworkVeilAlpha = remember { Animatable(0f) }
+    LaunchedEffect(isCollapsingTransition, isPlayerTransition, liquidGlassEnabled) {
+        if (!liquidGlassEnabled) {
+            artworkVeilAlpha.snapTo(0f)
+        } else if (isCollapsingTransition) {
+            artworkVeilAlpha.snapTo(1f)
+        } else if (isPlayerTransition) {
+            artworkVeilAlpha.snapTo(0f)
+        } else if (artworkVeilAlpha.value > 0f) {
+            artworkVeilAlpha.animateTo(
+                targetValue = 0f,
+                animationSpec = tween(
+                    durationMillis = 880,
+                    easing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
+                )
+            )
+        }
+    }
+
     val coroutineScope = rememberCoroutineScope()
     val swipeOffsetX = remember { Animatable(0f) }
+    val swipeOffsetY = remember { Animatable(0f) }
 
     LaunchedEffect(track.videoId) {
         swipeOffsetX.snapTo(0f)
     }
 
-    // Dynamic background color animated smoothly whenever palette or track changes
     val animatedBgColor by animateColorAsState(
         targetValue = backgroundColor,
         animationSpec = tween(durationMillis = 420, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)),
         label = "miniPlayerBgColor"
+    )
+    val animatedTintColor by animateColorAsState(
+        targetValue = backdropTintColor,
+        animationSpec = tween(durationMillis = 420, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)),
+        label = "miniPlayerTintColor"
+    )
+
+    val foregroundColor by animateColorAsState(
+        targetValue = if (liquidGlassEnabled) {
+            if (artworkVeilAlpha.value > 0.35f || isDarkTheme || luminance.value < 0.65f) {
+                Color.White
+            } else {
+                Color(0xFF111318)
+            }
+        } else {
+            Color.White
+        },
+        animationSpec = tween(durationMillis = 320),
+        label = "miniPlayerForegroundColor"
     )
 
     val lighterProgressColor = remember(animatedBgColor) {
         lerp(animatedBgColor, Color.White, 0.65f)
     }
 
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = animatedBgColor.copy(alpha = 0.96f),
-        shadowElevation = 10.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .clip(RoundedCornerShape(16.dp))
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress.coerceIn(0f, 1f),
+        animationSpec = tween(durationMillis = 200),
+        label = "miniPlayerProgress"
+    )
+
+    val miniPlayerShape = RoundedCornerShape(16.dp)
+    val baseModifier = Modifier
+        .fillMaxWidth()
+        .padding(horizontal = 16.dp)
+        .offset { IntOffset(0, swipeOffsetY.value.roundToInt()) }
+        .onGloballyPositioned { onPlayerBoundsPositioned(it.boundsInRoot()) }
+        .graphicsLayer {
+            alpha = if (isPlayerTransition) {
+                ((collapseProgress - 0.78f) / 0.22f).coerceIn(0f, 1f)
+            } else 1f
+        }
+
+    val surfaceModifier = if (liquidGlassEnabled) {
+        baseModifier
+            .liquidGlass(
+                backdrop = glassBackdrop,
+                layer = glassLayer,
+                luminance = luminance,
+                shape = miniPlayerShape,
+                interactive = true,
+                pressedScale = 1.02f,
+                fallbackColor = Color(0xFF1A1D24).copy(alpha = 0.94f)
+            )
+            .border(
+                width = 0.75.dp,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.28f),
+                        Color.White.copy(alpha = 0.06f)
+                    )
+                ),
+                shape = miniPlayerShape
+            )
+            .clip(miniPlayerShape)
             .clipToBounds()
-            .clickable(onClick = onExpand)
-            .onGloballyPositioned { onPlayerBoundsPositioned(it.boundsInRoot()) }
-            .graphicsLayer {
-                alpha = if (isPlayerTransition) {
-                    ((collapseProgress - 0.72f) / 0.28f).coerceIn(0f, 1f)
-                } else 1f
-            }
-    ) {
+    } else {
+        baseModifier
+            .clip(miniPlayerShape)
+            .clipToBounds()
+    }
+
+    val gestureModifier = surfaceModifier
+        .clickable(onClick = onExpand)
+        .pointerInput(track.videoId, isPlaying) {
+            detectVerticalDragGestures(
+                onVerticalDrag = { change, dragAmount ->
+                    if (swipeOffsetY.value + dragAmount >= 0f) {
+                        change.consume()
+                        coroutineScope.launch {
+                            swipeOffsetY.snapTo((swipeOffsetY.value + dragAmount * 0.65f).coerceIn(0f, 56f))
+                        }
+                    }
+                },
+                onDragCancel = {
+                    coroutineScope.launch {
+                        swipeOffsetY.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
+                        )
+                    }
+                },
+                onDragEnd = {
+                    coroutineScope.launch {
+                        if (swipeOffsetY.value > 28f && isPlaying) {
+                            onTogglePlayPause()
+                        }
+                        swipeOffsetY.animateTo(
+                            targetValue = 0f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessMediumLow
+                            )
+                        )
+                    }
+                }
+            )
+        }
+
+    val content: @Composable () -> Unit = {
         Column {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 10.dp, top = 8.dp, bottom = 8.dp),
+                    .height(60.dp)
+                    .padding(start = 10.dp, end = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // 1. STATIONARY Artwork: Stays completely fixed, never overlapped by sliding text
+                // 1. Stationary Artwork (bounds tracked for flying artwork transition)
                 Box(
                     modifier = Modifier
                         .size(42.dp)
@@ -1182,15 +1467,13 @@ private fun AuraMiniPlayer(
 
                 Spacer(modifier = Modifier.width(10.dp))
 
-                // 2. SLIDING Text Viewport with STRICT BOUNDARY (clipToBounds):
-                // Swiping horizontally is completely clipped inside this container,
-                // so text can NEVER overlap the artwork on the left nor the player buttons on the right!
+                // 2. Sliding Text Viewport with axis-locked horizontal swipe-to-skip & marquee
                 var textWidthPx by remember { mutableFloatStateOf(260f) }
 
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .height(42.dp)
+                        .height(44.dp)
                         .clipToBounds()
                         .onGloballyPositioned { coordinates ->
                             if (coordinates.size.width > 0) {
@@ -1200,22 +1483,21 @@ private fun AuraMiniPlayer(
                         .pointerInput(track.videoId) {
                             awaitEachGesture {
                                 val down = awaitFirstDown(requireUnconsumed = false)
-                                var totalDrag = 0f
-                                var hasDragged = false
+                                var totalDragX = 0f
+                                var totalDragY = 0f
+                                var isHorizontalSwipe = false
+                                var isVerticalDrag = false
                                 while (true) {
                                     val event = awaitPointerEvent()
                                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                     if (change.isConsumed) break
                                     if (!change.pressed) {
-                                        // Finger lifted!
-                                        if (!hasDragged) {
-                                            // Pure tap: expand now playing sheet
+                                        if (!isHorizontalSwipe && !isVerticalDrag) {
                                             onExpand()
-                                        } else {
-                                            // Swipe gesture finished
-                                            if (totalDrag > 50f) {
+                                        } else if (isHorizontalSwipe) {
+                                            if (totalDragX > 50f) {
                                                 onSkipPrevious()
-                                            } else if (totalDrag < -50f) {
+                                            } else if (totalDragX < -50f) {
                                                 onSkipNext()
                                             }
                                             coroutineScope.launch {
@@ -1230,15 +1512,21 @@ private fun AuraMiniPlayer(
                                         }
                                         break
                                     }
-                                    val dragAmount = change.position.x - change.previousPosition.x
-                                    totalDrag += dragAmount
-                                    if (!hasDragged && kotlin.math.abs(totalDrag) > viewConfiguration.touchSlop) {
-                                        hasDragged = true
+                                    val dx = change.position.x - change.previousPosition.x
+                                    val dy = change.position.y - change.previousPosition.y
+                                    totalDragX += dx
+                                    totalDragY += dy
+                                    if (!isHorizontalSwipe && !isVerticalDrag) {
+                                        if (abs(totalDragX) > viewConfiguration.touchSlop && abs(totalDragX) >= abs(totalDragY)) {
+                                            isHorizontalSwipe = true
+                                        } else if (abs(totalDragY) > viewConfiguration.touchSlop && abs(totalDragY) > abs(totalDragX)) {
+                                            isVerticalDrag = true
+                                        }
                                     }
-                                    if (hasDragged) {
+                                    if (isHorizontalSwipe) {
                                         change.consume()
                                         coroutineScope.launch {
-                                            swipeOffsetX.snapTo((swipeOffsetX.value + dragAmount).coerceIn(-textWidthPx, textWidthPx))
+                                            swipeOffsetX.snapTo((swipeOffsetX.value + dx).coerceIn(-textWidthPx, textWidthPx))
                                         }
                                     }
                                 }
@@ -1246,34 +1534,58 @@ private fun AuraMiniPlayer(
                         },
                     contentAlignment = Alignment.CenterStart
                 ) {
-                    // Active Song Title & Artist
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                translationX = swipeOffsetX.value
-                                alpha = (1f - (kotlin.math.abs(swipeOffsetX.value) / textWidthPx.coerceAtLeast(1f)) * 0.45f).coerceIn(0.55f, 1f)
-                            },
-                        verticalArrangement = Arrangement.Center
-                    ) {
-                        Text(
-                            text = track.title,
-                            color = Color.White,
-                            style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            text = track.artist,
-                            color = Color.White.copy(alpha = 0.75f),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    AnimatedContent(
+                        targetState = track,
+                        contentKey = { it.videoId },
+                        transitionSpec = {
+                            (slideInHorizontally(tween(240)) { width -> (width * 0.35f).roundToInt() } + fadeIn(tween(200)))
+                                .togetherWith(
+                                    slideOutHorizontally(tween(200)) { width -> -(width * 0.35f).roundToInt() } + fadeOut(tween(160))
+                                )
+                                .using(SizeTransform(clip = false))
+                        },
+                        label = "miniPlayerTrackText"
+                    ) { active ->
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .graphicsLayer {
+                                    translationX = swipeOffsetX.value
+                                    alpha = (1f - (abs(swipeOffsetX.value) / textWidthPx.coerceAtLeast(1f)) * 0.45f).coerceIn(0.55f, 1f)
+                                },
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Text(
+                                text = active.title,
+                                color = foregroundColor,
+                                style = MaterialTheme.typography.titleSmall,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(
+                                        iterations = Int.MAX_VALUE,
+                                        animationMode = MarqueeAnimationMode.Immediately
+                                    )
+                                    .focusable()
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = active.artist,
+                                color = foregroundColor.copy(alpha = 0.72f),
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .basicMarquee(
+                                        iterations = Int.MAX_VALUE,
+                                        animationMode = MarqueeAnimationMode.Immediately
+                                    )
+                                    .focusable()
+                            )
+                        }
                     }
 
-                    // When sliding RIGHT (Previous Song): Pull incoming previous song title & artist from the left!
+                    // Preview incoming previous track while dragging right
                     if (swipeOffsetX.value > 0f) {
                         val displayPrev = previousTrack ?: track
                         Column(
@@ -1287,7 +1599,7 @@ private fun AuraMiniPlayer(
                         ) {
                             Text(
                                 text = displayPrev.title,
-                                color = Color.White,
+                                color = foregroundColor,
                                 style = MaterialTheme.typography.titleSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1295,7 +1607,7 @@ private fun AuraMiniPlayer(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = displayPrev.artist,
-                                color = Color.White.copy(alpha = 0.75f),
+                                color = foregroundColor.copy(alpha = 0.72f),
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1303,7 +1615,7 @@ private fun AuraMiniPlayer(
                         }
                     }
 
-                    // When sliding LEFT (Next Song): Pull incoming next song title & artist from the right!
+                    // Preview incoming next track while dragging left
                     if (swipeOffsetX.value < 0f) {
                         val displayNext = nextTrack ?: track
                         Column(
@@ -1317,7 +1629,7 @@ private fun AuraMiniPlayer(
                         ) {
                             Text(
                                 text = displayNext.title,
-                                color = Color.White,
+                                color = foregroundColor,
                                 style = MaterialTheme.typography.titleSmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1325,7 +1637,7 @@ private fun AuraMiniPlayer(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = displayNext.artist,
-                                color = Color.White.copy(alpha = 0.75f),
+                                color = foregroundColor.copy(alpha = 0.72f),
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -1334,80 +1646,188 @@ private fun AuraMiniPlayer(
                     }
                 }
 
-                Spacer(modifier = Modifier.width(6.dp))
+                Spacer(modifier = Modifier.width(4.dp))
 
+                // 3. Transport Controls with >= 44dp touch targets
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = onSkipPrevious,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.SkipPrevious,
                             contentDescription = "Previous Track",
-                            tint = Color.White,
+                            tint = foregroundColor,
                             modifier = Modifier.size(22.dp)
                         )
                     }
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
                     Box(
                         modifier = Modifier
-                            .size(34.dp)
+                            .size(44.dp)
                             .clip(CircleShape)
-                            .background(lighterProgressColor)
                             .clickable(onClick = onTogglePlayPause),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (isBuffering) {
-                            CircularProgressIndicator(
-                                color = Color.Black,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        } else {
-                            Icon(
-                                imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                contentDescription = if (isPlaying) "Pause" else "Play",
-                                tint = Color.Black,
-                                modifier = Modifier
-                                    .size(20.dp)
-                                    .padding(start = if (!isPlaying) 1.5.dp else 0.dp)
-                            )
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (liquidGlassEnabled) {
+                                        foregroundColor.copy(alpha = 0.16f)
+                                    } else {
+                                        lighterProgressColor
+                                    }
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            val playTint = if (liquidGlassEnabled) foregroundColor else Color.Black
+                            if (isBuffering) {
+                                CircularProgressIndicator(
+                                    color = playTint,
+                                    strokeWidth = 2.dp,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                                    contentDescription = if (isPlaying) "Pause" else "Play",
+                                    tint = playTint,
+                                    modifier = Modifier
+                                        .size(20.dp)
+                                        .padding(start = if (!isPlaying) 1.5.dp else 0.dp)
+                                )
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.width(4.dp))
-
                     IconButton(
                         onClick = onSkipNext,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.SkipNext,
                             contentDescription = "Next Track",
-                            tint = Color.White,
+                            tint = foregroundColor,
                             modifier = Modifier.size(22.dp)
                         )
                     }
                 }
             }
 
+            // 4. Bottom 1.5dp progress bar
+            val trackBg = if (liquidGlassEnabled) {
+                foregroundColor.copy(alpha = 0.16f)
+            } else {
+                animatedBgColor.copy(alpha = 0.35f)
+            }
+            val trackFill = if (liquidGlassEnabled) {
+                foregroundColor.copy(alpha = 0.90f)
+            } else {
+                lighterProgressColor
+            }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(2.dp)
-                    .background(animatedBgColor.copy(alpha = 0.35f))
+                    .height(1.5.dp)
+                    .background(trackBg)
             ) {
-                if (progress > 0f) {
+                if (animatedProgress > 0f) {
                     Box(
                         modifier = Modifier
                             .fillMaxHeight()
-                            .fillMaxWidth(progress)
-                            .background(lighterProgressColor)
+                            .fillMaxWidth(animatedProgress)
+                            .background(trackFill)
                     )
                 }
             }
+        }
+    }
+
+    if (liquidGlassEnabled) {
+        Box(modifier = gestureModifier) {
+            // Transitional blurred cover-color veil from the closing Apple Music player
+            // that smoothly parts from the center outward to the left and right edges into live Liquid Glass.
+            if (artworkVeilAlpha.value > 0.001f) {
+                val revealProgress = (1f - artworkVeilAlpha.value).coerceIn(0f, 1f)
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(miniPlayerShape)
+                        .graphicsLayer {
+                            compositingStrategy = CompositingStrategy.Offscreen
+                            shape = miniPlayerShape
+                            clip = true
+                        }
+                        .drawWithContent {
+                            drawContent()
+                            if (revealProgress > 0.001f) {
+                                val feather = 0.26f
+                                val halfSpan = revealProgress * (0.5f + feather)
+                                val innerClear = (halfSpan - feather).coerceAtLeast(0f)
+                                val centerAlpha = (1f - (revealProgress / 0.25f)).coerceIn(0f, 1f)
+                                val edgeAlpha = (1f - ((revealProgress - 0.52f) / 0.48f).coerceIn(0f, 1f))
+                                val leftOuter = (0.5f - halfSpan).coerceIn(0f, 0.499f)
+                                val leftInner = (0.5f - innerClear).coerceIn(leftOuter, 0.5f)
+                                val rightInner = (0.5f + innerClear).coerceIn(0.5f, 1f)
+                                val rightOuter = (0.5f + halfSpan).coerceIn(rightInner, 1f)
+
+                                drawRect(
+                                    brush = Brush.horizontalGradient(
+                                        0.0f to Color.White.copy(alpha = edgeAlpha),
+                                        leftOuter to Color.White.copy(alpha = edgeAlpha),
+                                        leftInner to Color.White.copy(alpha = centerAlpha),
+                                        0.5f to Color.White.copy(alpha = centerAlpha),
+                                        rightInner to Color.White.copy(alpha = centerAlpha),
+                                        rightOuter to Color.White.copy(alpha = edgeAlpha),
+                                        1.0f to Color.White.copy(alpha = edgeAlpha),
+                                    ),
+                                    blendMode = BlendMode.DstIn
+                                )
+                            }
+                        }
+                ) {
+                    if (isLyricsBlurSupported() && track.highResArtworkUrl.isNotBlank()) {
+                        AsyncImage(
+                            model = track.highResArtworkUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .blur(42.dp, BlurredEdgeTreatment(miniPlayerShape))
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.horizontalGradient(
+                                    colors = listOf(
+                                        animatedTintColor.copy(alpha = 0.78f),
+                                        animatedBgColor.copy(alpha = 0.72f),
+                                        Color(0xFF14151B).copy(alpha = 0.80f)
+                                    )
+                                )
+                            )
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.28f))
+                    )
+                }
+            }
+            content()
+        }
+    } else {
+        Surface(
+            shape = miniPlayerShape,
+            color = animatedBgColor.copy(alpha = 0.96f),
+            shadowElevation = 10.dp,
+            modifier = gestureModifier
+        ) {
+            content()
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.auramusic.app.ui.screens
 
 import android.content.Context
+import android.content.Intent
 import android.media.AudioManager
 import android.view.ViewGroup
 import android.widget.Toast
@@ -28,10 +29,13 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -179,15 +183,24 @@ import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.AuraVideoInfo
 import com.auramusic.app.domain.model.ArtistDetail
 import com.auramusic.app.domain.model.LyricsData
+import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.domain.model.PlaybackMode
 import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
 import com.auramusic.app.ui.components.AuraCommentsBottomSheet
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricStrip
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsList
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsTabView
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicNowPlayingView
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicView
 import com.auramusic.app.ui.theme.AuraCircleButtonBg
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPoppinsFontFamily
 import com.auramusic.app.ui.theme.AuraPlayGreen
+import com.auramusic.app.ui.theme.AuraViolet
+import com.auramusic.app.ui.theme.LocalLyricsStyle
 import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
@@ -236,6 +249,7 @@ fun AuraNowPlayingSheet(
     hideArtworkForPlayerTransition: Boolean = false,
     playerCollapseProgress: Float = 0f,
     onArtworkPositioned: (Rect) -> Unit = {},
+    onSheetDragOffsetChange: (Float) -> Unit = {},
     onTogglePlayPause: () -> Unit,
     onSeekTo: (Float) -> Unit,
     onSkipNext: () -> Unit,
@@ -278,6 +292,18 @@ fun AuraNowPlayingSheet(
     var isAddToPlaylistModalVisible by remember { mutableStateOf(false) }
     var isCreatePlaylistModalVisible by remember { mutableStateOf(false) }
     var isCommentsVisible by remember { mutableStateOf(false) }
+    var appleMusicActiveView by remember { mutableStateOf(AppleMusicView.MAIN) }
+    val playbackMode by AuraPlayerManager.playbackMode.collectAsState()
+
+    val canonicalVideoId = AuraPlayerManager.originalAudioTrack?.videoId ?: track.videoId
+    val activeLyrics = lyrics?.takeIf {
+        it.videoId == canonicalVideoId || it.videoId == track.videoId
+    }
+    val isLyricsLoading = activeLyrics == null
+    val displayLyrics = activeLyrics?.takeIf { it.source != "None" }
+    val lyricsAvailable = displayLyrics != null && (
+        displayLyrics.syncedLines.isNotEmpty() || displayLyrics.plainLyrics.isNotBlank()
+    )
 
     val context = LocalContext.current
     LaunchedEffect(track.videoId, track.artist) {
@@ -285,8 +311,29 @@ fun AuraNowPlayingSheet(
     }
     val openLyrics = {
         // Freeze the source before the player begins scaling under the lyrics sheet.
-        lyricsSourceArtBounds = albumArtBounds
+        lyricsSourceArtBounds = if (
+            currentStyle == NowPlayingStyle.SPOTIFY ||
+            appleMusicActiveView == AppleMusicView.MAIN
+        ) {
+            albumArtBounds
+        } else {
+            null
+        }
         isLyricsExpanded = true
+    }
+    val shareTrack: () -> Unit = {
+        val shareUrl = "https://music.youtube.com/watch?v=${track.videoId}"
+        val shareText = if (track.artist.isNotBlank()) {
+            "${track.title} — ${track.artist}\n$shareUrl"
+        } else {
+            "${track.title}\n$shareUrl"
+        }
+        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, track.title)
+            putExtra(Intent.EXTRA_TEXT, shareText)
+        }
+        context.startActivity(Intent.createChooser(sendIntent, "Share track"))
     }
     val statusBarHeightPx = remember(context) {
         val resourceId = context.resources.getIdentifier("status_bar_height", "dimen", "android")
@@ -316,13 +363,23 @@ fun AuraNowPlayingSheet(
     }
 
     // Root container matching sheet bounds - 100% solid background so underlying screens never bleed through
+    val collapseTargetBg = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) {
+        palette.backgroundTop
+    } else {
+        palette.primary
+    }
+    val baseSheetBg = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) {
+        palette.backgroundTop
+    } else {
+        Color(0xFF14151B)
+    }
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 lerp(
-                    Color(0xFF14151B),
-                    palette.primary,
+                    baseSheetBg,
+                    collapseTargetBg,
                     playerCollapseProgress.coerceIn(0f, 1f)
                 )
             )
@@ -371,7 +428,8 @@ fun AuraNowPlayingSheet(
                     // Keep the player surface solid while its artwork flies to the mini
                     // player. Curtain away the full-size controls before the mini controls
                     // resolve, so the two layouts never appear as translucent duplicates.
-                    alpha = 1f - (playerCollapseProgress.coerceIn(0f, 1f) / 0.58f).coerceIn(0f, 1f)
+                    val fadeCutoff = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) 0.78f else 0.58f
+                    alpha = 1f - (playerCollapseProgress.coerceIn(0f, 1f) / fadeCutoff).coerceIn(0f, 1f)
                 }
         ) {
             Crossfade(
@@ -427,22 +485,18 @@ fun AuraNowPlayingSheet(
                         )
                     }
                     NowPlayingStyle.LIQUID_GLASS -> {
-                        LiquidGlassPlayerView(
+                        AppleMusicNowPlayingView(
                             track = track,
                             queue = queue,
                             isPlaying = isPlaying,
                             isBuffering = isBuffering,
                             positionSec = positionSec,
                             durationSec = durationSec,
-                            bufferedSec = bufferedSec,
+                            palette = palette,
+                            lyricsAvailable = lyricsAvailable,
                             isFavorite = isFavorite,
                             isShuffleEnabled = isShuffleEnabled,
-                            lyricsExpansionProgress = lyricsExpansionProgress,
-                            hideArtworkForLyricsTransition = !isVideoMode &&
-                                ((lyricsExpansionProgress > 0.001f && lyricsHeaderArtBounds != null) ||
-                                    hideArtworkForPlayerTransition),
-                            isVideoMode = isVideoMode,
-                            isVideoLoading = isVideoLoading,
+                            playbackMode = playbackMode,
                             onCollapse = onCollapse,
                             onTogglePlayPause = onTogglePlayPause,
                             onSeekTo = onSeekTo,
@@ -450,18 +504,72 @@ fun AuraNowPlayingSheet(
                             onSkipPrevious = onSkipPrevious,
                             onToggleFavorite = onToggleFavorite,
                             onToggleShuffle = onToggleShuffle,
-                            onToggleVideoMode = onToggleVideoMode,
+                            onCyclePlaybackMode = { AuraPlayerManager.cyclePlaybackMode() },
                             onOpenArtist = { onOpenArtist(track.artist) },
-                            onOpenCurrentPlaylist = onOpenCurrentPlaylist,
                             onOptionsClick = { isOptionsModalVisible = true },
-                            onOpenLyrics = openLyrics,
-                            onAdjustLyricsOffset = onAdjustLyricsOffset,
-                            onOpenComments = { isCommentsVisible = true; onLoadComments(track.videoId) },
-                            onOpenQueue = { isQueueSheetVisible = true },
-                            onCardPositioned = { lyricsCardBounds = it },
+                            onOpenComments = {
+                                isCommentsVisible = true
+                                onLoadComments(track.videoId)
+                            },
+                            onShareTrack = shareTrack,
+                            onSaveToPlaylist = { isAddToPlaylistModalVisible = true },
+                            onPlayQueueTrack = onPlayQueueTrack,
+                            isVideoMode = isVideoMode,
+                            onToggleVideoMode = onToggleVideoMode,
+                            hideArtworkForTransition = !isVideoMode &&
+                                ((lyricsExpansionProgress > 0.001f && lyricsHeaderArtBounds != null) ||
+                                    hideArtworkForPlayerTransition),
                             onArtworkPositioned = {
                                 albumArtBounds = it
                                 onArtworkPositioned(it)
+                            },
+                            onRemoveQueueItem = { index -> AuraPlayerManager.removeQueueItem(index) },
+                            onMoveQueueItem = { fromIndex, toIndex ->
+                                AuraPlayerManager.moveQueueItem(fromIndex, toIndex)
+                            },
+                            activeView = appleMusicActiveView,
+                            onActiveViewChange = { appleMusicActiveView = it },
+                            onSheetDragOffsetChange = onSheetDragOffsetChange,
+                            lyricStripSlot = { onOpenLyricsTab ->
+                                AppleMusicLyricStrip(
+                                    lines = displayLyrics?.syncedLines.orEmpty(),
+                                    currentPositionSec = positionSec,
+                                    lyricsOffsetMs = lyricsOffsetMs.toLong(),
+                                    isPlaying = isPlaying,
+                                    showRomanized = showRomanized,
+                                    onClick = onOpenLyricsTab
+                                )
+                            },
+                            lyricsTabSlot = { compactHeader, bottomCluster, onBackToMain ->
+                                AppleMusicLyricsTabView(
+                                    track = track,
+                                    lyricsData = displayLyrics,
+                                    isLoading = isLyricsLoading,
+                                    currentPositionSec = positionSec,
+                                    isPlaying = isPlaying,
+                                    lyricsOffsetMs = lyricsOffsetMs.toLong(),
+                                    showRomanized = showRomanized,
+                                    onSeekToSec = onSeekTo,
+                                    onAdjustOffsetMs = onAdjustLyricsOffset,
+                                    onToggleRomanized = onToggleRomanized,
+                                    onOpenFullscreen = openLyrics,
+                                    onBackToMain = onBackToMain,
+                                    compactHeader = compactHeader,
+                                    bottomCluster = bottomCluster
+                                )
+                            },
+                            videoOverlaySlot = {
+                                if (isVideoMode) {
+                                    AuraVideoPlayerSurface(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .aspectRatio(16f / 9f)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                        track = track,
+                                        isLoading = isVideoLoading,
+                                        onSwitchToAudio = onToggleVideoMode
+                                    )
+                                }
                             }
                         )
                     }
@@ -485,6 +593,8 @@ fun AuraNowPlayingSheet(
         // Opens by expanding fluidly outwards from the card's exact geometry.
         // Closes by morphing and physically traveling back into its original slot on the screen!
         if (lyricsTransitionProgress > 0.001f) {
+            val lyricsStyle = LocalLyricsStyle.current
+            val isAppleMusicLyrics = lyricsStyle == LyricsStyle.APPLE_MUSIC
             val fullWidthPx = constraints.maxWidth.toFloat()
             val density = LocalDensity.current
 
@@ -494,33 +604,48 @@ fun AuraNowPlayingSheet(
             val fallbackTop = fullHeightPx - with(density) { 340.dp.toPx() }
             val compactHeaderBottomPx = statusBarHeightPx.toFloat() +
                 with(density) { 66.dp.toPx() }
+            val compactHeaderBottomDp = with(density) { compactHeaderBottomPx.toDp() }
 
+            val hasCardOrigin = currentStyle == NowPlayingStyle.SPOTIFY
             val startLeft = lyricsCardBounds?.left ?: fallbackMargin
             val startTop = lyricsCardBounds?.top ?: fallbackTop
             val startWidth = lyricsCardBounds?.width?.takeIf { it > 10f } ?: fallbackWidth
             val startHeight = lyricsCardBounds?.height?.takeIf { it > 10f } ?: fallbackHeight
 
             val clampedProgress = lyricsExpansionProgress.coerceIn(0f, 1f)
+            val targetTop = if (isAppleMusicLyrics) 0f else compactHeaderBottomPx
+            val targetHeight = if (isAppleMusicLyrics) {
+                fullHeightPx
+            } else {
+                (fullHeightPx - compactHeaderBottomPx).coerceAtLeast(10f)
+            }
 
-            val currentLeft = lerpFloat(startLeft, 0f, clampedProgress)
-            val currentTop = lerpFloat(startTop, compactHeaderBottomPx, clampedProgress)
-            val currentWidth = lerpFloat(startWidth, fullWidthPx, clampedProgress).coerceAtLeast(10f)
-            val lyricsAreaHeightPx = (fullHeightPx - compactHeaderBottomPx).coerceAtLeast(10f)
-            val currentHeight = lerpFloat(startHeight, lyricsAreaHeightPx, clampedProgress).coerceAtLeast(10f)
+            val currentLeft = if (hasCardOrigin) lerpFloat(startLeft, 0f, clampedProgress) else 0f
+            val currentTop = if (hasCardOrigin) lerpFloat(startTop, targetTop, clampedProgress) else targetTop
+            val currentWidth = (if (hasCardOrigin) lerpFloat(startWidth, fullWidthPx, clampedProgress) else fullWidthPx).coerceAtLeast(10f)
+            val currentHeight = (if (hasCardOrigin) lerpFloat(startHeight, targetHeight, clampedProgress) else targetHeight).coerceAtLeast(10f)
 
             val currentLeftDp = with(density) { currentLeft.toDp() }
             val currentTopDp = with(density) { currentTop.toDp() }
             val currentWidthDp = with(density) { currentWidth.toDp() }
             val currentHeightDp = with(density) { currentHeight.toDp() }
-            val currentCornerRadius = lerpFloat(20f, 18f, clampedProgress).coerceIn(0f, 20f)
-            val currentElevation = (16.dp * (1f - clampedProgress)).coerceAtLeast(0.dp)
+            val currentCornerRadius = if (!hasCardOrigin) {
+                0f
+            } else if (isAppleMusicLyrics) {
+                lerpFloat(20f, 0f, clampedProgress).coerceIn(0f, 20f)
+            } else {
+                lerpFloat(20f, 18f, clampedProgress).coerceIn(0f, 20f)
+            }
+            val currentElevation = if (hasCardOrigin) (16.dp * (1f - clampedProgress)).coerceAtLeast(0.dp) else 0.dp
+            val containerAlpha = if (hasCardOrigin) 1f else clampedProgress
 
             Box(
                 modifier = Modifier
                     .offset(x = currentLeftDp, y = currentTopDp)
                     .size(width = currentWidthDp, height = currentHeightDp)
+                    .graphicsLayer { alpha = containerAlpha }
                     .clip(RoundedCornerShape(currentCornerRadius.dp))
-                    .background(palette.primary)
+                    .background(if (isAppleMusicLyrics) Color.Black else palette.primary)
                     .shadow(
                         elevation = currentElevation,
                         shape = RoundedCornerShape(currentCornerRadius.dp)
@@ -531,7 +656,8 @@ fun AuraNowPlayingSheet(
                 // Player controls are completely hidden when shrinking back to the lyrics card slot
                 FullScreenSongLyricsView(
                     track = track,
-                    lyrics = lyrics,
+                    lyrics = activeLyrics,
+                    isLyricsLoading = isLyricsLoading,
                     positionSec = positionSec,
                     durationSec = durationSec,
                     bufferedSec = bufferedSec,
@@ -542,6 +668,7 @@ fun AuraNowPlayingSheet(
                     palette = palette,
                     showPlayerControls = lyricsExpansionProgress >= 0.38f,
                     lyricsExpansionProgress = lyricsExpansionProgress,
+                    compactHeaderTopPadding = compactHeaderBottomDp,
                     onSeekTo = onSeekTo,
                     onTogglePlayPause = onTogglePlayPause,
                     onSkipPrevious = onSkipPrevious,
@@ -552,7 +679,7 @@ fun AuraNowPlayingSheet(
 
                 // Smooth seamless card preview blend when close to the bottom slot
                 // Matches the card's exact 16.sp font size and layout without any jump
-                if (lyricsExpansionProgress < 0.35f) {
+                if (hasCardOrigin && lyricsExpansionProgress < 0.35f) {
                     val previewFadeAlpha = (1f - (lyricsExpansionProgress / 0.35f)).coerceIn(0f, 1f)
                     Surface(
                         color = palette.primary,
@@ -702,9 +829,9 @@ fun AuraNowPlayingSheet(
                     showRomanized = showRomanized,
                     lyricsOffsetMs = lyricsOffsetMs,
                     onAdjustLyricsOffset = onAdjustLyricsOffset,
-                    artworkExpansionProgress = coverFlightProgress,
+                    artworkExpansionProgress = if (hasCardOrigin) coverFlightProgress else clampedProgress,
                     statusBarHeightPx = statusBarHeightPx,
-                    headerColor = lerp(Color.Black, palette.primary, 0.08f),
+                    headerColor = if (isAppleMusicLyrics) Color.Transparent else lerp(Color.Black, palette.primary, 0.08f),
                     onArtworkPositioned = { lyricsHeaderArtBounds = it },
                     onClose = { isLyricsExpanded = false },
                     onTogglePlayPause = onTogglePlayPause,
@@ -748,8 +875,10 @@ fun AuraNowPlayingSheet(
         }
 
         // Harmonized dark container color subtly tinted with dominant lyrics card palette color
-        val modalContainerColor = remember(palette.primary) {
-            lerp(Color(0xFF14151B), palette.primary, 0.18f)
+        val isGlass = com.auramusic.app.ui.theme.LocalLiquidGlassEnabled.current
+        val modalContainerColor = remember(palette.primary, isGlass) {
+            val base = lerp(Color(0xFF14151B), palette.primary, 0.18f)
+            if (isGlass) base.copy(alpha = 0.88f) else base
         }
 
         // 3-Dot Options Bottom Sheet Modal
@@ -1036,7 +1165,7 @@ private fun NowPlayingOptionsModal(
             )
 
             // 3. Toggle Theme Option
-            val nextThemeLabel = if (currentStyle == NowPlayingStyle.SPOTIFY) "Apple Music" else "Spotify Encore"
+            val nextThemeLabel = if (currentStyle == NowPlayingStyle.SPOTIFY) "Liquid Glass" else "Default"
             NowPlayingModalOptionRow(
                 icon = Icons.Rounded.Palette,
                 label = "Switch Theme to $nextThemeLabel",
@@ -1704,500 +1833,6 @@ private fun AuraDraggableCoverArt(
 }
 
 /**
- * 1. Blur Style - Liquid Glass Full Screen Player
- * Directly matches the reference image:
- * Maximized high-resolution artwork, ambient backdrop blur, frosted glass controls container,
- * solid Apple playback glyphs, AAC audio badge, and tactile horizontal point volume slider.
- */
-@Composable
-private fun LiquidGlassPlayerView(
-    track: AuraTrack,
-    queue: List<AuraTrack> = emptyList(),
-    isPlaying: Boolean,
-    isBuffering: Boolean,
-    positionSec: Float,
-    durationSec: Float,
-    bufferedSec: Float = 0f,
-    isFavorite: Boolean,
-    isShuffleEnabled: Boolean,
-    lyricsExpansionProgress: Float = 0f,
-    hideArtworkForLyricsTransition: Boolean = false,
-    isVideoMode: Boolean = false,
-    isVideoLoading: Boolean = false,
-    onCollapse: () -> Unit,
-    onTogglePlayPause: () -> Unit,
-    onSeekTo: (Float) -> Unit,
-    onSkipNext: () -> Unit,
-    onSkipPrevious: () -> Unit,
-    onToggleFavorite: () -> Unit,
-    onToggleShuffle: () -> Unit,
-    onToggleVideoMode: () -> Unit = {},
-    onOpenArtist: () -> Unit,
-    onOpenCurrentPlaylist: () -> Unit = {},
-    onOptionsClick: () -> Unit,
-    onOpenLyrics: () -> Unit,
-    onAdjustLyricsOffset: (Int) -> Unit = {},
-    onOpenComments: () -> Unit,
-    onOpenQueue: () -> Unit,
-    onCardPositioned: (Rect) -> Unit = {},
-    onArtworkPositioned: (Rect) -> Unit = {}
-) {
-    val context = LocalContext.current
-    val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager }
-    val maxVol = remember { audioManager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC) ?: 15 }
-    var systemVolume by remember {
-        mutableFloatStateOf(
-            audioManager?.let { it.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / maxVol.coerceAtLeast(1) } ?: 0.65f
-        )
-    }
-
-    // Fully opaque solid black background
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        // 1. Full-screen Ambient Backdrop Blur Layer using high-res artwork
-        AsyncImage(
-            model = track.highResArtworkUrl,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxSize()
-                .blur(radius = 50.dp)
-        )
-
-        // Dark ambient overlay for contrast and legibility
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            Color.Black.copy(alpha = 0.22f),
-                            Color.Black.copy(alpha = 0.40f),
-                            Color.Black.copy(alpha = 0.85f)
-                        )
-                    )
-                )
-        )
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-                .navigationBarsPadding()
-        ) {
-            // Top Bar: Collapse, Playing from Header, and More Options Menu
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onCollapse, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = Icons.Rounded.KeyboardArrowDown,
-                        contentDescription = "Collapse",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
-                    )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(horizontal = 8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(onClick = onOpenCurrentPlaylist)
-                ) {
-                    val cleanAlbum = track.album.trim()
-                    val isValidSource = cleanAlbum.isNotBlank() &&
-                        cleanAlbum != track.title &&
-                        !cleanAlbum.matches(Regex("^\\d+:\\d{2}(:\\d{2})?$")) &&
-                        !cleanAlbum.endsWith("views", ignoreCase = true)
-                    val playingFrom = if (isValidSource) {
-                        "Playing from $cleanAlbum"
-                    } else {
-                        "Playing from Playlist"
-                    }
-                    Text(
-                        text = playingFrom,
-                        fontSize = 10.5.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White.copy(alpha = 0.7f),
-                        letterSpacing = 0.5.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = track.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                IconButton(onClick = onOptionsClick, modifier = Modifier.size(36.dp)) {
-                    Icon(
-                        imageVector = Icons.Rounded.MoreVert,
-                        contentDescription = "More",
-                        tint = Color.White,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            if (isVideoMode) {
-                // Maximized edge-to-edge video player spanning the entire width preserving ambient blur backdrop
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    AuraVideoPlayerSurface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .aspectRatio(16f / 9f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
-                        track = track,
-                        isLoading = isVideoLoading,
-                        onSwitchToAudio = onToggleVideoMode
-                    )
-                }
-            } else {
-                // 2. High Quality Artwork with generous, balanced breathing room
-                BoxWithConstraints(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 12.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    // Dynamically maximize size while fitting within available vertical & horizontal bounds
-                    val artSize = minOf(maxHeight, maxWidth)
-
-                    AuraDraggableCoverArt(
-                        currentTrack = track,
-                        queue = queue,
-                        cornerRadius = 22.dp,
-                        hideArtworkForLyricsTransition = hideArtworkForLyricsTransition,
-                        onSkipNext = onSkipNext,
-                        onSkipPrevious = onSkipPrevious,
-                        onArtworkPositioned = onArtworkPositioned,
-                        modifier = Modifier.size(artSize),
-                        overlayContent = {
-                            // Soft bottom gradient mask on top of artwork for liquid blend into controls
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            colors = listOf(
-                                                Color.Transparent,
-                                                Color.Transparent,
-                                                Color.Black.copy(alpha = 0.20f),
-                                                Color.Black.copy(alpha = 0.65f)
-                                            )
-                                        )
-                                    )
-                            )
-                        }
-                    )
-                }
-            }
-
-            // 3. Lower Frosted Glass Controls Container
-            Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = Color.White.copy(alpha = 0.10f),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 2.dp)
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 14.dp)
-                ) {
-                    // Track Title & 3 Action Icons Row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text(
-                                text = track.title.uppercase(),
-                                style = MaterialTheme.typography.titleMedium,
-                                color = Color.White,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                letterSpacing = 0.5.sp,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .clickable(onClick = onOpenCurrentPlaylist)
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = track.artist.uppercase(),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.65f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                letterSpacing = 0.6.sp,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .clickable(onClick = onOpenArtist)
-                            )
-                        }
-
-                        // Right 3 Actions: (+) Add, (★) Star Favorite, (⋮) More
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            IconButton(onClick = onOpenQueue, modifier = Modifier.size(34.dp)) {
-                                Icon(
-                                    imageVector = Icons.Rounded.AddCircleOutline,
-                                    contentDescription = "Add to Queue",
-                                    tint = Color.White.copy(alpha = 0.9f),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            IconButton(onClick = onToggleFavorite, modifier = Modifier.size(34.dp)) {
-                                Icon(
-                                    imageVector = if (isFavorite) Icons.Rounded.Star else Icons.Rounded.StarBorder,
-                                    contentDescription = "Favorite",
-                                    tint = if (isFavorite) Color(0xFFFFB74D) else Color.White.copy(alpha = 0.9f),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            IconButton(onClick = onOptionsClick, modifier = Modifier.size(34.dp)) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MoreVert,
-                                    contentDescription = "More",
-                                    tint = Color.White.copy(alpha = 0.9f),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Horizontal Point Scrubber Slider
-                    CompactPointSlider(
-                        value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
-                        bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
-                        onValueChange = onSeekTo,
-                        valueRange = 0f..durationSec.coerceAtLeast(1f),
-                        pointColor = Color.White,
-                        activeTrackColor = Color.White,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // Timestamps & Audio Codec Badge Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = formatDuration(positionSec.toInt()),
-                            fontFamily = AuraPoppinsFontFamily,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White.copy(alpha = 0.65f)
-                        )
-
-                        // Audio Codec Glass Pill: [ •||• AAC ]
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = Color.White.copy(alpha = 0.12f),
-                            border = BorderStroke(0.6.dp, Color.White.copy(alpha = 0.25f))
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(1.5.dp)
-                                ) {
-                                    Box(modifier = Modifier.width(2.dp).height(7.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                                    Box(modifier = Modifier.width(2.dp).height(11.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                                    Box(modifier = Modifier.width(2.dp).height(5.dp).background(Color.White, RoundedCornerShape(1.dp)))
-                                }
-                                Text(
-                                    text = track.codec.ifBlank { "AAC" },
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White,
-                                    letterSpacing = 0.5.sp
-                                )
-                            }
-                        }
-
-                        Text(
-                            text = "-" + formatDuration((durationSec - positionSec).toInt().coerceAtLeast(0)),
-                            fontFamily = AuraPoppinsFontFamily,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White.copy(alpha = 0.65f)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Solid Apple-style Playback Controls Row: Prev, Play/Pause, Next
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onSkipPrevious, modifier = Modifier.size(54.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.SkipPrevious,
-                                contentDescription = "Previous Track",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.width(32.dp))
-
-                        IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(62.dp)) {
-                            if (isBuffering) {
-                                CircularProgressIndicator(
-                                    color = Color.White,
-                                    strokeWidth = 3.dp,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            } else {
-                                Icon(
-                                    imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                    contentDescription = if (isPlaying) "Pause" else "Play",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(46.dp)
-                                )
-                            }
-                        }
-
-                        Spacer(modifier = Modifier.width(32.dp))
-
-                        IconButton(onClick = onSkipNext, modifier = Modifier.size(54.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.SkipNext,
-                                contentDescription = "Next Track",
-                                tint = Color.White,
-                                modifier = Modifier.size(34.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // Horizontal Point Volume Slider Row
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.VolumeDown,
-                            contentDescription = "Volume Down",
-                            tint = Color.White.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        CompactPointSlider(
-                            value = systemVolume,
-                            onValueChange = { newVol ->
-                                systemVolume = newVol
-                                audioManager?.setStreamVolume(
-                                    AudioManager.STREAM_MUSIC,
-                                    (newVol * maxVol).toInt(),
-                                    0
-                                )
-                            },
-                            valueRange = 0f..1f,
-                            pointColor = Color.White,
-                            activeTrackColor = Color.White.copy(alpha = 0.9f),
-                            modifier = Modifier
-                                .weight(1f)
-                                .padding(horizontal = 8.dp)
-                        )
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
-                            contentDescription = "Volume Up",
-                            tint = Color.White.copy(alpha = 0.6f),
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // Bottom Row: Lyrics, Shuffle, Queue
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 2.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(onClick = onOpenLyrics, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.Audiotrack,
-                                contentDescription = "Lyrics",
-                                tint = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        IconButton(onClick = onOpenComments, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.Comment,
-                                contentDescription = "Comments",
-                                tint = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        IconButton(onClick = onToggleShuffle, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.Shuffle,
-                                contentDescription = "Shuffle",
-                                tint = if (isShuffleEnabled) AuraPlayGreen else Color.White.copy(alpha = 0.6f),
-                                modifier = Modifier.size(20.dp)
-                            )
-                        }
-
-                        IconButton(onClick = onOpenQueue, modifier = Modifier.size(40.dp)) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                contentDescription = "Queue",
-                                tint = Color.White.copy(alpha = 0.8f),
-                                modifier = Modifier.size(22.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
  * 2. Spotify Encore Full Screen Player View
  */
 /**
@@ -2463,8 +2098,13 @@ private fun SpotifyEncorePlayerView(
                         style = MaterialTheme.typography.titleMedium,
                         color = Color.White,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                animationMode = MarqueeAnimationMode.Immediately
+                            )
+                            .focusable()
                             .clip(RoundedCornerShape(4.dp))
                             .clickable(onClick = onOpenCurrentPlaylist)
                     )
@@ -2474,8 +2114,13 @@ private fun SpotifyEncorePlayerView(
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.7f),
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier
+                            .fillMaxWidth()
+                            .basicMarquee(
+                                iterations = Int.MAX_VALUE,
+                                animationMode = MarqueeAnimationMode.Immediately
+                            )
+                            .focusable()
                             .clip(RoundedCornerShape(4.dp))
                             .clickable(onClick = onOpenArtist)
                     )
@@ -3172,6 +2817,7 @@ private fun FullScreenLyricsCompactHeader(
 private fun FullScreenSongLyricsView(
     track: AuraTrack,
     lyrics: LyricsData?,
+    isLyricsLoading: Boolean = false,
     positionSec: Float,
     durationSec: Float,
     bufferedSec: Float = 0f,
@@ -3182,6 +2828,7 @@ private fun FullScreenSongLyricsView(
     palette: AuraPalette,
     showPlayerControls: Boolean = true,
     lyricsExpansionProgress: Float = 1f,
+    compactHeaderTopPadding: Dp = 0.dp,
     onSeekTo: (Float) -> Unit,
     onTogglePlayPause: () -> Unit,
     onSkipPrevious: () -> Unit,
@@ -3189,6 +2836,73 @@ private fun FullScreenSongLyricsView(
     onOpenQueue: () -> Unit = {},
     onAdjustLyricsOffset: (Int) -> Unit
 ) {
+    if (LocalLyricsStyle.current == LyricsStyle.APPLE_MUSIC) {
+        val rawSeed = remember(palette.primary) {
+            if (palette.primary == Color.Black) AuraViolet else palette.primary
+        }
+        val seedColor by animateColorAsState(
+            targetValue = rawSeed,
+            animationSpec = tween(500),
+            label = "fullScreenLyricsSeedColor"
+        )
+        val displayLyrics = lyrics?.takeIf { it.source != "None" }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black)
+        ) {
+            AppleMusicArtworkBackdrop(
+                artworkUrl = track.highResArtworkUrl,
+                seedColor = seedColor
+            )
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding()
+            ) {
+                if (compactHeaderTopPadding > 0.dp) {
+                    Spacer(modifier = Modifier.height(compactHeaderTopPadding))
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                ) {
+                    AppleMusicLyricsList(
+                        lyricsData = displayLyrics,
+                        currentPositionSec = positionSec,
+                        lyricsOffsetMs = lyricsOffsetMs.toLong(),
+                        isPlaying = isPlaying,
+                        showRomanized = showRomanized,
+                        onLineClick = onSeekTo,
+                        isLoading = isLyricsLoading,
+                        bottomExtraPadding = if (showPlayerControls) 16.dp else 0.dp
+                    )
+                }
+
+                if (showPlayerControls) {
+                    FullScreenLyricsTransportChrome(
+                        positionSec = positionSec,
+                        durationSec = durationSec,
+                        bufferedSec = bufferedSec,
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        lyricsExpansionProgress = lyricsExpansionProgress,
+                        onSeekTo = onSeekTo,
+                        onTogglePlayPause = onTogglePlayPause,
+                        onSkipPrevious = onSkipPrevious,
+                        onSkipNext = onSkipNext,
+                        onOpenQueue = onOpenQueue
+                    )
+                }
+            }
+        }
+        return
+    }
+
     val lines = lyrics?.syncedLines ?: emptyList()
     val effectiveSec = positionSec + (lyricsOffsetMs / 1000f)
     val activeIdx = lines.indexOfLast { effectiveSec >= it.timeSec }.coerceAtLeast(0)
@@ -3344,135 +3058,164 @@ private fun FullScreenSongLyricsView(
             // 100% seamless: uses the EXACT same color as the lyrics background (no gray transparent overlay)
             // Completely hidden during shrinking back to the lyrics card so only lyrics are present!
             if (showPlayerControls) {
-                Surface(
-                    color = Color.Transparent,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .graphicsLayer {
-                            alpha = ((lyricsExpansionProgress - 0.38f) / 0.42f).coerceIn(0f, 1f)
-                        }
+                FullScreenLyricsTransportChrome(
+                    positionSec = positionSec,
+                    durationSec = durationSec,
+                    bufferedSec = bufferedSec,
+                    isPlaying = isPlaying,
+                    isBuffering = isBuffering,
+                    lyricsExpansionProgress = lyricsExpansionProgress,
+                    onSeekTo = onSeekTo,
+                    onTogglePlayPause = onTogglePlayPause,
+                    onSkipPrevious = onSkipPrevious,
+                    onSkipNext = onSkipNext,
+                    onOpenQueue = onOpenQueue
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun FullScreenLyricsTransportChrome(
+    positionSec: Float,
+    durationSec: Float,
+    bufferedSec: Float,
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    lyricsExpansionProgress: Float,
+    onSeekTo: (Float) -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+    onOpenQueue: () -> Unit
+) {
+    Surface(
+        color = Color.Transparent,
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                alpha = ((lyricsExpansionProgress - 0.38f) / 0.42f).coerceIn(0f, 1f)
+            }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            CompactPointSlider(
+                value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
+                bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
+                onValueChange = onSeekTo,
+                valueRange = 0f..durationSec.coerceAtLeast(1f),
+                pointColor = Color.White,
+                activeTrackColor = Color.White,
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = formatDuration(positionSec.toInt()),
+                    fontFamily = AuraPoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+                Text(
+                    text = formatDuration(durationSec.toInt()),
+                    fontFamily = AuraPoppinsFontFamily,
+                    fontSize = 11.sp,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            val playbackMode by AuraPlayerManager.playbackMode.collectAsState()
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { AuraPlayerManager.cyclePlaybackMode() },
+                    modifier = Modifier.size(46.dp)
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 24.dp, vertical = 12.dp)
-                    ) {
-                        CompactPointSlider(
-                            value = positionSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
-                            bufferedValue = bufferedSec.coerceIn(0f, durationSec.coerceAtLeast(1f)),
-                            onValueChange = onSeekTo,
-                            valueRange = 0f..durationSec.coerceAtLeast(1f),
-                            pointColor = Color.White,
-                            activeTrackColor = Color.White,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = formatDuration(positionSec.toInt()),
-                                fontFamily = AuraPoppinsFontFamily,
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                            Text(
-                                text = formatDuration(durationSec.toInt()),
-                                fontFamily = AuraPoppinsFontFamily,
-                                fontSize = 11.sp,
-                                color = Color.White.copy(alpha = 0.8f)
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val playbackMode by AuraPlayerManager.playbackMode.collectAsState()
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = { AuraPlayerManager.cyclePlaybackMode() },
-                                modifier = Modifier.size(46.dp)
-                            ) {
-                                val (icon, tint) = when (playbackMode) {
-                                    PlaybackMode.NORMAL -> Icons.Rounded.Shuffle to Color.White.copy(alpha = 0.5f)
-                                    PlaybackMode.SHUFFLE -> Icons.Rounded.Shuffle to AuraPlayGreen
-                                    PlaybackMode.REPEAT_ALL -> Icons.Rounded.Repeat to AuraPlayGreen
-                                    PlaybackMode.REPEAT_ONE -> Icons.Rounded.RepeatOne to AuraPlayGreen
-                                }
-                                Icon(
-                                    imageVector = icon,
-                                    contentDescription = playbackMode.label,
-                                    tint = tint,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = onSkipPrevious,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SkipPrevious,
-                                    contentDescription = "Previous Track",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .size(58.dp)
-                                    .clip(CircleShape)
-                                    .background(Color.White)
-                                    .clickable(onClick = onTogglePlayPause),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isBuffering) {
-                                    CircularProgressIndicator(
-                                        color = Color.Black,
-                                        strokeWidth = 2.5.dp,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                                        contentDescription = if (isPlaying) "Pause" else "Play",
-                                        tint = Color.Black,
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                }
-                            }
-
-                            IconButton(
-                                onClick = onSkipNext,
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.SkipNext,
-                                    contentDescription = "Next Track",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(32.dp)
-                                )
-                            }
-
-                            IconButton(
-                                onClick = onOpenQueue,
-                                modifier = Modifier.size(46.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
-                                    contentDescription = "Upcoming Queue",
-                                    tint = Color.White.copy(alpha = 0.85f),
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
-                        }
+                    val (icon, tint) = when (playbackMode) {
+                        PlaybackMode.NORMAL -> Icons.Rounded.Shuffle to Color.White.copy(alpha = 0.5f)
+                        PlaybackMode.SHUFFLE -> Icons.Rounded.Shuffle to AuraPlayGreen
+                        PlaybackMode.REPEAT_ALL -> Icons.Rounded.Repeat to AuraPlayGreen
+                        PlaybackMode.REPEAT_ONE -> Icons.Rounded.RepeatOne to AuraPlayGreen
                     }
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = playbackMode.label,
+                        tint = tint,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onSkipPrevious,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SkipPrevious,
+                        contentDescription = "Previous Track",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(58.dp)
+                        .clip(CircleShape)
+                        .background(Color.White)
+                        .clickable(onClick = onTogglePlayPause),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (isBuffering) {
+                        CircularProgressIndicator(
+                            color = Color.Black,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.Black,
+                            modifier = Modifier.size(32.dp)
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onSkipNext,
+                    modifier = Modifier.size(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SkipNext,
+                        contentDescription = "Next Track",
+                        tint = Color.White,
+                        modifier = Modifier.size(32.dp)
+                    )
+                }
+
+                IconButton(
+                    onClick = onOpenQueue,
+                    modifier = Modifier.size(46.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.QueueMusic,
+                        contentDescription = "Upcoming Queue",
+                        tint = Color.White.copy(alpha = 0.85f),
+                        modifier = Modifier.size(24.dp)
+                    )
                 }
             }
         }

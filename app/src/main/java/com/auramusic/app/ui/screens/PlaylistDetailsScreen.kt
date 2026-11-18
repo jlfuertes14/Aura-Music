@@ -31,6 +31,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.sizeIn
@@ -127,10 +128,17 @@ import com.auramusic.app.ui.components.AuraPlaylistOptionsModal
 import com.auramusic.app.ui.components.AuraTrackOptionsModal
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPlayGreen
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import com.auramusic.app.ui.theme.auraGlassSurface
+import com.auramusic.app.ui.theme.barBlurStyle
+import com.auramusic.app.ui.theme.hazeBlurBar
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import java.io.File
 import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
@@ -265,6 +273,8 @@ fun PlaylistDetailsScreen(
     var belowCoverTitleBottomY by remember { mutableFloatStateOf(Float.MAX_VALUE) }
 
     val listState = rememberLazyListState()
+    val isGlass = LocalLiquidGlassEnabled.current
+    val hazeState = rememberHazeState()
 
     // Auto-scroll to currently playing track when navigated from full-screen now playing
     LaunchedEffect(initialScrollToTrackId, processedTracks) {
@@ -379,7 +389,8 @@ fun PlaylistDetailsScreen(
             state = listState,
             modifier = Modifier
                 .fillMaxSize()
-                .nestedScroll(nestedScrollConnection),
+                .nestedScroll(nestedScrollConnection)
+                .then(if (isGlass) Modifier.hazeSource(hazeState) else Modifier),
             contentPadding = PaddingValues(top = 0.dp, bottom = 128.dp)
         ) {
             // Header: Search & Sort + Shrinking Collage + Title + Metadata + Actions
@@ -431,8 +442,11 @@ fun PlaylistDetailsScreen(
                                 modifier = Modifier
                                     .weight(1f)
                                     .height(38.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF404352))
+                                    .auraGlassSurface(
+                                        shape = RoundedCornerShape(if (isGlass) 12.dp else 8.dp),
+                                        fallbackColor = Color(0xFF404352),
+                                        glassAlpha = 0.14f
+                                    )
                                     .padding(horizontal = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -448,7 +462,7 @@ fun PlaylistDetailsScreen(
                                     onValueChange = { searchInPlaylistQuery = it },
                                     singleLine = true,
                                     textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
-                                    cursorBrush = SolidColor(AuraPlayGreen),
+                                    cursorBrush = SolidColor(AuraNeonLime),
                                     modifier = Modifier.weight(1f),
                                     decorationBox = { inner ->
                                         if (searchInPlaylistQuery.isEmpty()) {
@@ -478,12 +492,14 @@ fun PlaylistDetailsScreen(
 
                             Spacer(modifier = Modifier.width(10.dp))
 
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = Color(0xFF404352),
+                            Box(
                                 modifier = Modifier
                                     .height(38.dp)
-                                    .clip(RoundedCornerShape(8.dp))
+                                    .auraGlassSurface(
+                                        shape = RoundedCornerShape(if (isGlass) 12.dp else 8.dp),
+                                        fallbackColor = Color(0xFF404352),
+                                        glassAlpha = 0.14f
+                                    )
                                     .clickable {
                                         sortOption = when (sortOption) {
                                             PlaylistSortOption.DEFAULT -> PlaylistSortOption.TITLE
@@ -499,18 +515,15 @@ fun PlaylistDetailsScreen(
                                         }
                                         Toast.makeText(context, label, Toast.LENGTH_SHORT).show()
                                     }
+                                    .padding(horizontal = 14.dp),
+                                contentAlignment = Alignment.Center
                             ) {
-                                Box(
-                                    modifier = Modifier.padding(horizontal = 14.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = sortOption.displayName,
-                                        color = Color(0xFFD0D4E0),
-                                        fontSize = 12.5.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
+                                Text(
+                                    text = sortOption.displayName,
+                                    color = Color(0xFFD0D4E0),
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
@@ -787,7 +800,14 @@ fun PlaylistDetailsScreen(
                 }
                 .then(
                     if (headerBackgroundAlpha > 0.001f) {
-                        Modifier.background(headerSolidGradient, alpha = headerBackgroundAlpha)
+                        if (isGlass) {
+                            Modifier.hazeBlurBar(
+                                state = hazeState,
+                                style = barBlurStyle(dominantColor, tintAlpha = 0.45f * headerBackgroundAlpha)
+                            )
+                        } else {
+                            Modifier.background(headerSolidGradient, alpha = headerBackgroundAlpha)
+                        }
                     } else {
                         Modifier
                     }
@@ -796,12 +816,13 @@ fun PlaylistDetailsScreen(
             // Android Status Bar Area (battery, time, wifi) included in header background color
             Spacer(modifier = Modifier.windowInsetsTopHeight(WindowInsets.statusBars))
 
-            // Row 1: Dedicated Navigation Row with Back button & 3-dots button (dark circle backgrounds per reference)
+            // Row 1: Dedicated Navigation Row with Back button & 3-dots button
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
-                    .padding(horizontal = 14.dp),
+                    .height(42.dp)
+                    .offset(y = (-4).dp)
+                    .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 // Centered Title appearing as collage shrinks
@@ -818,36 +839,62 @@ fun PlaylistDetailsScreen(
                         .graphicsLayer { alpha = headerTitleAlpha }
                 )
 
-                // Back button - Flat, no circle fill, larger icon size
-                IconButton(
-                    onClick = onBack,
+                // Back button (44.dp touch target, compact 34.dp frosted circle)
+                Box(
                     modifier = Modifier
                         .align(Alignment.CenterStart)
                         .size(44.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onBack),
+                    contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
-                        tint = Color.White,
-                        modifier = Modifier.size(26.dp)
-                    )
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .then(
+                                if (isGlass) {
+                                    Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                } else Modifier
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
-                // 3-dots Options button - Flat, no circle fill, larger icon size
+                // 3-dots Options button (44.dp touch target, compact 34.dp frosted circle)
                 if (threeDotAlpha > 0.01f) {
-                    IconButton(
-                        onClick = { showMenu = true },
+                    Box(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
                             .size(44.dp)
                             .graphicsLayer { alpha = threeDotAlpha }
+                            .clip(CircleShape)
+                            .clickable { showMenu = true },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.MoreVert,
-                            contentDescription = "Playlist Options",
-                            tint = Color.White,
-                            modifier = Modifier.size(26.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .then(
+                                    if (isGlass) {
+                                        Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                    } else Modifier
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = "Playlist Options",
+                                tint = Color.White,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -858,7 +905,7 @@ fun PlaylistDetailsScreen(
     if (showEditTitleDialog) {
         AlertDialog(
             onDismissRequest = { showEditTitleDialog = false },
-            containerColor = SpotifyCard,
+            containerColor = auraGlassSheetColor(SpotifyCard),
             title = {
                 Text("Rename Playlist", color = TextPrimary, fontWeight = FontWeight.Bold)
             },

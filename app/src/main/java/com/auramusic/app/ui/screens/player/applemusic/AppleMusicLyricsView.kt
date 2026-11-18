@@ -3,12 +3,17 @@ package com.auramusic.app.ui.screens.player.applemusic
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
@@ -34,7 +39,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
@@ -56,19 +63,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.BlendMode
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -89,56 +94,9 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
-private const val FADE_EDGE_STEPS = 24
 private const val FOOTER_ALPHA = 0.45f
 private const val AUTO_SCROLL_RESUME_DELAY_MS = 3_500L
 private const val CLUSTER_AUTO_HIDE_MS = 8_000L
-
-private fun smoothstep(t: Float): Float = t * t * (3f - 2f * t)
-
-private fun fadeEdgeStops(
-    topStop: Float,
-    bottomStop: Float,
-): Array<Pair<Float, Color>> =
-    buildList {
-        if (topStop > 0f) {
-            for (i in 0..FADE_EDGE_STEPS) {
-                val t = i / FADE_EDGE_STEPS.toFloat()
-                add(topStop * t to Color.Black.copy(alpha = smoothstep(t)))
-            }
-        } else {
-            add(0f to Color.Black)
-        }
-        if (bottomStop < 1f) {
-            for (i in 0..FADE_EDGE_STEPS) {
-                val t = i / FADE_EDGE_STEPS.toFloat()
-                add(bottomStop + (1f - bottomStop) * t to Color.Black.copy(alpha = 1f - smoothstep(t)))
-            }
-        } else {
-            add(1f to Color.Black)
-        }
-    }.toTypedArray()
-
-/**
- * Smoothstep `BlendMode.DstIn` vertical edge dissolve so scrolling lyrics fade cleanly into
- * whatever backdrop sits behind them without painting a hard color scrim.
- */
-fun Modifier.appleMusicVerticalFadeEdges(
-    topFade: Dp = 28.dp,
-    bottomFade: Dp = 18.dp,
-): Modifier =
-    graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
-        .drawWithContent {
-            drawContent()
-            val topPx = topFade.toPx().coerceAtMost(size.height / 2f)
-            val bottomPx = bottomFade.toPx().coerceAtMost(size.height / 2f)
-            val topStop = if (size.height > 0f) topPx / size.height else 0f
-            val bottomStop = if (size.height > 0f) 1f - bottomPx / size.height else 1f
-            drawRect(
-                brush = Brush.verticalGradient(colorStops = fadeEdgeStops(topStop, bottomStop)),
-                blendMode = BlendMode.DstIn,
-            )
-        }
 
 /**
  * Reusable Apple Music depth-of-field synced lyrics list, used in both [AppleMusicLyricsTabView]
@@ -222,7 +180,7 @@ fun AppleMusicLyricsList(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .appleMusicVerticalFadeEdges(topFade = 28.dp, bottomFade = 18.dp),
+            .appleMusicVerticalFadeEdges(topFadeHeight = 28.dp, bottomFadeHeight = 18.dp),
     ) {
         val tailPadding = maxHeight * 0.72f + bottomExtraPadding
 
@@ -403,8 +361,6 @@ fun AppleMusicLyricsTabView(
     bottomCluster: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val density = LocalDensity.current
-    val statusTopDp = with(density) { WindowInsets.statusBars.getTop(density).toDp() }
     val backdrop = LocalGlassBackdrop.current
 
     var showCluster by rememberSaveable { mutableStateOf(true) }
@@ -443,7 +399,6 @@ fun AppleMusicLyricsTabView(
                 contentDescription = "Lyrics for ${track.title} by ${track.artist}"
             },
     ) {
-        Spacer(modifier = Modifier.height(statusTopDp + 20.dp))
         compactHeader()
 
         Box(
@@ -511,7 +466,11 @@ fun AppleMusicLyricsTabView(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            AnimatedVisibility(visible = showOffsetControl) {
+                            AnimatedVisibility(
+                                visible = showOffsetControl,
+                                enter = fadeIn(tween(160)) + expandHorizontally(tween(200)),
+                                exit = fadeOut(tween(140)) + shrinkHorizontally(tween(180)),
+                            ) {
                                 LyricsOffsetInlinePill(
                                     offsetMs = lyricsOffsetMs.toInt(),
                                     backdrop = backdrop,
@@ -588,7 +547,7 @@ private fun FloatingLyricsPillButton(
             imageVector = icon,
             modifier = Modifier
                 .pressInflate()
-                .size(38.dp),
+                .size(44.dp),
             shape = CircleShape,
             tint = tint,
             contentDescription = contentDescription,
@@ -598,7 +557,7 @@ private fun FloatingLyricsPillButton(
         Box(
             modifier = Modifier
                 .pressInflate()
-                .size(38.dp)
+                .size(44.dp)
                 .clip(CircleShape)
                 .background(
                     if (active) Color.White.copy(alpha = 0.30f) else Color.White.copy(alpha = 0.24f),
@@ -620,60 +579,81 @@ private fun FloatingLyricsPillButton(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun LyricsOffsetInlinePill(
     offsetMs: Int,
     backdrop: com.kyant.backdrop.backdrops.LayerBackdrop?,
     onAdjustOffsetMs: (Int) -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     val content: @Composable () -> Unit = {
         CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides Dp.Unspecified) {
             Row(
-                modifier = Modifier.padding(horizontal = 8.dp),
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                OffsetStepChip(
-                    label = "-0.5s",
-                    contentDescription = "Delay lyrics by 0.5 seconds",
-                    onClick = { onAdjustOffsetMs(-500) },
-                )
-                OffsetStepChip(
-                    label = "-0.1s",
-                    contentDescription = "Delay lyrics by 0.1 seconds",
-                    onClick = { onAdjustOffsetMs(-100) },
-                )
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = { onAdjustOffsetMs(-100) },
+                            onLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onAdjustOffsetMs(-500)
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Remove,
+                        contentDescription = "Delay -0.1s (Hold for -0.5s)",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
                 Text(
                     text = formatOffsetSeconds(offsetMs),
                     style = TextStyle(
                         fontFamily = AuraPoppinsFontFamily,
                         fontWeight = FontWeight.SemiBold,
-                        fontSize = 11.sp,
+                        fontSize = 11.5.sp,
                         color = if (offsetMs != 0) AuraNeonLime else Color.White,
                     ),
                     textAlign = TextAlign.Center,
                     maxLines = 1,
-                    modifier = Modifier.widthIn(min = 42.dp),
+                    modifier = Modifier.widthIn(min = 52.dp),
                 )
-                OffsetStepChip(
-                    label = "+0.1s",
-                    contentDescription = "Advance lyrics by 0.1 seconds",
-                    onClick = { onAdjustOffsetMs(100) },
-                )
-                OffsetStepChip(
-                    label = "+0.5s",
-                    contentDescription = "Advance lyrics by 0.5 seconds",
-                    onClick = { onAdjustOffsetMs(500) },
-                )
-                AnimatedVisibility(visible = offsetMs != 0) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .combinedClickable(
+                            onClick = { onAdjustOffsetMs(100) },
+                            onLongClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                onAdjustOffsetMs(500)
+                            },
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = "Advance +0.1s (Hold for +0.5s)",
+                        tint = Color.White,
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
+                if (offsetMs != 0) {
                     IconButton(
                         onClick = { onAdjustOffsetMs(-offsetMs) },
-                        modifier = Modifier.size(26.dp),
+                        modifier = Modifier.size(28.dp),
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.RestartAlt,
-                            contentDescription = "Reset lyrics timing offset",
-                            tint = Color.White.copy(alpha = 0.85f),
+                            contentDescription = "Reset offset",
+                            tint = Color.White.copy(alpha = 0.8f),
                             modifier = Modifier.size(14.dp),
                         )
                     }
@@ -685,8 +665,8 @@ private fun LyricsOffsetInlinePill(
     if (backdrop != null) {
         LiquidGlassContainer(
             backdrop = backdrop,
-            modifier = Modifier.height(38.dp),
-            shape = RoundedCornerShape(19.dp),
+            modifier = Modifier.height(34.dp),
+            shape = CircleShape,
             interactive = false,
         ) {
             content()
@@ -694,43 +674,13 @@ private fun LyricsOffsetInlinePill(
     } else {
         Box(
             modifier = Modifier
-                .height(38.dp)
-                .clip(RoundedCornerShape(19.dp))
-                .background(Color.White.copy(alpha = 0.24f)),
+                .height(34.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.45f)),
             contentAlignment = Alignment.Center,
         ) {
             content()
         }
-    }
-}
-
-@Composable
-private fun OffsetStepChip(
-    label: String,
-    contentDescription: String,
-    onClick: () -> Unit,
-) {
-    Box(
-        modifier = Modifier
-            .clip(CircleShape)
-            .clickable(
-                role = Role.Button,
-                onClickLabel = contentDescription,
-                onClick = onClick,
-            )
-            .padding(horizontal = 6.dp, vertical = 6.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            text = label,
-            style = TextStyle(
-                fontFamily = AuraPoppinsFontFamily,
-                fontWeight = FontWeight.Medium,
-                fontSize = 11.sp,
-                color = Color.White,
-            ),
-            maxLines = 1,
-        )
     }
 }
 

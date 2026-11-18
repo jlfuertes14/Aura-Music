@@ -30,6 +30,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -41,12 +47,14 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.auramusic.app.core.comments.YouTubeCommentsRepository
 import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.AuraYouTubeComment
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.TextSecondary
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -261,6 +269,20 @@ private fun CommentBodyRow(
     comment: AuraYouTubeComment,
     avatarSize: Dp
 ) {
+    val scope = rememberCoroutineScope()
+    var translatedText by remember(comment.id) {
+        mutableStateOf(YouTubeCommentsRepository.getCachedTranslation(comment.id))
+    }
+    var isShowingTranslated by rememberSaveable(comment.id) {
+        mutableStateOf(false)
+    }
+    var isTranslating by remember(comment.id) {
+        mutableStateOf(false)
+    }
+    val canTranslate = remember(comment.id, comment.text, comment.translateActionToken) {
+        YouTubeCommentsRepository.isTranslatableToEnglish(comment.text, comment.translateActionToken)
+    }
+
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.Top
@@ -297,12 +319,73 @@ private fun CommentBodyRow(
                 }
             }
             Spacer(Modifier.height(4.dp))
+            val displayedText = if (isShowingTranslated && !translatedText.isNullOrBlank()) {
+                translatedText!!
+            } else {
+                comment.text
+            }
             Text(
-                text = comment.text,
+                text = displayedText,
                 color = Color.White.copy(alpha = 0.90f),
                 fontSize = 13.sp,
                 lineHeight = 19.sp
             )
+            if (canTranslate || !translatedText.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable(enabled = !isTranslating) {
+                            if (isShowingTranslated) {
+                                isShowingTranslated = false
+                            } else if (!translatedText.isNullOrBlank()) {
+                                isShowingTranslated = true
+                            } else {
+                                isTranslating = true
+                                scope.launch {
+                                    val result = YouTubeCommentsRepository.translateToEnglish(
+                                        commentId = comment.id,
+                                        text = comment.text,
+                                        translateToken = comment.translateActionToken
+                                    )
+                                    isTranslating = false
+                                    if (!result.isNullOrBlank()) {
+                                        translatedText = result
+                                        isShowingTranslated = true
+                                    }
+                                }
+                            }
+                        }
+                        .padding(vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (isTranslating) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(11.dp),
+                            color = TextSecondary,
+                            strokeWidth = 1.5.dp
+                        )
+                        Text(
+                            text = "Translating…",
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        Text(
+                            text = if (isShowingTranslated && !translatedText.isNullOrBlank()) {
+                                "See original (Translated by Google)"
+                            } else {
+                                "Translate to English"
+                            },
+                            color = TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
             if (comment.likeCount.isNotBlank() && comment.likeCount != "0") {
                 Spacer(Modifier.height(5.dp))
                 Text("♡  ${comment.likeCount}", color = TextSecondary, fontSize = 11.sp)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
@@ -175,40 +176,50 @@ class AuraStorageRepository(context: Context) {
         }
     }
 
-    fun loadNowPlayingStyle(): NowPlayingStyle {
-        val name = prefs.getString("now_playing_style", NowPlayingStyle.SPOTIFY.name)
-        if (name == "APPLE_MUSIC" || name == "LIQUID_GLASS") return NowPlayingStyle.LIQUID_GLASS
-        return NowPlayingStyle.entries.firstOrNull { it.name == name } ?: NowPlayingStyle.SPOTIFY
+    fun loadAppThemeStyle(): AppThemeStyle {
+        val saved = prefs.getString("setting_app_theme_style", null)
+        if (saved != null) {
+            return AppThemeStyle.entries.firstOrNull { it.name == saved } ?: AppThemeStyle.LIQUID_GLASS
+        }
+        val legacyStyle = prefs.getString("now_playing_style", null)
+        val legacyGlass = if (prefs.contains("setting_liquid_glass_enabled")) {
+            prefs.getBoolean("setting_liquid_glass_enabled", true)
+        } else null
+        return when {
+            legacyStyle == NowPlayingStyle.SPOTIFY.name && legacyGlass == false -> AppThemeStyle.DEFAULT
+            else -> AppThemeStyle.LIQUID_GLASS
+        }
     }
 
+    fun saveAppThemeStyle(style: AppThemeStyle) {
+        val isGlass = style == AppThemeStyle.LIQUID_GLASS
+        prefs.edit()
+            .putString("setting_app_theme_style", style.name)
+            .putBoolean("setting_liquid_glass_enabled", isGlass)
+            .putString("now_playing_style", if (isGlass) NowPlayingStyle.LIQUID_GLASS.name else NowPlayingStyle.SPOTIFY.name)
+            .putString("setting_lyrics_style", if (isGlass) LyricsStyle.APPLE_MUSIC.name else LyricsStyle.CLASSIC.name)
+            .apply()
+    }
+
+    fun loadNowPlayingStyle(): NowPlayingStyle =
+        if (loadAppThemeStyle() == AppThemeStyle.LIQUID_GLASS) NowPlayingStyle.LIQUID_GLASS else NowPlayingStyle.SPOTIFY
+
     fun saveNowPlayingStyle(style: NowPlayingStyle) {
-        prefs.edit().putString("now_playing_style", style.name).apply()
+        saveAppThemeStyle(if (style == NowPlayingStyle.LIQUID_GLASS) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
     }
 
     fun loadLiquidGlassEnabled(): Boolean =
-        prefs.getBoolean("setting_liquid_glass_enabled", true)
+        loadAppThemeStyle() == AppThemeStyle.LIQUID_GLASS
 
     fun saveLiquidGlassEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_liquid_glass_enabled", enabled).apply()
+        saveAppThemeStyle(if (enabled) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
     }
 
-    fun loadLyricsStyle(): LyricsStyle {
-        val defaultStyle = if (isLyricsBlurSupported()) {
-            LyricsStyle.APPLE_MUSIC
-        } else {
-            LyricsStyle.CLASSIC
-        }
-        val name = prefs.getString("setting_lyrics_style", defaultStyle.name)
-        val resolved = LyricsStyle.entries.firstOrNull { it.name == name } ?: defaultStyle
-        return if (resolved == LyricsStyle.APPLE_MUSIC && !isLyricsBlurSupported()) {
-            LyricsStyle.CLASSIC
-        } else {
-            resolved
-        }
-    }
+    fun loadLyricsStyle(): LyricsStyle =
+        if (loadAppThemeStyle() == AppThemeStyle.LIQUID_GLASS) LyricsStyle.APPLE_MUSIC else LyricsStyle.CLASSIC
 
     fun saveLyricsStyle(style: LyricsStyle) {
-        prefs.edit().putString("setting_lyrics_style", style.name).apply()
+        saveAppThemeStyle(if (style == LyricsStyle.APPLE_MUSIC) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT)
     }
 
     fun recordRecentlyPlayed(track: AuraTrack) {

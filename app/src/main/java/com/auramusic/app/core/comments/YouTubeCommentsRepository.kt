@@ -20,7 +20,130 @@ data class AuraCommentRepliesPage(
 /** Read-only InnerTube comments flow: watch-page comments tab token, sort menus, replies, and continuation. */
 object YouTubeCommentsRepository {
     private const val ENDPOINT = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
+    private const val COMMENT_ACTION_ENDPOINT = "https://music.youtube.com/youtubei/v1/comment/perform_comment_action?prettyPrint=false"
     private const val CLIENT_VERSION = "1.20250312.01.00"
+
+    private val translationCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val nonEnglishIndicators = setOf(
+        // Tagalog / Filipino
+        "ang", "mga", "niya", "namin", "kayo", "sila", "ito", "iyan", "iyon", "kasi", "pero", "para",
+        "lang", "naman", "talaga", "sobrang", "ganda", "sarap", "mahal", "ikaw", "ako", "tayo", "kami",
+        "siya", "yung", "walang", "meron", "grabe", "lupet", "nakakaiyak", "kanta", "kantang", "boses",
+        "naalala", "palagi", "hanggang", "ngayon", "kahit", "bakit", "paano", "sana", "lahat", "puso",
+        // Spanish / Portuguese
+        "que", "por", "con", "una", "este", "esta", "como", "muy", "más", "canción", "hermosa", "mejor",
+        "música", "vida", "corazón", "siempre", "cuando", "todo", "nada", "não", "muito", "linda", "essa",
+        "você", "também", "estou", "mejor", "recuerdo", "escuchar", "temazo", "gracias",
+        // Indonesian / Malay
+        "yang", "dan", "ini", "itu", "dari", "untuk", "dengan", "bisa", "banget", "lagu", "enak", "bagus",
+        "suka", "dengar", "selalu", "hati", "banget", "keren",
+        // French / German / Italian / Turkish
+        "c'est", "très", "avec", "dans", "chanson", "toujours", "magnifique", "écoute",
+        "ich", "nicht", "das", "und", "lied", "schön", "immer",
+        "molto", "questa", "canzone", "sempre", "bella",
+        "çok", "güzel", "şarkı", "harika"
+    )
+
+    fun getCachedTranslation(commentId: String): String? = translationCache[commentId]
+
+    fun isTranslatableToEnglish(text: String, translateToken: String? = null): Boolean {
+        val clean = text.trim()
+        if (clean.isBlank()) return false
+        if (!translateToken.isNullOrBlank()) return true
+
+        // Check for any non-ASCII alphabetic character (CJK, Hangul, Kana, Cyrillic, Arabic, Thai, Devanagari, accented Latin, etc.)
+        var asciiLetters = 0
+        var nonAsciiLetters = 0
+        for (ch in clean) {
+            if (ch.isLetter()) {
+                if (ch.code <= 127) asciiLetters++ else nonAsciiLetters++
+            }
+        }
+        if (nonAsciiLetters > 0) return true
+        if (asciiLetters < 3) return false
+
+        // Check for common non-English Latin-script words
+        val tokens = clean.lowercase()
+            .split(Regex("[^\\p{L}']+"))
+            .filter { it.length >= 2 }
+        if (tokens.isEmpty()) return false
+        val matches = tokens.count { it in nonEnglishIndicators }
+        return matches >= 2 || (tokens.size <= 5 && matches >= 1)
+    }
+
+    suspend fun translateToEnglish(
+        commentId: String,
+        text: String,
+        translateToken: String? = null
+    ): String? = withContext(Dispatchers.IO) {
+        if (text.isBlank()) return@withContext null
+        translationCache[commentId]?.let { return@withContext it }
+
+        // 1. Try InnerTube perform_comment_action if an explicit action token was provided
+        if (!translateToken.isNullOrBlank()) {
+            runCatching {
+                val payload = JSONObject()
+                    .put("context", JSONObject().put("client", JSONObject().apply {
+                        put("clientName", "WEB_REMIX")
+                        put("clientVersion", CLIENT_VERSION)
+                        put("hl", "en")
+                        put("gl", "US")
+                    }))
+                    .put("actions", JSONArray().put(translateToken))
+                val request = Request.Builder().url(COMMENT_ACTION_ENDPOINT)
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
+                    .header("Origin", "https://music.youtube.com")
+                    .header("Referer", "https://music.youtube.com/")
+                    .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+                SimpMusicExtractorEngine.httpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val root = JSONObject(response.body?.string() ?: "{}")
+                        val translated = findObjects(root, "translatedContent")
+                            .firstNotNullOfOrNull { it.optString("content").takeIf(String::isNotBlank) }
+                            ?: findObjects(root, "commentEntityPayload")
+                                .firstNotNullOfOrNull {
+                                    it.optJSONObject("translatedContent")?.optString("content")?.takeIf(String::isNotBlank)
+                                }
+                        if (!translated.isNullOrBlank()) {
+                            translationCache[commentId] = translated
+                            return@withContext translated
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Google Translate endpoint used by YouTube/Chrome for instant auto-detected English translation
+        runCatching {
+            val encoded = java.net.URLEncoder.encode(text, "UTF-8")
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=$encoded"
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0 (Android 14; Mobile; rv:131.0) Gecko/131.0 Firefox/131.0")
+                .build()
+            SimpMusicExtractorEngine.httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@runCatching null
+                val body = response.body?.string() ?: return@runCatching null
+                val outer = JSONArray(body)
+                val sentences = outer.optJSONArray(0) ?: return@runCatching null
+                val builder = StringBuilder()
+                for (i in 0 until sentences.length()) {
+                    val seg = sentences.optJSONArray(i) ?: continue
+                    val part = seg.optString(0)
+                    if (part.isNotEmpty() && part != "null") {
+                        builder.append(part)
+                    }
+                }
+                val result = builder.toString().trim()
+                if (result.isNotBlank()) {
+                    translationCache[commentId] = result
+                    return@withContext result
+                }
+            }
+        }
+        null
+    }
 
     suspend fun firstPage(videoId: String): AuraCommentsPage = withContext(Dispatchers.IO) {
         require(videoId.isNotBlank()) { "A video id is required to load comments" }
@@ -217,6 +340,12 @@ object YouTubeCommentsRepository {
             val toolbar = payload.optJSONObject("toolbar")
             val id = viewModel?.optString("commentId").orEmpty().ifBlank { properties?.optString("commentId").orEmpty() }
             if (id.isBlank()) return null
+            val translateToken = findObjects(payload, "performCommentActionEndpoint")
+                .firstNotNullOfOrNull { it.optString("action").takeIf(String::isNotBlank) }
+                ?: viewModel?.let { vm ->
+                    findObjects(vm, "performCommentActionEndpoint")
+                        .firstNotNullOfOrNull { it.optString("action").takeIf(String::isNotBlank) }
+                }
             return AuraYouTubeComment(
                 id = id,
                 author = author?.optString("displayName").orEmpty().ifBlank { "YouTube user" },
@@ -224,7 +353,8 @@ object YouTubeCommentsRepository {
                 text = properties?.optJSONObject("content")?.optString("content").orEmpty(),
                 publishedTime = properties?.optString("publishedTime").orEmpty(),
                 likeCount = toolbar?.optString("likeCountNotliked").orEmpty(),
-                replyCountText = toolbar?.optString("replyCount").orEmpty()
+                replyCountText = toolbar?.optString("replyCount").orEmpty(),
+                translateActionToken = translateToken
             )
         }
         // Older InnerTube renderer is still used for some tracks and client responses.
@@ -257,13 +387,16 @@ object YouTubeCommentsRepository {
         val author = optJSONObject("authorText")?.readText().orEmpty().ifBlank { "YouTube user" }
         val text = optJSONObject("contentText")?.readText().orEmpty()
         val avatar = optJSONObject("authorThumbnail")?.optJSONArray("thumbnails")?.lastOrNullObject()?.optString("url")
+        val translateToken = optJSONObject("translateButton")
+            ?.let { findObjects(it, "performCommentActionEndpoint").firstNotNullOfOrNull { ep -> ep.optString("action").takeIf(String::isNotBlank) } }
         return AuraYouTubeComment(
             id = id,
             author = author,
             avatarUrl = avatar?.takeIf(String::isNotBlank),
             text = text,
             publishedTime = optJSONObject("publishedTimeText")?.readText().orEmpty(),
-            likeCount = optJSONObject("voteCount")?.readText().orEmpty()
+            likeCount = optJSONObject("voteCount")?.readText().orEmpty(),
+            translateActionToken = translateToken
         )
     }
 

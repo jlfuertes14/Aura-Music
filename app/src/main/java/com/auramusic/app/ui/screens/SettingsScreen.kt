@@ -1,5 +1,6 @@
 package com.auramusic.app.ui.screens
 
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
@@ -26,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -34,6 +36,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.HighQuality
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.Palette
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SystemUpdate
@@ -76,14 +79,16 @@ import androidx.compose.ui.unit.sp
 import coil.Coil
 import com.auramusic.app.R
 import com.auramusic.app.core.media.AuraPlayerManager
+import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.EqualizerPreset
-import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.components.EqualizerWaveSection
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.isLyricsBlurSupported
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -130,7 +135,8 @@ private val CACHE_LIMIT_OPTIONS = listOf(
 @Composable
 fun SettingsScreen(viewModel: AuraViewModel) {
     val context = LocalContext.current
-    val nowPlayingStyle by viewModel.nowPlayingStyle.collectAsState()
+    val appThemeStyle by viewModel.appThemeStyle.collectAsState()
+    val liquidGlassEnabled = LocalLiquidGlassEnabled.current
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val romanizationLanguages by viewModel.romanizationLanguages.collectAsState()
     val downloads by viewModel.downloads.collectAsState()
@@ -149,7 +155,8 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     val sponsorBlockEnabled by AuraPlayerManager.sponsorBlockEnabled.collectAsState()
     val maxCacheSizeMb by AuraPlayerManager.maxCacheSizeMb.collectAsState()
 
-    // Dialog Dialog States
+    // Dialog States
+    var showThemeDialog by remember { mutableStateOf(false) }
     var showAudioQualityDialog by remember { mutableStateOf(false) }
     var showVideoQualityDialog by remember { mutableStateOf(false) }
     var showRomanizationDialog by remember { mutableStateOf(false) }
@@ -170,7 +177,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             null
         }
     }
-    val appVersionName = packageInfo?.versionName ?: "1.5.2"
+    val appVersionName = packageInfo?.versionName ?: "1.5.3"
 
     LazyColumn(
         modifier = Modifier
@@ -195,38 +202,26 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             }
         }
 
-        // 2. Player Appearance
+        // 2. Appearance (Unified Theme)
         item {
-            SettingsCategoryHeader(title = "Player appearance")
+            SettingsCategoryHeader(title = "Appearance")
             Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF14161C), RoundedCornerShape(16.dp))
-                    .padding(4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                NowPlayingStyle.entries.forEach { style ->
-                    val isSelected = nowPlayingStyle == style
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(if (isSelected) Color(0xFF262933) else Color.Transparent)
-                            .clickable { viewModel.setNowPlayingStyle(style) }
-                            .padding(vertical = 11.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = style.label,
-                            color = if (isSelected) Color.White else TextSecondary,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            fontSize = 13.sp
-                        )
-                    }
+            ModernClickableRow(
+                icon = Icons.Rounded.Palette,
+                title = "Theme",
+                subtitle = "${appThemeStyle.label} — ${appThemeStyle.subtitle}",
+                onClick = { showThemeDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Select Theme",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
-            }
+            )
+
             Spacer(modifier = Modifier.height(30.dp))
         }
 
@@ -585,7 +580,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
-                        text = "SimpMusic & YouTube Music Engine • 0% AI Slop",
+                        text = "Powered by SimpMusic & YouTube Music Innertube",
                         color = TextSecondary,
                         fontSize = 12.sp
                     )
@@ -595,6 +590,72 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     }
 
     // --- DIALOGS ---
+
+    // 0. Unified Theme Selector Dialog
+    if (showThemeDialog) {
+        val blurSupported = isLyricsBlurSupported()
+        AlertDialog(
+            onDismissRequest = { showThemeDialog = false },
+            title = {
+                Text(text = "Theme", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AppThemeStyle.entries.forEach { option ->
+                        val isSelected = appThemeStyle == option
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.setAppThemeStyle(option)
+                                    showThemeDialog = false
+                                }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.setAppThemeStyle(option)
+                                    showThemeDialog = false
+                                },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AuraNeonLime,
+                                    unselectedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = option.label,
+                                    color = if (isSelected) AuraNeonLime else Color.White,
+                                    fontSize = 13.5.sp,
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                                Text(
+                                    text = if (option == AppThemeStyle.LIQUID_GLASS && !blurSupported) {
+                                        "Translucent glass UI & Apple Music style (blur on Android 12+)"
+                                    } else {
+                                        option.subtitle
+                                    },
+                                    color = TextSecondary,
+                                    fontSize = 11.5.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemeDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = if (liquidGlassEnabled) Color(0xFF1A1E2A) else Color(0xFF181A22),
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 
     // 1. Audio Stream Quality Dialog
     if (showAudioQualityDialog) {
