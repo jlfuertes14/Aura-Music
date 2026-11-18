@@ -10,7 +10,9 @@ import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.ListeningStats
+import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.NowPlayingStyle
+import com.auramusic.app.ui.theme.isLyricsBlurSupported
 import com.auramusic.app.core.recommendations.LocalRecommendationEngine
 import org.json.JSONArray
 import org.json.JSONObject
@@ -175,12 +177,38 @@ class AuraStorageRepository(context: Context) {
 
     fun loadNowPlayingStyle(): NowPlayingStyle {
         val name = prefs.getString("now_playing_style", NowPlayingStyle.SPOTIFY.name)
-        if (name == "APPLE_MUSIC") return NowPlayingStyle.LIQUID_GLASS
+        if (name == "APPLE_MUSIC" || name == "LIQUID_GLASS") return NowPlayingStyle.LIQUID_GLASS
         return NowPlayingStyle.entries.firstOrNull { it.name == name } ?: NowPlayingStyle.SPOTIFY
     }
 
     fun saveNowPlayingStyle(style: NowPlayingStyle) {
         prefs.edit().putString("now_playing_style", style.name).apply()
+    }
+
+    fun loadLiquidGlassEnabled(): Boolean =
+        prefs.getBoolean("setting_liquid_glass_enabled", true)
+
+    fun saveLiquidGlassEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_liquid_glass_enabled", enabled).apply()
+    }
+
+    fun loadLyricsStyle(): LyricsStyle {
+        val defaultStyle = if (isLyricsBlurSupported()) {
+            LyricsStyle.APPLE_MUSIC
+        } else {
+            LyricsStyle.CLASSIC
+        }
+        val name = prefs.getString("setting_lyrics_style", defaultStyle.name)
+        val resolved = LyricsStyle.entries.firstOrNull { it.name == name } ?: defaultStyle
+        return if (resolved == LyricsStyle.APPLE_MUSIC && !isLyricsBlurSupported()) {
+            LyricsStyle.CLASSIC
+        } else {
+            resolved
+        }
+    }
+
+    fun saveLyricsStyle(style: LyricsStyle) {
+        prefs.edit().putString("setting_lyrics_style", style.name).apply()
     }
 
     fun recordRecentlyPlayed(track: AuraTrack) {

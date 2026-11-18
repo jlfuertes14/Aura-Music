@@ -9,6 +9,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -18,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import androidx.palette.graphics.Palette
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.domain.model.AuraPalette
+import com.auramusic.app.domain.model.LyricsStyle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -182,14 +185,29 @@ val AuraTypography = Typography(
     )
 )
 
+val LocalLyricsStyle = staticCompositionLocalOf {
+    if (isLyricsBlurSupported()) LyricsStyle.APPLE_MUSIC else LyricsStyle.CLASSIC
+}
+
 @Composable
-fun AuraMusicTheme(content: @Composable () -> Unit) {
+fun AuraMusicTheme(
+    liquidGlassEnabled: Boolean = true,
+    lyricsStyle: LyricsStyle = if (isLyricsBlurSupported()) LyricsStyle.APPLE_MUSIC else LyricsStyle.CLASSIC,
+    isDarkTheme: Boolean = true,
+    content: @Composable () -> Unit
+) {
     com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect()
     MaterialTheme(
         colorScheme = AuraDarkScheme,
         typography = AuraTypography,
-        content = content
-    )
+    ) {
+        CompositionLocalProvider(
+            LocalLiquidGlassEnabled provides liquidGlassEnabled,
+            LocalLyricsStyle provides lyricsStyle,
+            LocalIsDarkTheme provides isDarkTheme,
+            content = content,
+        )
+    }
 }
 
 /**

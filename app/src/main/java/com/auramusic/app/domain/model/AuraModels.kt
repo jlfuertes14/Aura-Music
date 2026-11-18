@@ -7,6 +7,23 @@ enum class NowPlayingStyle(val label: String) {
     LIQUID_GLASS("Apple Music")
 }
 
+enum class LyricsStyle(val label: String) {
+    CLASSIC("Classic"),
+    APPLE_MUSIC("Apple Music")
+}
+
+enum class AppThemeMode(val label: String) {
+    SYSTEM("System"),
+    DARK("Dark"),
+    LIGHT("Light")
+}
+
+enum class ThemeColorSource(val label: String) {
+    DEFAULT("Default"),
+    WALLPAPER("Wallpaper"),
+    CUSTOM("Custom")
+}
+
 enum class PlaybackMode(val label: String) {
     NORMAL("Normal"),
     SHUFFLE("Shuffle All"),

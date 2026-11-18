@@ -176,4 +176,9 @@ dependencies {
     // Firebase Cloud Messaging & In-App Push Notifications
     implementation(platform(libs.firebase.bom))
     implementation(libs.firebase.messaging)
+
+    // Liquid Glass & Blur
+    implementation(libs.kyant.backdrop)
+    implementation(libs.haze)
+    implementation(libs.haze.materials)
 }

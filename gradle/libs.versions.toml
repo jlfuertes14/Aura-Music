@@ -17,6 +17,8 @@ newpipe = "v0.26.1"
 desugar = "2.1.5"
 googleServices = "4.4.2"
 firebaseBom = "33.7.0"
+backdrop = "1.0.2"
+haze = "1.7.2"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -58,6 +60,10 @@ newpipe-extractor = { module = "com.github.TeamNewPipe:NewPipeExtractor", versio
 desugar-jdk-libs = { group = "com.android.tools", name = "desugar_jdk_libs_nio", version.ref = "desugar" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-messaging = { group = "com.google.firebase", name = "firebase-messaging-ktx" }
+
+kyant-backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
+haze = { module = "dev.chrisbanes.haze:haze", version.ref = "haze" }
+haze-materials = { module = "dev.chrisbanes.haze:haze-materials", version.ref = "haze" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
