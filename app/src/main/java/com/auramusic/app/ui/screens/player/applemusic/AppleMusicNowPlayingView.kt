@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -71,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.PlaybackMode
@@ -139,7 +141,7 @@ fun AppleMusicNowPlayingView(
     onSheetDragOffsetChange: (Float) -> Unit = {},
     lyricStripSlot: @Composable (onOpenLyrics: () -> Unit) -> Unit = {},
     lyricsTabSlot: @Composable (
-        compactHeader: @Composable () -> Unit,
+        compactHeader: @Composable (trailingOverride: (@Composable RowScope.() -> Unit)?) -> Unit,
         bottomCluster: @Composable () -> Unit,
         onBackToMain: () -> Unit,
     ) -> Unit = { _, _, _ -> },
@@ -165,8 +167,8 @@ fun AppleMusicNowPlayingView(
         }
     }
 
-    val rawSeed = remember(palette.primary) {
-        if (palette.primary == Color.Black) AuraViolet else palette.primary
+    val rawSeed = remember(palette.appleMusicBackdrop) {
+        if (palette.appleMusicBackdrop == Color.Black) AuraViolet else palette.appleMusicBackdrop
     }
     val seedColor by animateColorAsState(
         targetValue = rawSeed,
@@ -207,19 +209,31 @@ fun AppleMusicNowPlayingView(
         )
     }
 
-    val sharedCompactHeader: @Composable () -> Unit = {
+    val lyricsCompactHeader: @Composable (trailingOverride: (@Composable RowScope.() -> Unit)?) -> Unit = { trailingOverride ->
         AppleMusicCompactHeader(
             track = track,
             onTapTrack = { selectView(AppleMusicView.MAIN) },
             onTapArtist = onOpenArtist,
             typography = typography,
             trailingActions = {
-                AppleMusicHeaderActions(
-                    isFavorite = isFavorite,
-                    onToggleFavorite = onToggleFavorite,
-                    onOptionsClick = onOptionsClick,
-                    onAddToPlaylist = onSaveToPlaylist,
-                )
+                Crossfade(
+                    targetState = trailingOverride != null,
+                    animationSpec = tween(220),
+                    label = "appleMusicLyricsHeaderSwitch",
+                ) { useOverride ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (useOverride && trailingOverride != null) {
+                            trailingOverride()
+                        } else {
+                            AppleMusicHeaderActions(
+                                isFavorite = isFavorite,
+                                onToggleFavorite = onToggleFavorite,
+                                onOptionsClick = onOptionsClick,
+                                onAddToPlaylist = onSaveToPlaylist,
+                            )
+                        }
+                    }
+                }
             },
         )
     }
@@ -341,7 +355,7 @@ fun AppleMusicNowPlayingView(
                             )
                             Box(modifier = Modifier.weight(1f)) {
                                 lyricsTabSlot(
-                                    sharedCompactHeader,
+                                    lyricsCompactHeader,
                                     sharedBottomCluster,
                                     { selectView(AppleMusicView.MAIN) },
                                 )
@@ -504,7 +518,7 @@ private fun AppleMusicMainView(
                 if (dragged && !inProgress && !isProgrammaticScroll) {
                     userDraggedPager = false
                     if (settled != latestCurrentIndex && settled in latestPagerQueue.indices) {
-                        onPlayQueueTrack(latestPagerQueue[settled])
+                        AuraPlayerManager.seekToQueueIndex(settled)
                     }
                 }
             }
@@ -566,6 +580,7 @@ private fun AppleMusicMainView(
         } else {
             HorizontalPager(
                 state = pagerState,
+                pageSpacing = 14.dp,
                 modifier = Modifier
                     .fillMaxSize()
                     .pointerInput(isSheetDragging) {

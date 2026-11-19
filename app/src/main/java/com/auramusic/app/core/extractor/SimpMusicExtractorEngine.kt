@@ -90,6 +90,12 @@ object SimpMusicExtractorEngine {
     private val videoInfoCache = ConcurrentHashMap<String, AuraVideoInfo>()
     private val loudnessCache = ConcurrentHashMap<String, Float>()
 
+    @Volatile
+    var contentCountry: String = "US"
+
+    fun effectiveGl(): String =
+        contentCountry.takeIf { it.isNotBlank() && !it.equals("ZZ", ignoreCase = true) } ?: "US"
+
     fun getTrackLoudnessDb(videoId: String): Float? = loudnessCache[videoId]
 
     private fun cacheLoudnessFromPlayerResponse(bodyStr: String) {
@@ -1175,7 +1181,7 @@ object SimpMusicExtractorEngine {
                             put("clientName", "WEB_REMIX")
                             put("clientVersion", "1.20250312.01.00")
                             put("hl", "en")
-                            put("gl", "US")
+                            put("gl", effectiveGl())
                         })
                     })
                     put("query", effectiveQuery)
@@ -1209,7 +1215,7 @@ object SimpMusicExtractorEngine {
                                 put("clientName", "WEB_REMIX")
                                 put("clientVersion", "1.20250312.01.00")
                                 put("hl", "en")
-                                put("gl", "US")
+                                put("gl", effectiveGl())
                             })
                         })
                         put("query", effectiveQuery)
@@ -1280,7 +1286,7 @@ object SimpMusicExtractorEngine {
                         put("clientName", "WEB_REMIX")
                         put("clientVersion", "1.20250312.01.00")
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl())
                     })
                 })
                 put("videoId", videoId)
@@ -1526,7 +1532,7 @@ object SimpMusicExtractorEngine {
                         put("clientName", "WEB_REMIX")
                         put("clientVersion", "1.20250312.01.00")
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl())
                     })
                 })
                 put("browseId", "FEmusic_home")
@@ -1877,7 +1883,7 @@ object SimpMusicExtractorEngine {
                         put("clientName", "WEB_REMIX")
                         put("clientVersion", "1.20250312.01.00")
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl())
                     })
                 })
                 put("browseId", browseId)
@@ -1974,7 +1980,7 @@ object SimpMusicExtractorEngine {
                         put("clientName", "WEB_REMIX")
                         put("clientVersion", "1.20250312.01.00")
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl())
                     })
                 })
                 put("browseId", "FEmusic_moods_and_genres")
@@ -2285,7 +2291,7 @@ object SimpMusicExtractorEngine {
      * Fetches live Global Top Artists from YouTube Music Charts (`FEmusic_charts`).
      */
     suspend fun fetchTopArtists(): List<YtmTopArtist> = withContext(Dispatchers.IO) {
-        val liveChart = fetchHomeChartData("US")
+        val liveChart = fetchHomeChartData(contentCountry)
         if (liveChart.topArtists.isNotEmpty()) {
             return@withContext liveChart.topArtists.map {
                 YtmTopArtist(id = it.id, name = it.name, subscribers = it.subscribers, avatarUrl = it.avatarUrl)
@@ -2314,7 +2320,7 @@ object SimpMusicExtractorEngine {
                         put("clientName", "WEB_REMIX")
                         put("clientVersion", "1.20250312.01.00")
                         put("hl", "en")
-                        put("gl", "US")
+                        put("gl", effectiveGl())
                     })
                 })
                 put("query", query)
@@ -3366,7 +3372,7 @@ object SimpMusicExtractorEngine {
                             put("clientName", "WEB_REMIX")
                             put("clientVersion", "1.20250312.01.00")
                             put("hl", "en")
-                            put("gl", "US")
+                            put("gl", effectiveGl())
                         })
                     })
                     put("browseId", browseId)

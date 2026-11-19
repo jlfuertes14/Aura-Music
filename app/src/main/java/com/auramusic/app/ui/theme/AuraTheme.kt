@@ -250,55 +250,124 @@ suspend fun extractAuraPaletteFromUrl(
             val palette = Palette.from(bitmap).maximumColorCount(32).generate()
 
             val swatches = palette.swatches
-            val vibrant = palette.vibrantSwatch
             val dominant = palette.dominantSwatch
-            val darkVibrant = palette.darkVibrantSwatch
-            val lightVibrant = palette.lightVibrantSwatch
             val muted = palette.mutedSwatch
-            val darkMuted = palette.darkMutedSwatch
 
-            // Filter out pitch-black (lightness < 0.12) and washed-out pure-white (lightness > 0.88)
-            val colorfulSwatches = swatches.filter { s ->
+            // 1. Spotify Encore / Default theme color picker:
+            // Score swatches by true area dominance + gentle chroma & midtone preference
+            // so small 1% accent pixels never hijack the background, while monochrome covers
+            // stay sleek neutral charcoal/slate instead of picking an unrelated hue.
+            val totalPopulation = swatches.sumOf { it.population }.coerceAtLeast(1)
+            val maxPopulation = swatches.maxOfOrNull { it.population }?.coerceAtLeast(1) ?: 1
+
+            val scoredSwatches = swatches.filter { s ->
                 val hsl = s.hsl
-                hsl[1] >= 0.18f && hsl[2] in 0.15f..0.85f
-            }.sortedByDescending { it.population }
-
-            // Rich vibrant cover art color for single-color lyrics card & full-screen lyrics background
-            // Prefer a color that occupies a meaningful part of the image. Palette's
-            // vibrant swatch can be a tiny accent and make the lyrics card feel unrelated.
-            val dominantColorful = colorfulSwatches.firstOrNull()?.takeIf { swatch ->
-                dominant == null || swatch.population >= dominant.population * 0.12f
+                s.population >= (maxPopulation * 0.08f) && hsl[2] in 0.10f..0.88f
+            }.sortedByDescending { s ->
+                val hsl = s.hsl
+                val areaShare = s.population.toFloat() / totalPopulation
+                val chromaBoost = 1f + (hsl[1].coerceIn(0f, 0.85f) * 1.6f)
+                val midLightnessBoost = 1f - kotlin.math.abs(hsl[2] - 0.45f) * 0.55f
+                areaShare * chromaBoost * midLightnessBoost
             }
-            val rawCoverColorInt = dominantColorful?.rgb
-                ?: dominant?.takeIf { it.hsl[1] >= 0.15f && it.hsl[2] in 0.10f..0.85f }?.rgb
-                ?: vibrant?.takeIf { it.hsl[2] >= 0.10f }?.rgb
-                ?: darkVibrant?.rgb
-                ?: lightVibrant?.rgb
-                ?: muted?.rgb
-                ?: dominant?.rgb
-                ?: 0xFF8B5CF6.toInt()
 
-            // Dark tone enforcement: Guarantee rich, darker tone so white lyrics text always has AAA contrast
-            val hsl = FloatArray(3)
-            androidx.core.graphics.ColorUtils.colorToHSL(rawCoverColorInt, hsl)
-            if (hsl[2] > 0.28f) {
-                hsl[2] = 0.22f // Darken to deep luxury tone while preserving hue & saturation
-            } else if (hsl[2] < 0.10f) {
-                hsl[2] = 0.16f // Prevent pitch-black
+            val bestSwatch = scoredSwatches.firstOrNull()
+                ?: dominant
+                ?: muted
+            val rawSpotifyColorInt = bestSwatch?.rgb ?: 0xFF8B5CF6.toInt()
+
+            val baseHsl = FloatArray(3)
+            androidx.core.graphics.ColorUtils.colorToHSL(rawSpotifyColorInt, baseHsl)
+
+            // Primary (Spotify lyrics card & default mini-player): rich deep tone with AAA contrast
+            val primaryHsl = baseHsl.copyOf().apply {
+                this[1] = this[1].coerceAtMost(0.72f)
+                this[2] = when {
+                    this[2] > 0.30f -> 0.24f
+                    this[2] < 0.14f -> 0.18f
+                    else -> this[2]
+                }
             }
-            val coverColorInt = androidx.core.graphics.ColorUtils.HSLToColor(hsl)
+            val coverColorInt = androidx.core.graphics.ColorUtils.HSLToColor(primaryHsl)
 
-            val ambientTopInt = darkVibrant?.rgb ?: darkMuted?.rgb ?: dominant?.rgb ?: 0xFF1E1436.toInt()
-            val ambientBottomInt = darkMuted?.rgb ?: 0xFF0D0C14.toInt()
+            // Ambient gradient top & bottom: coherently derived from the same dominant hue
+            val ambientTopHsl = baseHsl.copyOf().apply {
+                this[1] = this[1].coerceAtMost(0.65f)
+                this[2] = this[2].coerceIn(0.16f, 0.24f)
+            }
+            val ambientBottomHsl = baseHsl.copyOf().apply {
+                this[1] = this[1].coerceAtMost(0.48f)
+                this[2] = this[2].coerceIn(0.06f, 0.09f)
+            }
+            val ambientTopInt = androidx.core.graphics.ColorUtils.HSLToColor(ambientTopHsl)
+            val ambientBottomInt = androidx.core.graphics.ColorUtils.HSLToColor(ambientBottomHsl)
+
+            // 2. Separate Apple Music blurred backdrop color:
+            // Direct area-weighted pixel sampling of the artwork (matching the live blurred cover)
+            val appleMusicColorInt = extractAppleMusicBackdropColor(bitmap, coverColorInt)
 
             AuraPalette(
                 primary = Color(coverColorInt),
                 secondary = Color(muted?.rgb ?: coverColorInt),
                 backgroundTop = Color(ambientTopInt),
-                backgroundBottom = Color(ambientBottomInt)
+                backgroundBottom = Color(ambientBottomInt),
+                appleMusicBackdrop = Color(appleMusicColorInt)
             )
         }
     } catch (e: Exception) {
         AuraPalette()
     }
+}
+
+/**
+ * Extracts a dedicated ambient color for Apple Music's blurred artwork backdrop & collapse
+ * transition by directly sampling a downscaled grid of the cover art with gentle chroma weighting.
+ */
+private fun extractAppleMusicBackdropColor(bitmap: Bitmap, fallbackRgb: Int): Int {
+    val gridSize = 24
+    val scaled = Bitmap.createScaledBitmap(bitmap, gridSize, gridSize, true)
+    val pixels = IntArray(gridSize * gridSize)
+    scaled.getPixels(pixels, 0, gridSize, 0, 0, gridSize, gridSize)
+    if (scaled != bitmap) scaled.recycle()
+
+    var sumR = 0.0
+    var sumG = 0.0
+    var sumB = 0.0
+    var totalWeight = 0.0
+    val hsl = FloatArray(3)
+
+    for (y in 0 until gridSize) {
+        for (x in 0 until gridSize) {
+            val px = pixels[y * gridSize + x]
+            val r = (px ushr 16) and 0xFF
+            val g = (px ushr 8) and 0xFF
+            val b = px and 0xFF
+            androidx.core.graphics.ColorUtils.RGBToHSL(r, g, b, hsl)
+
+            // Skip extreme near-black letterboxing and pure white borders
+            if (hsl[2] < 0.05f || hsl[2] > 0.96f) continue
+
+            // Center-weighted + mild chroma weight to reflect what the blurred cover visually looks like
+            val dx = (x - gridSize / 2f) / (gridSize / 2f)
+            val dy = (y - gridSize / 2f) / (gridSize / 2f)
+            val centerWeight = (1.15f - 0.35f * (dx * dx + dy * dy)).coerceAtLeast(0.5f)
+            val chromaWeight = 0.65f + hsl[1] * 1.15f
+            val w = (centerWeight * chromaWeight).toDouble()
+
+            sumR += r * w
+            sumG += g * w
+            sumB += b * w
+            totalWeight += w
+        }
+    }
+
+    if (totalWeight <= 0.0) return fallbackRgb
+
+    val avgR = (sumR / totalWeight).toInt().coerceIn(0, 255)
+    val avgG = (sumG / totalWeight).toInt().coerceIn(0, 255)
+    val avgB = (sumB / totalWeight).toInt().coerceIn(0, 255)
+    androidx.core.graphics.ColorUtils.RGBToHSL(avgR, avgG, avgB, hsl)
+    hsl[1] = hsl[1].coerceAtMost(0.78f)
+    hsl[2] = hsl[2].coerceIn(0.18f, 0.34f)
+    return androidx.core.graphics.ColorUtils.HSLToColor(hsl)
 }

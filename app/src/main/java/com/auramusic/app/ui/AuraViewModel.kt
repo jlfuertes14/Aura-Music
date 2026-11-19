@@ -377,6 +377,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         _nowPlayingStyle.value = storage.loadNowPlayingStyle()
         _liquidGlassEnabled.value = storage.loadLiquidGlassEnabled()
         _lyricsStyle.value = storage.loadLyricsStyle()
+        SimpMusicExtractorEngine.contentCountry = _selectedChartCountry.value
         _visibleRecentlyPlayed.value = _recentlyPlayed.value
         _visibleUserPlaylists.value = _playlists.value
 
@@ -651,11 +652,16 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun selectChartCountry(countryCode: String) {
         if (_selectedChartCountry.value == countryCode && _chartData.value != null && !_isChartLoading.value) return
         _selectedChartCountry.value = countryCode
+        SimpMusicExtractorEngine.contentCountry = countryCode
         storage.saveChartCountry(countryCode)
         viewModelScope.launch(Dispatchers.IO) {
             _isChartLoading.value = true
             try {
-                val chart = SimpMusicExtractorEngine.fetchHomeChartData(countryCode)
+                val chartDeferred = async { SimpMusicExtractorEngine.fetchHomeChartData(countryCode) }
+                val homeChartsDeferred = async { SimpMusicExtractorEngine.fetchHomeChartsAndMoods() }
+                val playlistsDeferred = async { SimpMusicExtractorEngine.fetchCommunityPlaylists() }
+
+                val chart = chartDeferred.await()
                 _chartData.value = chart
                 if (chart.topArtists.isNotEmpty()) {
                     val artistsList = chart.topArtists.map {
@@ -664,6 +670,12 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     _topArtists.value = artistsList
                     _visibleTopArtists.value = artistsList
                 }
+
+                val (sections, moods) = homeChartsDeferred.await()
+                if (sections.isNotEmpty()) _chartSections.value = sections
+                if (moods.isNotEmpty()) _moodCategories.value = moods
+                val community = playlistsDeferred.await()
+                if (community.isNotEmpty()) _communityPlaylists.value = community
             } catch (e: Exception) {
                 Log.w("AuraViewModel", "Failed to fetch charts for $countryCode: ${e.message}")
             } finally {
@@ -2313,6 +2325,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         storage.saveMainLyricsProvider(provider)
         SimpMusicLyricsRepository.clearCache()
         val track = AuraPlayerManager.originalAudioTrack ?: AuraPlayerManager.currentTrack.value ?: return
+        _lyrics.value = null
         viewModelScope.launch {
             val cleanTitle = SimpMusicExtractorEngine.cleanSongTitleForVideoSearch(track.title, track.artist)
             val cleanArtist = SimpMusicExtractorEngine.primaryArtistName(track.artist)

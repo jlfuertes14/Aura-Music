@@ -96,6 +96,7 @@ import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
 import androidx.compose.material.icons.rounded.Palette
@@ -190,6 +191,7 @@ import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
 import com.auramusic.app.ui.components.AuraCommentsBottomSheet
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
+import com.auramusic.app.ui.screens.player.applemusic.AppleMusicFullScreenLyricsView
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricStrip
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsList
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsTabView
@@ -265,6 +267,8 @@ fun AuraNowPlayingSheet(
     onPlayQueueTrack: (AuraTrack) -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit,
     onToggleRomanized: () -> Unit,
+    mainLyricsProvider: String = "SimpMusic",
+    onSwitchLyricsProvider: (String) -> Unit = {},
     isDownloaded: Boolean = false,
     isDownloading: Boolean = false,
     onDownloadTrack: ((AuraTrack) -> Unit)? = null,
@@ -362,14 +366,19 @@ fun AuraNowPlayingSheet(
         }
     }
 
-    // Root container matching sheet bounds - 100% solid background so underlying screens never bleed through
+    // Root container matching sheet bounds - 100% solid background so underlying screens never bleed through.
+    // Apple Music (LIQUID_GLASS) uses its own artwork-sampled backdrop color + live blurred artwork during
+    // collapse, completely separate from Spotify Encore / Default's palette.
+    val appleMusicSeed = remember(palette.appleMusicBackdrop) {
+        if (palette.appleMusicBackdrop == Color.Black) AuraViolet else palette.appleMusicBackdrop
+    }
     val collapseTargetBg = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) {
-        palette.backgroundTop
+        appleMusicSeed
     } else {
         palette.primary
     }
     val baseSheetBg = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) {
-        palette.backgroundTop
+        appleMusicSeed
     } else {
         Color(0xFF14151B)
     }
@@ -389,6 +398,12 @@ fun AuraNowPlayingSheet(
                 onClick = {} // Intercepts all clicks so background screens (search field, home items) are never touched
             )
     ) {
+        if (currentStyle == NowPlayingStyle.LIQUID_GLASS && playerCollapseProgress > 0.001f) {
+            AppleMusicArtworkBackdrop(
+                artworkUrl = track.highResArtworkUrl,
+                seedColor = appleMusicSeed
+            )
+        }
         val fullHeightPx = constraints.maxHeight.toFloat()
 
         // Lyrics expansion progress: 0f = collapsed on card, 1f = fully expanded
@@ -547,12 +562,13 @@ fun AuraNowPlayingSheet(
                                     isLoading = isLyricsLoading,
                                     currentPositionSec = positionSec,
                                     isPlaying = isPlaying,
+                                    isBuffering = isBuffering,
                                     lyricsOffsetMs = lyricsOffsetMs.toLong(),
                                     showRomanized = showRomanized,
                                     onSeekToSec = onSeekTo,
                                     onAdjustOffsetMs = onAdjustLyricsOffset,
                                     onToggleRomanized = onToggleRomanized,
-                                    onOpenFullscreen = openLyrics,
+                                    onTogglePlayPause = onTogglePlayPause,
                                     onBackToMain = onBackToMain,
                                     compactHeader = compactHeader,
                                     bottomCluster = bottomCluster
@@ -595,6 +611,52 @@ fun AuraNowPlayingSheet(
         if (lyricsTransitionProgress > 0.001f) {
             val lyricsStyle = LocalLyricsStyle.current
             val isAppleMusicLyrics = lyricsStyle == LyricsStyle.APPLE_MUSIC
+            val clampedProgress = lyricsExpansionProgress.coerceIn(0f, 1f)
+
+            if (isAppleMusicLyrics) {
+                // Dedicated Apple Music Full-Screen Lyrics (separate from Spotify's solid-color view):
+                // Blurry/frosted compact header over scrolling lyrics + 3s auto-hiding player controls.
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer { alpha = clampedProgress }
+                ) {
+                    AppleMusicFullScreenLyricsView(
+                        track = track,
+                        lyricsData = activeLyrics,
+                        isLoading = isLyricsLoading,
+                        positionSec = positionSec,
+                        durationSec = durationSec,
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        isFavorite = isFavorite,
+                        isVideoMode = isVideoMode,
+                        lyricsOffsetMs = lyricsOffsetMs,
+                        showRomanized = showRomanized,
+                        palette = palette,
+                        showControlsAllowed = isLyricsExpanded && clampedProgress >= 0.45f,
+                        onClose = { isLyricsExpanded = false },
+                        onSeekTo = onSeekTo,
+                        onTogglePlayPause = onTogglePlayPause,
+                        onSkipPrevious = onSkipPrevious,
+                        onSkipNext = onSkipNext,
+                        onToggleFavorite = onToggleFavorite,
+                        onOpenArtist = { onOpenArtist(track.artist) },
+                        onOpenOptions = { isOptionsModalVisible = true },
+                        onOpenComments = {
+                            isCommentsVisible = true
+                            onLoadComments(track.videoId)
+                        },
+                        onShareTrack = shareTrack,
+                        onSaveToPlaylist = { isAddToPlaylistModalVisible = true },
+                        onToggleVideoMode = onToggleVideoMode,
+                        onOpenQueue = { isQueueSheetVisible = true },
+                        onToggleRomanized = onToggleRomanized,
+                        onAdjustLyricsOffset = onAdjustLyricsOffset,
+                        onArtworkPositioned = { lyricsHeaderArtBounds = it }
+                    )
+                }
+            } else {
             val fullWidthPx = constraints.maxWidth.toFloat()
             val density = LocalDensity.current
 
@@ -612,13 +674,8 @@ fun AuraNowPlayingSheet(
             val startWidth = lyricsCardBounds?.width?.takeIf { it > 10f } ?: fallbackWidth
             val startHeight = lyricsCardBounds?.height?.takeIf { it > 10f } ?: fallbackHeight
 
-            val clampedProgress = lyricsExpansionProgress.coerceIn(0f, 1f)
-            val targetTop = if (isAppleMusicLyrics) 0f else compactHeaderBottomPx
-            val targetHeight = if (isAppleMusicLyrics) {
-                fullHeightPx
-            } else {
-                (fullHeightPx - compactHeaderBottomPx).coerceAtLeast(10f)
-            }
+            val targetTop = compactHeaderBottomPx
+            val targetHeight = (fullHeightPx - compactHeaderBottomPx).coerceAtLeast(10f)
 
             val currentLeft = if (hasCardOrigin) lerpFloat(startLeft, 0f, clampedProgress) else 0f
             val currentTop = if (hasCardOrigin) lerpFloat(startTop, targetTop, clampedProgress) else targetTop
@@ -631,8 +688,6 @@ fun AuraNowPlayingSheet(
             val currentHeightDp = with(density) { currentHeight.toDp() }
             val currentCornerRadius = if (!hasCardOrigin) {
                 0f
-            } else if (isAppleMusicLyrics) {
-                lerpFloat(20f, 0f, clampedProgress).coerceIn(0f, 20f)
             } else {
                 lerpFloat(20f, 18f, clampedProgress).coerceIn(0f, 20f)
             }
@@ -645,7 +700,7 @@ fun AuraNowPlayingSheet(
                     .size(width = currentWidthDp, height = currentHeightDp)
                     .graphicsLayer { alpha = containerAlpha }
                     .clip(RoundedCornerShape(currentCornerRadius.dp))
-                    .background(if (isAppleMusicLyrics) Color.Black else palette.primary)
+                    .background(palette.primary)
                     .shadow(
                         elevation = currentElevation,
                         shape = RoundedCornerShape(currentCornerRadius.dp)
@@ -809,7 +864,7 @@ fun AuraNowPlayingSheet(
                     .coerceIn(0f, 1f)
             // Start responsively, then decelerate into the compact header for a soft landing.
             val coverFlightProgress = coverFlightEasing.transform(coverLinearProgress)
-            val sourceCornerRadius = if (currentStyle == NowPlayingStyle.LIQUID_GLASS) 22f else 8f
+            val sourceCornerRadius = 8f
             val coverCornerRadius = lerpFloat(sourceCornerRadius, 4f, coverFlightProgress).dp
 
             AnimatedVisibility(
@@ -831,7 +886,7 @@ fun AuraNowPlayingSheet(
                     onAdjustLyricsOffset = onAdjustLyricsOffset,
                     artworkExpansionProgress = if (hasCardOrigin) coverFlightProgress else clampedProgress,
                     statusBarHeightPx = statusBarHeightPx,
-                    headerColor = if (isAppleMusicLyrics) Color.Transparent else lerp(Color.Black, palette.primary, 0.08f),
+                    headerColor = lerp(Color.Black, palette.primary, 0.08f),
                     onArtworkPositioned = { lyricsHeaderArtBounds = it },
                     onClose = { isLyricsExpanded = false },
                     onTogglePlayPause = onTogglePlayPause,
@@ -872,6 +927,7 @@ fun AuraNowPlayingSheet(
                         .zIndex(2f)
                 )
             }
+            }
         }
 
         // Harmonized dark container color subtly tinted with dominant lyrics card palette color
@@ -902,6 +958,12 @@ fun AuraNowPlayingSheet(
                 onToggleTheme = {
                     isOptionsModalVisible = false
                     onToggleStyle()
+                },
+                mainLyricsProvider = mainLyricsProvider,
+                onSwitchLyricsProvider = { nextProvider ->
+                    isOptionsModalVisible = false
+                    onSwitchLyricsProvider(nextProvider)
+                    Toast.makeText(context, "Lyrics provider switched to $nextProvider", Toast.LENGTH_SHORT).show()
                 },
                 onGoToArtist = {
                     isOptionsModalVisible = false
@@ -1058,6 +1120,8 @@ private fun NowPlayingOptionsModal(
     onToggleVideoMode: () -> Unit,
     onOpenLivePerformances: () -> Unit,
     onToggleTheme: () -> Unit,
+    mainLyricsProvider: String = "SimpMusic",
+    onSwitchLyricsProvider: (String) -> Unit = {},
     onGoToArtist: () -> Unit,
     onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit = {},
@@ -1170,6 +1234,14 @@ private fun NowPlayingOptionsModal(
                 icon = Icons.Rounded.Palette,
                 label = "Switch Theme to $nextThemeLabel",
                 onClick = onToggleTheme
+            )
+
+            // 3b. Switch Lyrics Provider (SimpMusic <-> LRCLIB)
+            val nextLyricsProvider = if (mainLyricsProvider == "LRCLIB") "SimpMusic" else "LRCLIB"
+            NowPlayingModalOptionRow(
+                icon = Icons.Rounded.Lyrics,
+                label = "Switch Lyrics Provider to $nextLyricsProvider",
+                onClick = { onSwitchLyricsProvider(nextLyricsProvider) }
             )
 
             // 4. Go to Artist Screen
@@ -1647,14 +1719,18 @@ private fun AuraDraggableCoverArt(
 ) {
     val coroutineScope = rememberCoroutineScope()
     val dragOffset = remember { Animatable(0f) }
-    var lastSwipeDirection by remember { mutableIntStateOf(0) } // +1 = next, -1 = prev
+    var pendingTrack by remember { mutableStateOf<AuraTrack?>(null) }
     var containerWidthPx by remember { mutableFloatStateOf(0f) }
     val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 72.dp.toPx() }
 
-    // Resolve queue neighbors
-    val curIdx = remember(queue, currentTrack.videoId) {
-        queue.indexOfFirst { it.videoId == currentTrack.videoId }
+    // Use pendingTrack during the 1-frame handoff after a swipe so neither the old track
+    // nor the next-of-next preview card can ever flash on screen.
+    val displayTrack = pendingTrack ?: currentTrack
+
+    // Resolve queue neighbors relative to displayTrack
+    val curIdx = remember(queue, displayTrack.videoId) {
+        queue.indexOfFirst { it.videoId == displayTrack.videoId }
     }
     val prevTrack = remember(queue, curIdx) {
         if (curIdx > 0 && curIdx <= queue.lastIndex) queue[curIdx - 1] else null
@@ -1663,27 +1739,14 @@ private fun AuraDraggableCoverArt(
         if (curIdx >= 0 && curIdx < queue.lastIndex) queue[curIdx + 1] else null
     }
 
-    // When track changes (e.g. after swipe or external skip), animate smoothly into place
+    val gapPx = with(density) { 16.dp.toPx() }
+
     LaunchedEffect(currentTrack.videoId) {
-        val width = if (containerWidthPx > 0f) containerWidthPx else with(density) { 320.dp.toPx() }
-        if (lastSwipeDirection == 1) {
-            // New track entering from right
-            dragOffset.snapTo(width * 0.42f)
-            dragOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(280, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
-            )
-        } else if (lastSwipeDirection == -1) {
-            // New track entering from left
-            dragOffset.snapTo(-width * 0.42f)
-            dragOffset.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(280, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
-            )
-        } else {
+        if (pendingTrack != null && currentTrack.videoId == pendingTrack?.videoId) {
+            pendingTrack = null
+        } else if (pendingTrack == null) {
             dragOffset.snapTo(0f)
         }
-        lastSwipeDirection = 0
     }
 
     Box(
@@ -1693,7 +1756,7 @@ private fun AuraDraggableCoverArt(
                 containerWidthPx = coordinates.size.width.toFloat()
                 onArtworkPositioned(coordinates.boundsInRoot())
             }
-            .pointerInput(currentTrack.videoId, queue.size) {
+            .pointerInput(displayTrack.videoId, queue.size, curIdx) {
                 detectHorizontalDragGestures(
                     onDragStart = { /* touch down */ },
                     onHorizontalDrag = { change, dragAmount ->
@@ -1702,7 +1765,7 @@ private fun AuraDraggableCoverArt(
                             val currentVal = dragOffset.value
                             // Rubber band resistance if dragging against edge of queue
                             val hasBoundary = (currentVal > 0 && prevTrack == null) ||
-                                (currentVal < 0 && nextTrack == null && queue.size <= 1)
+                                (currentVal < 0 && nextTrack == null)
                             val resistance = if (hasBoundary) 0.32f else 1f
                             dragOffset.snapTo(currentVal + dragAmount * resistance)
                         }
@@ -1711,22 +1774,36 @@ private fun AuraDraggableCoverArt(
                         coroutineScope.launch {
                             val currentVal = dragOffset.value
                             val effectiveWidth = if (containerWidthPx > 0f) containerWidthPx else with(density) { 320.dp.toPx() }
-                            if (currentVal < -swipeThresholdPx) {
-                                // Dragged left -> Next Track
-                                lastSwipeDirection = 1
+                            if (currentVal < -swipeThresholdPx && nextTrack != null) {
+                                // Dragged left -> Next Track (incoming preview lands cleanly at 0f)
+                                val target = nextTrack
                                 dragOffset.animateTo(
-                                    targetValue = -effectiveWidth - 48f,
-                                    animationSpec = tween(180, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+                                    targetValue = -(effectiveWidth + gapPx),
+                                    animationSpec = tween(200, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
                                 )
-                                onSkipNext()
-                            } else if (currentVal > swipeThresholdPx) {
-                                // Dragged right -> Previous Track
-                                lastSwipeDirection = -1
+                                // Lock displayTrack to target and reset offset atomically before seeking
+                                pendingTrack = target
+                                dragOffset.snapTo(0f)
+                                if (curIdx >= 0 && curIdx + 1 in queue.indices) {
+                                    AuraPlayerManager.seekToQueueIndex(curIdx + 1)
+                                } else {
+                                    onSkipNext()
+                                }
+                            } else if (currentVal > swipeThresholdPx && prevTrack != null) {
+                                // Dragged right -> Previous Track (incoming preview lands cleanly at 0f)
+                                val target = prevTrack
                                 dragOffset.animateTo(
-                                    targetValue = effectiveWidth + 48f,
-                                    animationSpec = tween(180, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+                                    targetValue = effectiveWidth + gapPx,
+                                    animationSpec = tween(200, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
                                 )
-                                onSkipPrevious()
+                                // Lock displayTrack to target and reset offset atomically before seeking
+                                pendingTrack = target
+                                dragOffset.snapTo(0f)
+                                if (curIdx > 0 && curIdx - 1 in queue.indices) {
+                                    AuraPlayerManager.seekToQueueIndex(curIdx - 1)
+                                } else {
+                                    onSkipPrevious()
+                                }
                             } else {
                                 // Snap back to center
                                 dragOffset.animateTo(
@@ -1822,8 +1899,8 @@ private fun AuraDraggableCoverArt(
                 .background(Color(0xFF242424))
         ) {
             AsyncImage(
-                model = currentTrack.highResArtworkUrl,
-                contentDescription = currentTrack.title,
+                model = displayTrack.highResArtworkUrl,
+                contentDescription = displayTrack.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )

@@ -41,7 +41,8 @@ data class AuraPalette(
     val secondary: Color = Color(0xFFEC4899),
     val backgroundTop: Color = Color(0xFF1E1436),
     val backgroundBottom: Color = Color(0xFF0A0B0E),
-    val surfaceGlass: Color = Color(0x26FFFFFF)
+    val surfaceGlass: Color = Color(0x26FFFFFF),
+    val appleMusicBackdrop: Color = Color(0xFF1E1436)
 )
 
 data class AuraTrack(

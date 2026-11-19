@@ -381,6 +381,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
 
     val palette by viewModel.palette.collectAsState()
     val lyrics by viewModel.lyrics.collectAsState()
+    val mainLyricsProvider by viewModel.mainLyricsProvider.collectAsState()
     val lyricsOffsetMs by viewModel.lyricsOffsetMs.collectAsState()
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val rydData by viewModel.rydData.collectAsState()
@@ -859,13 +860,14 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     if (currentIndex in 0 until currentQueue.lastIndex) currentQueue[currentIndex + 1] else null
                 }
 
+                val isAppleMusicPlayer = nowPlayingStyle == com.auramusic.app.domain.model.NowPlayingStyle.LIQUID_GLASS
                 AuraMiniPlayer(
                     track = activeTrack,
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     progress = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
-                    backgroundColor = palette.primary,
-                    backdropTintColor = palette.backgroundTop,
+                    backgroundColor = if (isAppleMusicPlayer) palette.appleMusicBackdrop else palette.primary,
+                    backdropTintColor = if (isAppleMusicPlayer) palette.appleMusicBackdrop else palette.backgroundTop,
                     glassBackdrop = glassBackdrop,
                     previousTrack = previousTrack,
                     nextTrack = nextTrack,
@@ -1172,6 +1174,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     onPlayQueueTrack = { viewModel.playTrack(it, queue) },
                     onAdjustLyricsOffset = { viewModel.adjustLyricsOffset(it) },
                     onToggleRomanized = { viewModel.toggleRomanizedLyrics() },
+                    mainLyricsProvider = mainLyricsProvider,
+                    onSwitchLyricsProvider = { viewModel.setMainLyricsProvider(it) },
                     comments = playerComments,
                     isLoadingComments = areCommentsLoading,
                     commentsError = commentsError,

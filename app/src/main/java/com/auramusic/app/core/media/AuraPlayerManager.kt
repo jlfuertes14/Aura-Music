@@ -1014,6 +1014,51 @@ object AuraPlayerManager {
         }
     }
 
+    /**
+     * Seeks directly to [index] inside the current [_queue] without rotating or reshuffling the
+     * queue order, keeping cover-art swipe pagers aligned with the exact swiped track and
+     * preserving previous tracks in the queue.
+     */
+    fun seekToQueueIndex(index: Int) {
+        val player = exoPlayer ?: return
+        val list = _queue.value
+        if (index !in list.indices) return
+        val target = list[index]
+
+        fadeJob?.cancel()
+        player.volume = baseVolume
+
+        if (_isVideoMode.value) {
+            if (originalAudioTrack != null) {
+                originalAudioTrack = null
+                originalAudioQueue = null
+                originalAudioIndex = -1
+                _isVideoMode.value = false
+            } else {
+                playStandaloneVideo(target, list)
+                return
+            }
+        }
+
+        val mediaIndex = (0 until player.mediaItemCount).firstOrNull { idx ->
+            val mid = player.getMediaItemAt(idx).mediaId
+            mid == target.videoId || mid == target.id
+        } ?: index.takeIf { it in 0 until player.mediaItemCount }
+
+        if (mediaIndex != null) {
+            _currentTrack.value = target
+            _positionSec.value = 0f
+            _bufferedSec.value = 0f
+            _durationSec.value = target.durationSeconds.toFloat().coerceAtLeast(1f)
+            _isBuffering.value = true
+            player.seekToDefaultPosition(mediaIndex)
+            player.play()
+            prefetchUpcomingTracks(target.videoId)
+        } else {
+            playTrack(target, list, allowRadioQueue = false)
+        }
+    }
+
     fun setSponsorSegments(segments: List<SponsorSegment>) {
         _sponsorSegments.value = segments
     }

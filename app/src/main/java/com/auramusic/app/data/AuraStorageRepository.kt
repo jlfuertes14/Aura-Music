@@ -153,6 +153,7 @@ class AuraStorageRepository(context: Context) {
                 put("backgroundTop", palette.backgroundTop.toArgb())
                 put("backgroundBottom", palette.backgroundBottom.toArgb())
                 put("surfaceGlass", palette.surfaceGlass.toArgb())
+                put("appleMusicBackdrop", palette.appleMusicBackdrop.toArgb())
             }
             prefs.edit().putString("offline_palette_$videoId", json.toString()).apply()
         } catch (e: Exception) {
@@ -164,12 +165,18 @@ class AuraStorageRepository(context: Context) {
         val raw = prefs.getString("offline_palette_$videoId", null) ?: return null
         return try {
             val obj = JSONObject(raw)
+            val primaryColor = Color(obj.getInt("primary"))
             AuraPalette(
-                primary = Color(obj.getInt("primary")),
+                primary = primaryColor,
                 secondary = Color(obj.getInt("secondary")),
                 backgroundTop = Color(obj.getInt("backgroundTop")),
                 backgroundBottom = Color(obj.getInt("backgroundBottom")),
-                surfaceGlass = Color(obj.getInt("surfaceGlass"))
+                surfaceGlass = Color(obj.getInt("surfaceGlass")),
+                appleMusicBackdrop = if (obj.has("appleMusicBackdrop")) {
+                    Color(obj.getInt("appleMusicBackdrop"))
+                } else {
+                    primaryColor
+                }
             )
         } catch (e: Exception) {
             null
