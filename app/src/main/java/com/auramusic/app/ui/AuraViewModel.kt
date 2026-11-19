@@ -291,6 +291,21 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val _romanizationLanguages = MutableStateFlow(storage.loadRomanizationLanguages())
     val romanizationLanguages: StateFlow<Set<String>> = _romanizationLanguages.asStateFlow()
 
+    private val _mainLyricsProvider = MutableStateFlow(storage.loadMainLyricsProvider())
+    val mainLyricsProvider: StateFlow<String> = _mainLyricsProvider.asStateFlow()
+
+    private val _defaultLyricsOffsetMs = MutableStateFlow(storage.loadDefaultLyricsOffsetMs())
+    val defaultLyricsOffsetMs: StateFlow<Int> = _defaultLyricsOffsetMs.asStateFlow()
+
+    private val _autoDownloadLikedSongs = MutableStateFlow(storage.loadAutoDownloadLikedSongs())
+    val autoDownloadLikedSongs: StateFlow<Boolean> = _autoDownloadLikedSongs.asStateFlow()
+
+    private val _recordListeningHistory = MutableStateFlow(storage.loadRecordListeningHistory())
+    val recordListeningHistory: StateFlow<Boolean> = _recordListeningHistory.asStateFlow()
+
+    private val _autoCheckUpdates = MutableStateFlow(storage.loadAutoCheckUpdates())
+    val autoCheckUpdates: StateFlow<Boolean> = _autoCheckUpdates.asStateFlow()
+
     private val _rydData = MutableStateFlow<ReturnYouTubeDislikeData?>(null)
     val rydData: StateFlow<ReturnYouTubeDislikeData?> = _rydData.asStateFlow()
 
@@ -369,8 +384,10 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         // or had the playlist cover art shared across all tracks.
         upgradeLegacySpotifyPlaylistsIfNeeded()
 
-        // Silent startup check against GitHub Releases
-        checkForUpdates(force = false)
+        // Silent startup check against GitHub Releases (respects Auto Check for Updates setting)
+        if (_autoCheckUpdates.value) {
+            checkForUpdates(force = false)
+        }
 
         AuraPlayerManager.onTrackFinishedCallback = { finishedTrack ->
             storage.recordRecommendationSignal(finishedTrack, "complete")
@@ -421,18 +438,21 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                     backgroundTop = Color(0xFF1B1920),
                     backgroundBottom = Color(0xFF0A0B0E)
                 )
-                _listeningStats.value = storage.recordTrackPlay(track)
-                storage.recordRecommendationSignal(track, "play")
-                val updatedRecent = storage.loadRecentlyPlayed()
-                _recentlyPlayed.value = updatedRecent
-                if (_activeCategory.value == "All") {
-                    _visibleRecentlyPlayed.value = updatedRecent
+                if (_recordListeningHistory.value) {
+                    _listeningStats.value = storage.recordTrackPlay(track)
+                    storage.recordRecommendationSignal(track, "play")
+                    val updatedRecent = storage.loadRecentlyPlayed()
+                    _recentlyPlayed.value = updatedRecent
+                    if (_activeCategory.value == "All") {
+                        _visibleRecentlyPlayed.value = updatedRecent
+                    }
+                    applyLocalRecommendations()
                 }
-                applyLocalRecommendations()
                 val canonicalTrack = AuraPlayerManager.originalAudioTrack ?: track
                 val canonicalVid = canonicalTrack.videoId
                 val savedOffset = storage.getLyricsOffsetMs(canonicalVid).takeIf { it != 0 }
-                    ?: storage.getLyricsOffsetMs(track.videoId)
+                    ?: storage.getLyricsOffsetMs(track.videoId).takeIf { it != 0 }
+                    ?: _defaultLyricsOffsetMs.value
                 _lyricsOffsetMs.value = savedOffset
                 _nowPlayingVideoInfo.value = null
 
@@ -470,7 +490,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                             videoId = canonicalVid,
                             title = cleanTitle.ifBlank { canonicalTrack.title },
                             artist = cleanArtist.ifBlank { canonicalTrack.artist },
-                            durationSeconds = canonicalTrack.durationSeconds
+                            durationSeconds = canonicalTrack.durationSeconds,
+                            preferredProvider = _mainLyricsProvider.value
                         )?.also { fetched ->
                             if (isTrackDownloaded(canonicalVid) || isTrackDownloaded(track.videoId)) {
                                 storage.saveOfflineLyrics(track.videoId, fetched)
@@ -478,7 +499,12 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                val sponsorDef = async { SponsorBlockRepository.getSponsorSegments(track.videoId) }
+                val sponsorDef = async {
+                    SponsorBlockRepository.getSponsorSegments(
+                        videoId = track.videoId,
+                        categories = AuraPlayerManager.sponsorBlockCategories.value
+                    )
+                }
                 val rydDef = async { SponsorBlockRepository.getReturnYouTubeDislike(track.videoId) }
 
                 _palette.value = paletteDef.await()
@@ -1691,25 +1717,40 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
             _activePlayingPlaylistDetail.value = null
         }
         val isSameCurrentTrack = AuraPlayerManager.currentTrack.value == track
-        AuraPlayerManager.playTrack(track, queue)
-        if (isSameCurrentTrack) _listeningStats.value = storage.recordTrackPlay(track)
+        if (AuraPlayerManager.playVideoForVideoTrack.value &&
+            track.musicVideoType?.equals("MUSIC_VIDEO_TYPE_OMV", ignoreCase = true) == true
+        ) {
+            AuraPlayerManager.playStandaloneVideo(track, queue ?: listOf(track))
+        } else {
+            AuraPlayerManager.playTrack(track, queue)
+        }
+        if (isSameCurrentTrack && _recordListeningHistory.value) {
+            _listeningStats.value = storage.recordTrackPlay(track)
+        }
     }
 
     fun playSearchTrack(track: AuraTrack, results: List<AuraTrack>) {
         val isSameCurrentTrack = AuraPlayerManager.currentTrack.value == track
-        if (AuraPlayerManager.isShuffleEnabled.value) {
+        if (AuraPlayerManager.playVideoForVideoTrack.value &&
+            track.musicVideoType?.equals("MUSIC_VIDEO_TYPE_OMV", ignoreCase = true) == true
+        ) {
+            AuraPlayerManager.playStandaloneVideo(track, listOf(track))
+        } else if (AuraPlayerManager.isShuffleEnabled.value) {
             val shuffledQueue = results.filterNot { it.videoId == track.videoId }.shuffled()
             AuraPlayerManager.playTrack(track, listOf(track) + shuffledQueue, allowRadioQueue = true)
         } else {
             // Playing from search query should NOT auto-play other songs from search results unless shuffle is enabled
             AuraPlayerManager.playTrack(track, listOf(track), allowRadioQueue = false)
         }
-        if (isSameCurrentTrack) _listeningStats.value = storage.recordTrackPlay(track)
+        if (isSameCurrentTrack && _recordListeningHistory.value) {
+            _listeningStats.value = storage.recordTrackPlay(track)
+        }
     }
 
     fun toggleFavorite(track: AuraTrack) {
         val current = _favorites.value.toMutableList()
         val existingIdx = current.indexOfFirst { it.videoId == track.videoId }
+        val newlyLiked = existingIdx < 0
         if (existingIdx >= 0) {
             current.removeAt(existingIdx)
         } else {
@@ -1718,6 +1759,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         _favorites.value = current
         storage.saveFavorites(current)
         applyLocalRecommendations()
+        if (newlyLiked && _autoDownloadLikedSongs.value && !isTrackAlreadyDownloaded(track)) {
+            downloadTrack(track)
+        }
     }
 
     fun isFavorite(videoId: String): Boolean {
@@ -2262,6 +2306,151 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun setRomanizationLanguages(languages: Set<String>) {
         _romanizationLanguages.value = languages
         storage.saveRomanizationLanguages(languages)
+    }
+
+    fun setMainLyricsProvider(provider: String) {
+        _mainLyricsProvider.value = provider
+        storage.saveMainLyricsProvider(provider)
+        SimpMusicLyricsRepository.clearCache()
+        val track = AuraPlayerManager.originalAudioTrack ?: AuraPlayerManager.currentTrack.value ?: return
+        viewModelScope.launch {
+            val cleanTitle = SimpMusicExtractorEngine.cleanSongTitleForVideoSearch(track.title, track.artist)
+            val cleanArtist = SimpMusicExtractorEngine.primaryArtistName(track.artist)
+            _lyrics.value = SimpMusicLyricsRepository.getLyrics(
+                videoId = track.videoId,
+                title = cleanTitle.ifBlank { track.title },
+                artist = cleanArtist.ifBlank { track.artist },
+                durationSeconds = track.durationSeconds,
+                preferredProvider = provider
+            )
+        }
+    }
+
+    fun setDefaultLyricsOffsetMs(offsetMs: Int) {
+        val clamped = offsetMs.coerceIn(-10000, 10000)
+        _defaultLyricsOffsetMs.value = clamped
+        storage.saveDefaultLyricsOffsetMs(clamped)
+        val currentTrack = AuraPlayerManager.originalAudioTrack ?: AuraPlayerManager.currentTrack.value
+        if (currentTrack != null && storage.getLyricsOffsetMs(currentTrack.videoId) == 0) {
+            _lyricsOffsetMs.value = clamped
+        }
+    }
+
+    fun setAutoDownloadLikedSongs(enabled: Boolean) {
+        _autoDownloadLikedSongs.value = enabled
+        storage.saveAutoDownloadLikedSongs(enabled)
+    }
+
+    fun setRecordListeningHistory(enabled: Boolean) {
+        _recordListeningHistory.value = enabled
+        storage.saveRecordListeningHistory(enabled)
+    }
+
+    fun clearListeningHistory() {
+        storage.clearListeningHistory()
+        _recentlyPlayed.value = emptyList()
+        _visibleRecentlyPlayed.value = emptyList()
+        _listeningStats.value = storage.loadListeningStats()
+        applyLocalRecommendations()
+        Toast.makeText(getApplication(), "Listening history cleared", Toast.LENGTH_SHORT).show()
+    }
+
+    fun setAutoCheckUpdates(enabled: Boolean) {
+        _autoCheckUpdates.value = enabled
+        storage.saveAutoCheckUpdates(enabled)
+    }
+
+    fun toggleSponsorBlockCategory(category: String) {
+        val current = AuraPlayerManager.sponsorBlockCategories.value.toMutableSet()
+        if (current.contains(category)) {
+            if (current.size > 1) current.remove(category)
+        } else {
+            current.add(category)
+        }
+        AuraPlayerManager.setSponsorBlockCategories(current)
+        SponsorBlockRepository.clearSegmentCache()
+        val activeTrack = AuraPlayerManager.currentTrack.value ?: return
+        viewModelScope.launch {
+            val segs = SponsorBlockRepository.getSponsorSegments(activeTrack.videoId, current)
+            AuraPlayerManager.setSponsorSegments(segs)
+        }
+    }
+
+    fun clearAllDownloads() {
+        viewModelScope.launch {
+            val current = _downloads.value.toList()
+            withContext(Dispatchers.IO) {
+                current.forEach { track ->
+                    track.localFilePath?.let { path ->
+                        runCatching { File(path).delete() }
+                    }
+                    AuraPlayerManager.getOfflineFile(getApplication(), track.videoId).let { f ->
+                        if (f.exists()) runCatching { f.delete() }
+                    }
+                    val artFile = File(File(getApplication<Application>().filesDir, "aura_offline_artwork"), "${track.videoId}.jpg")
+                    if (artFile.exists()) runCatching { artFile.delete() }
+                }
+            }
+            _downloads.value = emptyList()
+            storage.saveDownloads(emptyList())
+            Toast.makeText(getApplication(), "All offline downloads removed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun exportBackupToUri(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                runCatching {
+                    val json = storage.exportBackupJson()
+                    getApplication<Application>().contentResolver.openOutputStream(uri)?.use { out ->
+                        out.write(json.toByteArray(Charsets.UTF_8))
+                    } ?: return@runCatching false
+                    true
+                }.getOrDefault(false)
+            }
+            Toast.makeText(
+                getApplication(),
+                if (success) "Aura backup saved successfully" else "Failed to export backup",
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun importBackupFromUri(uri: android.net.Uri) {
+        viewModelScope.launch {
+            val success = withContext(Dispatchers.IO) {
+                runCatching {
+                    val raw = getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).readText()
+                    } ?: return@runCatching false
+                    storage.importBackupJson(raw)
+                }.getOrDefault(false)
+            }
+            if (success) {
+                _favorites.value = storage.loadFavorites()
+                _playlists.value = storage.loadPlaylists()
+                _visibleUserPlaylists.value = _playlists.value
+                _recentlyPlayed.value = storage.loadRecentlyPlayed()
+                _visibleRecentlyPlayed.value = _recentlyPlayed.value
+                _listeningStats.value = storage.loadListeningStats()
+                _appThemeStyle.value = storage.loadAppThemeStyle()
+                _nowPlayingStyle.value = storage.loadNowPlayingStyle()
+                _liquidGlassEnabled.value = storage.loadLiquidGlassEnabled()
+                _lyricsStyle.value = storage.loadLyricsStyle()
+                _selectedChartCountry.value = storage.loadChartCountry()
+                _romanizationLanguages.value = storage.loadRomanizationLanguages()
+                _mainLyricsProvider.value = storage.loadMainLyricsProvider()
+                _defaultLyricsOffsetMs.value = storage.loadDefaultLyricsOffsetMs()
+                _autoDownloadLikedSongs.value = storage.loadAutoDownloadLikedSongs()
+                _recordListeningHistory.value = storage.loadRecordListeningHistory()
+                _autoCheckUpdates.value = storage.loadAutoCheckUpdates()
+                AuraPlayerManager.reloadSettingsFromStorage()
+                applyLocalRecommendations()
+                Toast.makeText(getApplication(), "Aura backup restored successfully", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(getApplication(), "Invalid or unreadable backup file", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 
     fun setAppThemeStyle(style: AppThemeStyle) {

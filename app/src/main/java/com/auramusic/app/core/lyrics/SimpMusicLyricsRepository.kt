@@ -16,20 +16,43 @@ import java.util.concurrent.ConcurrentHashMap
 object SimpMusicLyricsRepository {
     private val lyricsCache = ConcurrentHashMap<String, LyricsData>()
 
-    suspend fun getLyrics(videoId: String, title: String, artist: String, durationSeconds: Int): LyricsData =
+    fun clearCache() {
+        lyricsCache.clear()
+    }
+
+    suspend fun getLyrics(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationSeconds: Int,
+        preferredProvider: String = "SimpMusic"
+    ): LyricsData =
         withContext(Dispatchers.IO) {
-            lyricsCache[videoId]?.let { return@withContext it }
+            val cacheKey = "${videoId}_$preferredProvider"
+            lyricsCache[cacheKey]?.let { return@withContext it }
 
-            // 1. Primary: Official SimpMusic Lyrics API (https://api-lyrics.simpmusic.org/v1/{videoId})
-            fetchFromSimpMusicApi(videoId)?.let { data ->
-                lyricsCache[videoId] = data
-                return@withContext data
-            }
-
-            // 2. Fallback: Direct LRCLIB API (https://lrclib.net/api/search)
-            fetchFromLrcLib(videoId, title, artist, durationSeconds)?.let { data ->
-                lyricsCache[videoId] = data
-                return@withContext data
+            if (preferredProvider.equals("LRCLIB", ignoreCase = true)) {
+                // 1. Primary when user selects LRCLIB: Direct LRCLIB API
+                fetchFromLrcLib(videoId, title, artist, durationSeconds)?.let { data ->
+                    lyricsCache[cacheKey] = data
+                    return@withContext data
+                }
+                // 2. Fallback: Official SimpMusic Lyrics API
+                fetchFromSimpMusicApi(videoId)?.let { data ->
+                    lyricsCache[cacheKey] = data
+                    return@withContext data
+                }
+            } else {
+                // 1. Primary: Official SimpMusic Lyrics API (https://api-lyrics.simpmusic.org/v1/{videoId})
+                fetchFromSimpMusicApi(videoId)?.let { data ->
+                    lyricsCache[cacheKey] = data
+                    return@withContext data
+                }
+                // 2. Fallback: Direct LRCLIB API (https://lrclib.net/api/search)
+                fetchFromLrcLib(videoId, title, artist, durationSeconds)?.let { data ->
+                    lyricsCache[cacheKey] = data
+                    return@withContext data
+                }
             }
 
             LyricsData(

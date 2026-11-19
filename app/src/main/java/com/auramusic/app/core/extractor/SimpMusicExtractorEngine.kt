@@ -1271,7 +1271,7 @@ object SimpMusicExtractorEngine {
     /**
      * Fetches SimpMusic endless Radio / Automix queue via `youtubei/v1/next` (`RDAMVM{videoId}`).
      */
-    suspend fun fetchRadioQueue(videoId: String): List<AuraTrack> = withContext(Dispatchers.IO) {
+    suspend fun fetchRadioQueue(videoId: String, audioOnly: Boolean = true): List<AuraTrack> = withContext(Dispatchers.IO) {
         if (videoId.isBlank()) return@withContext emptyList()
         try {
             val payload = JSONObject().apply {
@@ -1285,7 +1285,7 @@ object SimpMusicExtractorEngine {
                 })
                 put("videoId", videoId)
                 put("playlistId", "RDAMVM$videoId")
-                put("isAudioOnly", true)
+                put("isAudioOnly", audioOnly)
             }
 
             val req = Request.Builder()

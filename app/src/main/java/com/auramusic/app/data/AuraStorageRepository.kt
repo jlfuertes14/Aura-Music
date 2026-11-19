@@ -515,6 +515,174 @@ class AuraStorageRepository(context: Context) {
         prefs.edit().putString("setting_chart_country", code).apply()
     }
 
+    fun loadAutoDownloadLikedSongs(): Boolean = prefs.getBoolean("setting_auto_download_liked", false)
+    fun saveAutoDownloadLikedSongs(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_auto_download_liked", enabled).apply()
+    }
+
+    fun loadPlayVideoForVideoTrack(): Boolean = prefs.getBoolean("setting_play_video_for_video_track", false)
+    fun savePlayVideoForVideoTrack(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_play_video_for_video_track", enabled).apply()
+    }
+
+    fun loadRadioAudioOnly(): Boolean = prefs.getBoolean("setting_radio_audio_only", true)
+    fun saveRadioAudioOnly(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_radio_audio_only", enabled).apply()
+    }
+
+    fun loadAudioReverbPreset(): Int = prefs.getInt("setting_audio_reverb_preset", 0)
+    fun saveAudioReverbPreset(preset: Int) {
+        prefs.edit().putInt("setting_audio_reverb_preset", preset).apply()
+    }
+
+    fun loadSavePlaybackState(): Boolean = prefs.getBoolean("setting_save_playback_state", true)
+    fun saveSavePlaybackState(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_save_playback_state", enabled).apply()
+    }
+
+    fun loadSavedPlaybackMode(): String = prefs.getString("setting_saved_playback_mode", "NORMAL") ?: "NORMAL"
+    fun saveSavedPlaybackMode(mode: String) {
+        prefs.edit().putString("setting_saved_playback_mode", mode).apply()
+    }
+
+    fun loadKillServiceOnExit(): Boolean = prefs.getBoolean("setting_kill_service_on_exit", false)
+    fun saveKillServiceOnExit(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_kill_service_on_exit", enabled).apply()
+    }
+
+    fun loadSponsorBlockEnabled(): Boolean = prefs.getBoolean("setting_sponsorblock_enabled", true)
+    fun saveSponsorBlockEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_sponsorblock_enabled", enabled).apply()
+    }
+
+    fun loadSponsorBlockCategories(): Set<String> {
+        val raw = prefs.getString("setting_sponsorblock_categories", null)
+        return raw?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet()
+            ?: setOf("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
+    }
+    fun saveSponsorBlockCategories(categories: Set<String>) {
+        prefs.edit().putString("setting_sponsorblock_categories", categories.joinToString(",")).apply()
+    }
+
+    fun loadMainLyricsProvider(): String = prefs.getString("setting_main_lyrics_provider", "SimpMusic") ?: "SimpMusic"
+    fun saveMainLyricsProvider(provider: String) {
+        prefs.edit().putString("setting_main_lyrics_provider", provider).apply()
+    }
+
+    fun loadDefaultLyricsOffsetMs(): Int = prefs.getInt("setting_default_lyrics_offset_ms", 0)
+    fun saveDefaultLyricsOffsetMs(offsetMs: Int) {
+        prefs.edit().putInt("setting_default_lyrics_offset_ms", offsetMs.coerceIn(-10000, 10000)).apply()
+    }
+
+    fun loadRecordListeningHistory(): Boolean = prefs.getBoolean("setting_record_listening_history", true)
+    fun saveRecordListeningHistory(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_record_listening_history", enabled).apply()
+    }
+
+    fun clearListeningHistory() {
+        prefs.edit()
+            .remove("recently_played_tracks")
+            .remove("stats_total_min")
+            .remove("stats_tracks_played")
+            .remove("stats_track_plays")
+            .remove("stats_artists")
+            .remove("stats_genres")
+            .remove("recommendation_signals")
+            .apply()
+    }
+
+    fun loadAutoCheckUpdates(): Boolean = prefs.getBoolean("setting_auto_check_updates", true)
+    fun saveAutoCheckUpdates(enabled: Boolean) {
+        prefs.edit().putBoolean("setting_auto_check_updates", enabled).apply()
+    }
+
+    fun exportBackupJson(): String {
+        val root = JSONObject().apply {
+            put("version", 1)
+            put("exportedAt", System.currentTimeMillis())
+            put("favorites", JSONArray(prefs.getString("favorites_json", "[]") ?: "[]"))
+            put("playlists", JSONArray(prefs.getString("playlists_json", "[]") ?: "[]"))
+            put("recentlyPlayed", JSONArray(prefs.getString("recently_played_tracks", "[]") ?: "[]"))
+            put("settings", JSONObject().apply {
+                put("appThemeStyle", loadAppThemeStyle().name)
+                put("chartCountry", loadChartCountry())
+                put("audioQuality", loadAudioQuality())
+                put("videoQuality", loadVideoQuality())
+                put("normalizeVolume", loadNormalizeVolume())
+                put("skipSilence", loadSkipSilence())
+                put("crossfadeSec", loadCrossfadeDuration())
+                put("maxCacheMb", loadMaxCacheSize())
+                put("eqEnabled", loadEqualizerEnabled())
+                put("eqPreset", loadEqualizerPreset())
+                put("eqPreamp", loadEqualizerPreamp().toDouble())
+                put("eqBands", loadEqualizerBands().joinToString(","))
+                put("audioReverbPreset", loadAudioReverbPreset())
+                put("sponsorBlockEnabled", loadSponsorBlockEnabled())
+                put("sponsorBlockCategories", loadSponsorBlockCategories().joinToString(","))
+                put("mainLyricsProvider", loadMainLyricsProvider())
+                put("defaultLyricsOffsetMs", loadDefaultLyricsOffsetMs())
+                put("romanizationLanguages", loadRomanizationLanguages().joinToString(","))
+                put("autoDownloadLiked", loadAutoDownloadLikedSongs())
+                put("playVideoForVideoTrack", loadPlayVideoForVideoTrack())
+                put("radioAudioOnly", loadRadioAudioOnly())
+                put("savePlaybackState", loadSavePlaybackState())
+                put("killServiceOnExit", loadKillServiceOnExit())
+                put("recordListeningHistory", loadRecordListeningHistory())
+                put("autoCheckUpdates", loadAutoCheckUpdates())
+            })
+        }
+        return root.toString(2)
+    }
+
+    fun importBackupJson(rawJson: String): Boolean {
+        return try {
+            val root = JSONObject(rawJson)
+            val editor = prefs.edit()
+            root.optJSONArray("favorites")?.let { editor.putString("favorites_json", it.toString()) }
+            root.optJSONArray("playlists")?.let { editor.putString("playlists_json", it.toString()) }
+            root.optJSONArray("recentlyPlayed")?.let { editor.putString("recently_played_tracks", it.toString()) }
+            root.optJSONObject("settings")?.let { s ->
+                s.optString("appThemeStyle").takeIf { it.isNotBlank() }?.let { rawStyle ->
+                    AppThemeStyle.entries.firstOrNull { it.name == rawStyle }?.let { style ->
+                        val isGlass = style == AppThemeStyle.LIQUID_GLASS
+                        editor.putString("setting_app_theme_style", style.name)
+                        editor.putBoolean("setting_liquid_glass_enabled", isGlass)
+                        editor.putString("now_playing_style", if (isGlass) NowPlayingStyle.LIQUID_GLASS.name else NowPlayingStyle.SPOTIFY.name)
+                        editor.putString("setting_lyrics_style", if (isGlass) LyricsStyle.APPLE_MUSIC.name else LyricsStyle.CLASSIC.name)
+                    }
+                }
+                if (s.has("chartCountry")) editor.putString("setting_chart_country", s.optString("chartCountry", "US"))
+                if (s.has("audioQuality")) editor.putString("setting_audio_quality", s.optString("audioQuality", "Auto"))
+                if (s.has("videoQuality")) editor.putString("setting_video_quality", s.optString("videoQuality", "Auto (1080p)"))
+                if (s.has("normalizeVolume")) editor.putBoolean("setting_normalize_volume", s.optBoolean("normalizeVolume", true))
+                if (s.has("skipSilence")) editor.putBoolean("setting_skip_silence", s.optBoolean("skipSilence", false))
+                if (s.has("crossfadeSec")) editor.putInt("setting_crossfade_sec", s.optInt("crossfadeSec", 0))
+                if (s.has("maxCacheMb")) editor.putInt("setting_max_cache_mb", s.optInt("maxCacheMb", 1024))
+                if (s.has("eqEnabled")) editor.putBoolean("setting_eq_enabled", s.optBoolean("eqEnabled", false))
+                if (s.has("eqPreset")) editor.putString("setting_eq_preset", s.optString("eqPreset", "Flat"))
+                if (s.has("eqPreamp")) editor.putFloat("setting_eq_preamp", s.optDouble("eqPreamp", 0.0).toFloat())
+                if (s.has("eqBands")) editor.putString("setting_eq_bands", s.optString("eqBands"))
+                if (s.has("audioReverbPreset")) editor.putInt("setting_audio_reverb_preset", s.optInt("audioReverbPreset", 0))
+                if (s.has("sponsorBlockEnabled")) editor.putBoolean("setting_sponsorblock_enabled", s.optBoolean("sponsorBlockEnabled", true))
+                if (s.has("sponsorBlockCategories")) editor.putString("setting_sponsorblock_categories", s.optString("sponsorBlockCategories"))
+                if (s.has("mainLyricsProvider")) editor.putString("setting_main_lyrics_provider", s.optString("mainLyricsProvider", "SimpMusic"))
+                if (s.has("defaultLyricsOffsetMs")) editor.putInt("setting_default_lyrics_offset_ms", s.optInt("defaultLyricsOffsetMs", 0))
+                if (s.has("romanizationLanguages")) editor.putString("setting_romanization_languages", s.optString("romanizationLanguages"))
+                if (s.has("autoDownloadLiked")) editor.putBoolean("setting_auto_download_liked", s.optBoolean("autoDownloadLiked", false))
+                if (s.has("playVideoForVideoTrack")) editor.putBoolean("setting_play_video_for_video_track", s.optBoolean("playVideoForVideoTrack", false))
+                if (s.has("radioAudioOnly")) editor.putBoolean("setting_radio_audio_only", s.optBoolean("radioAudioOnly", true))
+                if (s.has("savePlaybackState")) editor.putBoolean("setting_save_playback_state", s.optBoolean("savePlaybackState", true))
+                if (s.has("killServiceOnExit")) editor.putBoolean("setting_kill_service_on_exit", s.optBoolean("killServiceOnExit", false))
+                if (s.has("recordListeningHistory")) editor.putBoolean("setting_record_listening_history", s.optBoolean("recordListeningHistory", true))
+                if (s.has("autoCheckUpdates")) editor.putBoolean("setting_auto_check_updates", s.optBoolean("autoCheckUpdates", true))
+            }
+            editor.apply()
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     // --- Explore Category Fan-Out Covers Cache ---
     fun loadExploreCoverCache(): Map<String, List<String>> {
         val raw = prefs.getString("explore_cover_cache_json", null) ?: return emptyMap()

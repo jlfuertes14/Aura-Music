@@ -1,7 +1,10 @@
 package com.auramusic.app.ui.screens
 
-import android.os.Build
+import android.content.Intent
+import android.media.audiofx.AudioEffect
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -27,42 +30,53 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Block
-import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.HighQuality
+import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.PowerSettingsNew
+import androidx.compose.material.icons.rounded.Public
+import androidx.compose.material.icons.rounded.Radio
+import androidx.compose.material.icons.rounded.Remove
+import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
+import androidx.compose.material.icons.rounded.SurroundSound
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Update
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -80,16 +94,24 @@ import coil.Coil
 import com.auramusic.app.R
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AppThemeStyle
-import com.auramusic.app.domain.model.EqualizerPreset
+import com.auramusic.app.domain.model.ChartSupportedCountries
 import com.auramusic.app.ui.AuraViewModel
+import com.auramusic.app.ui.components.AuraLiquidGlassSwitch
 import com.auramusic.app.ui.components.EqualizerWaveSection
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.isLyricsBlurSupported
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val AUDIO_QUALITY_OPTIONS = listOf(
@@ -106,6 +128,32 @@ private val VIDEO_QUALITY_OPTIONS = listOf(
     "720p" to "720p (High Definition)",
     "480p" to "480p (Standard Definition)",
     "360p" to "360p (Data Saver)"
+)
+
+private val AUDIO_REVERB_OPTIONS = listOf(
+    0 to "None (Off)",
+    1 to "Small Room",
+    2 to "Medium Room",
+    3 to "Large Room",
+    4 to "Medium Hall",
+    5 to "Large Hall",
+    6 to "Plate"
+)
+
+private val LYRICS_PROVIDER_OPTIONS = listOf(
+    "SimpMusic" to "SimpMusic Lyrics (Word-by-Word RichSync + LRCLIB fallback)",
+    "LRCLIB" to "LRCLIB (Open-source synced LRC + SimpMusic fallback)"
+)
+
+private val SPONSORBLOCK_CATEGORY_OPTIONS = listOf(
+    "sponsor" to "Sponsor segments",
+    "selfpromo" to "Unpaid / Self-promotion",
+    "interaction" to "Interaction reminders (Subscribe)",
+    "intro" to "Intermission / Intro animation",
+    "outro" to "Endcards / Credits",
+    "music_offtopic" to "Non-music section in music videos",
+    "preview" to "Preview / Recap",
+    "filler" to "Filler tangent / Jokes"
 )
 
 private val ROMANIZATION_LANGUAGES = listOf(
@@ -131,14 +179,47 @@ private val CACHE_LIMIT_OPTIONS = listOf(
     0 to "Unlimited"
 )
 
+private fun formatBytesLabel(bytes: Long): String {
+    if (bytes <= 0L) return "0 MB"
+    val mb = bytes / (1024.0 * 1024.0)
+    return if (mb >= 1024.0) {
+        String.format(Locale.US, "%.2f GB", mb / 1024.0)
+    } else {
+        String.format(Locale.US, "%.1f MB", mb)
+    }
+}
+
+private fun calculateDirSize(dir: File?): Long {
+    if (dir == null || !dir.exists()) return 0L
+    if (dir.isFile) return dir.length()
+    var total = 0L
+    dir.listFiles()?.forEach { child ->
+        total += calculateDirSize(child)
+    }
+    return total
+}
+
+private fun formatGlobalOffsetLabel(offsetMs: Int): String {
+    if (offsetMs == 0) return "0.0s (Default)"
+    val sign = if (offsetMs > 0) "+" else "-"
+    val absMs = abs(offsetMs)
+    return "$sign${absMs / 1000}.${(absMs % 1000) / 100}s"
+}
+
 @OptIn(coil.annotation.ExperimentalCoilApi::class)
 @Composable
 fun SettingsScreen(viewModel: AuraViewModel) {
     val context = LocalContext.current
     val appThemeStyle by viewModel.appThemeStyle.collectAsState()
     val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val selectedCountry by viewModel.selectedChartCountry.collectAsState()
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val romanizationLanguages by viewModel.romanizationLanguages.collectAsState()
+    val mainLyricsProvider by viewModel.mainLyricsProvider.collectAsState()
+    val defaultLyricsOffsetMs by viewModel.defaultLyricsOffsetMs.collectAsState()
+    val autoDownloadLiked by viewModel.autoDownloadLikedSongs.collectAsState()
+    val recordListeningHistory by viewModel.recordListeningHistory.collectAsState()
+    val autoCheckUpdates by viewModel.autoCheckUpdates.collectAsState()
     val downloads by viewModel.downloads.collectAsState()
 
     // AuraPlayerManager Settings State
@@ -149,18 +230,66 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
     val audioQuality by AuraPlayerManager.audioQuality.collectAsState()
     val videoQuality by AuraPlayerManager.videoQuality.collectAsState()
+    val audioReverbPreset by AuraPlayerManager.audioReverbPreset.collectAsState()
     val normalizeVolume by AuraPlayerManager.loudnessNormalization.collectAsState()
     val skipSilence by AuraPlayerManager.skipSilence.collectAsState()
     val crossfadeSeconds by AuraPlayerManager.crossfadeSeconds.collectAsState()
+    val savePlaybackState by AuraPlayerManager.savePlaybackState.collectAsState()
+    val killServiceOnExit by AuraPlayerManager.killServiceOnExit.collectAsState()
+    val playVideoForVideoTrack by AuraPlayerManager.playVideoForVideoTrack.collectAsState()
+    val radioAudioOnly by AuraPlayerManager.radioAudioOnly.collectAsState()
     val sponsorBlockEnabled by AuraPlayerManager.sponsorBlockEnabled.collectAsState()
+    val sponsorBlockCategories by AuraPlayerManager.sponsorBlockCategories.collectAsState()
     val maxCacheSizeMb by AuraPlayerManager.maxCacheSizeMb.collectAsState()
+
+    // Live storage telemetry
+    var cacheRefreshTick by remember { mutableIntStateOf(0) }
+    var streamCacheBytes by remember { mutableLongStateOf(0L) }
+    var imageCacheBytes by remember { mutableLongStateOf(0L) }
+    var downloadsBytes by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(cacheRefreshTick, downloads.size) {
+        withContext(Dispatchers.IO) {
+            streamCacheBytes = calculateDirSize(File(context.cacheDir, "aura_media3_cache"))
+            imageCacheBytes = calculateDirSize(File(context.cacheDir, "image_cache"))
+            downloadsBytes = downloads.sumOf { track ->
+                val f = track.localFilePath?.let { File(it) } ?: AuraPlayerManager.getOfflineFile(context, track.videoId)
+                if (f.exists()) f.length() else 0L
+            }
+        }
+    }
+
+    // SAF Backup & Restore Launchers
+    val backupCreateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) {
+            viewModel.exportBackupToUri(uri)
+        }
+    }
+    val backupRestoreLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importBackupFromUri(uri)
+        }
+    }
 
     // Dialog States
     var showThemeDialog by remember { mutableStateOf(false) }
+    var showCountryDialog by remember { mutableStateOf(false) }
     var showAudioQualityDialog by remember { mutableStateOf(false) }
     var showVideoQualityDialog by remember { mutableStateOf(false) }
+    var showReverbDialog by remember { mutableStateOf(false) }
+    var showLyricsProviderDialog by remember { mutableStateOf(false) }
+    var showLyricsOffsetDialog by remember { mutableStateOf(false) }
     var showRomanizationDialog by remember { mutableStateOf(false) }
+    var showSponsorBlockCategoriesDialog by remember { mutableStateOf(false) }
     var showCacheLimitDialog by remember { mutableStateOf(false) }
+    var showClearHistoryConfirm by remember { mutableStateOf(false) }
+    var showClearDownloadsConfirm by remember { mutableStateOf(false) }
+
+    val dialogContainerColor = auraGlassSheetColor(Color(0xFF181A22))
 
     val packageInfo = remember(context) {
         try {
@@ -225,12 +354,64 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 3. Audio & Streaming Fidelity
+        // 3. Content & Discovery (SimpMusic Content section)
+        item {
+            SettingsCategoryHeader(title = "Content & discovery")
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Public,
+                title = "Content Country",
+                subtitle = "${ChartSupportedCountries.getCountryName(selectedCountry)} ($selectedCountry)",
+                onClick = { showCountryDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Select Content Country",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.Download,
+                title = "Auto-Download Liked Songs",
+                subtitle = "Automatically save songs offline when you tap the heart",
+                checked = autoDownloadLiked,
+                onCheckedChange = { viewModel.setAutoDownloadLikedSongs(it) }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.SmartDisplay,
+                title = "Play Video for Video Tracks",
+                subtitle = "Open official music videos in video mode instead of audio-only",
+                checked = playVideoForVideoTrack,
+                onCheckedChange = { AuraPlayerManager.setPlayVideoForVideoTrack(it) }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.Radio,
+                title = "Radio Audio Only",
+                subtitle = "Keep endless auto-play radio queues focused on audio tracks",
+                checked = radioAudioOnly,
+                onCheckedChange = { AuraPlayerManager.setRadioAudioOnly(it) }
+            )
+
+            Spacer(modifier = Modifier.height(30.dp))
+        }
+
+        // 4. Audio & Streaming Fidelity
         item {
             SettingsCategoryHeader(title = "Audio & streaming fidelity")
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Sound Quality Selector
             ModernClickableRow(
                 icon = Icons.Rounded.Speed,
                 title = "Audio Stream Quality",
@@ -249,7 +430,6 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
             SettingsDivider()
 
-            // Video Quality Selector
             ModernClickableRow(
                 icon = Icons.Rounded.Videocam,
                 title = "Video Stream Quality",
@@ -268,7 +448,6 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
             SettingsDivider()
 
-            // 10-Band Equalizer Toggle
             ModernSwitchRow(
                 icon = Icons.Rounded.Equalizer,
                 title = "10-Band Equalizer",
@@ -277,7 +456,6 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 onCheckedChange = { AuraPlayerManager.setEqualizerEnabled(it) }
             )
 
-            // Interactive Frequency Wave Curve & Presets (when enabled)
             AnimatedVisibility(
                 visible = eqEnabled,
                 enter = fadeIn(tween(200)),
@@ -296,13 +474,97 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 }
             }
 
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.SurroundSound,
+                title = "Audio Reverb",
+                subtitle = AUDIO_REVERB_OPTIONS.firstOrNull { it.first == audioReverbPreset }?.second ?: "None (Off)",
+                onClick = { showReverbDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Select Audio Reverb",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Tune,
+                title = "Open System Equalizer",
+                subtitle = "Launch Android's built-in Dolby / system audio effects panel",
+                onClick = {
+                    try {
+                        val intent = Intent(AudioEffect.ACTION_DISPLAY_AUDIO_EFFECT_CONTROL_PANEL).apply {
+                            putExtra(AudioEffect.EXTRA_AUDIO_SESSION, AuraPlayerManager.getAudioSessionId())
+                            putExtra(AudioEffect.EXTRA_PACKAGE_NAME, context.packageName)
+                            putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC)
+                        }
+                        if (intent.resolveActivity(context.packageManager) != null) {
+                            context.startActivity(intent)
+                        } else {
+                            Toast.makeText(context, "No system equalizer app installed on this device", Toast.LENGTH_SHORT).show()
+                        }
+                    } catch (_: Exception) {
+                        Toast.makeText(context, "Unable to open system equalizer", Toast.LENGTH_SHORT).show()
+                    }
+                },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Open System Equalizer",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
             Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 4. Lyrics & Romanization
+        // 5. Lyrics & Romanization
         item {
             SettingsCategoryHeader(title = "Lyrics & romanization")
             Spacer(modifier = Modifier.height(10.dp))
+
+            ModernClickableRow(
+                icon = Icons.Rounded.MusicNote,
+                title = "Main Lyrics Provider",
+                subtitle = LYRICS_PROVIDER_OPTIONS.firstOrNull { it.first == mainLyricsProvider }?.second
+                    ?: mainLyricsProvider,
+                onClick = { showLyricsProviderDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Select Lyrics Provider",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Timer,
+                title = "Default Lyrics Offset",
+                subtitle = "Global lyric timing shift: ${formatGlobalOffsetLabel(defaultLyricsOffsetMs)}",
+                onClick = { showLyricsOffsetDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Adjust Default Lyrics Offset",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
 
             ModernSwitchRow(
                 icon = Icons.Rounded.Lyrics,
@@ -348,12 +610,11 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 5. Playback & Audio Processing
+        // 6. Playback & Audio Processing
         item {
             SettingsCategoryHeader(title = "Playback & audio processing")
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Normalize volume (ReplayGain / Loudness Normalization)
             ModernSwitchRow(
                 icon = Icons.AutoMirrored.Rounded.VolumeUp,
                 title = "Normalize Volume",
@@ -364,7 +625,6 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
             SettingsDivider()
 
-            // Skip silence
             ModernSwitchRow(
                 icon = Icons.Rounded.GraphicEq,
                 title = "Skip Silence",
@@ -383,20 +643,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.05f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Timer,
-                                contentDescription = null,
-                                tint = Color.White.copy(alpha = 0.85f),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
+                        SettingsRowIcon(icon = Icons.Rounded.Timer)
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Text(
@@ -428,7 +675,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     colors = SliderDefaults.colors(
                         thumbColor = AuraNeonLime,
                         activeTrackColor = AuraNeonLime,
-                        inactiveTrackColor = Color(0xFF262933)
+                        inactiveTrackColor = if (liquidGlassEnabled) Color.White.copy(alpha = 0.14f) else Color(0xFF262933)
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
@@ -438,7 +685,26 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
             SettingsDivider()
 
-            // SponsorBlock Integration
+            ModernSwitchRow(
+                icon = Icons.Rounded.BookmarkAdded,
+                title = "Save Playback State",
+                subtitle = "Remember shuffle and repeat mode across app restarts",
+                checked = savePlaybackState,
+                onCheckedChange = { AuraPlayerManager.setSavePlaybackState(it) }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.PowerSettingsNew,
+                title = "Stop Playback on Exit",
+                subtitle = "Stop background music service when swiped from recents",
+                checked = killServiceOnExit,
+                onCheckedChange = { AuraPlayerManager.setKillServiceOnExit(it) }
+            )
+
+            SettingsDivider()
+
             ModernSwitchRow(
                 icon = Icons.Rounded.Block,
                 title = "SponsorBlock Integration",
@@ -447,10 +713,62 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 onCheckedChange = { AuraPlayerManager.setSponsorBlockEnabled(it) }
             )
 
+            AnimatedVisibility(
+                visible = sponsorBlockEnabled,
+                enter = fadeIn(tween(180)),
+                exit = fadeOut(tween(140))
+            ) {
+                Column {
+                    SettingsDivider()
+                    val catCount = sponsorBlockCategories.size
+                    val catSummary = "$catCount of ${SPONSORBLOCK_CATEGORY_OPTIONS.size} segment types enabled"
+                    ModernClickableRow(
+                        icon = Icons.Rounded.Tune,
+                        title = "SponsorBlock Categories",
+                        subtitle = catSummary,
+                        onClick = { showSponsorBlockCategoriesDialog = true },
+                        trailingContent = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                contentDescription = "Configure SponsorBlock Categories",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 6. Storage & Cache
+        // 7. Listening History (SimpMusic Listening History section)
+        item {
+            SettingsCategoryHeader(title = "Listening history")
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.History,
+                title = "Record Listening History",
+                subtitle = "Track recently played songs and local taste recommendations",
+                checked = recordListeningHistory,
+                onCheckedChange = { viewModel.setRecordListeningHistory(it) }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.DeleteOutline,
+                title = "Clear Listening History",
+                subtitle = "Erase recently played tracks and local listening stats",
+                onClick = { showClearHistoryConfirm = true },
+                trailingContent = { }
+            )
+
+            Spacer(modifier = Modifier.height(30.dp))
+        }
+
+        // 8. Storage & Cache
         item {
             SettingsCategoryHeader(title = "Storage & cache")
             Spacer(modifier = Modifier.height(10.dp))
@@ -458,9 +776,20 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             ModernSettingsRow(
                 icon = Icons.Rounded.Storage,
                 title = "Offline Downloads",
-                subtitle = "${downloads.size} tracks cached for offline playback",
+                subtitle = "${downloads.size} tracks cached (${formatBytesLabel(downloadsBytes)})",
                 trailingContent = { }
             )
+
+            if (downloads.isNotEmpty()) {
+                SettingsDivider()
+                ModernClickableRow(
+                    icon = Icons.Rounded.DeleteOutline,
+                    title = "Clear All Downloads",
+                    subtitle = "Remove all ${downloads.size} downloaded audio files (${formatBytesLabel(downloadsBytes)})",
+                    onClick = { showClearDownloadsConfirm = true },
+                    trailingContent = { }
+                )
+            }
 
             SettingsDivider()
 
@@ -485,7 +814,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             ModernClickableRow(
                 icon = Icons.Rounded.DeleteOutline,
                 title = "Clear Media Stream Cache",
-                subtitle = "Release audio fragments and video segments",
+                subtitle = "Release audio & video fragments (${formatBytesLabel(streamCacheBytes)})",
                 onClick = {
                     try {
                         val cacheDir = File(context.cacheDir, "aura_media3_cache")
@@ -493,6 +822,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                             cacheDir.deleteRecursively()
                             cacheDir.mkdirs()
                         }
+                        cacheRefreshTick++
                         Toast.makeText(context, "Stream cache successfully emptied", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         Toast.makeText(context, "Cache clear notice: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -506,12 +836,13 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             ModernClickableRow(
                 icon = Icons.Rounded.DeleteOutline,
                 title = "Clear Image & Artwork Cache",
-                subtitle = "Release album covers and cached artist avatars",
+                subtitle = "Release album covers and avatars (${formatBytesLabel(imageCacheBytes)})",
                 onClick = {
                     try {
                         val imageLoader = Coil.imageLoader(context)
                         imageLoader.diskCache?.clear()
                         imageLoader.memoryCache?.clear()
+                        cacheRefreshTick++
                         Toast.makeText(context, "Artwork cache successfully cleared", Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         Toast.makeText(context, "Notice: ${e.message}", Toast.LENGTH_SHORT).show()
@@ -520,13 +851,68 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 trailingContent = { }
             )
 
-            Spacer(modifier = Modifier.height(34.dp))
+            Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 7. Updates & Notifications
+        // 9. Backup & Restore (SimpMusic Backup section)
+        item {
+            SettingsCategoryHeader(title = "Backup & restore")
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Backup,
+                title = "Backup Data",
+                subtitle = "Export playlists, favorites, history & settings to JSON",
+                onClick = {
+                    val stamp = SimpleDateFormat("yyyyMMdd_HHmm", Locale.US).format(Date())
+                    backupCreateLauncher.launch("aura_backup_$stamp.json")
+                },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Export Backup",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Restore,
+                title = "Restore Data",
+                subtitle = "Import a previously saved Aura JSON backup file",
+                onClick = {
+                    backupRestoreLauncher.launch(arrayOf("application/json", "*/*"))
+                },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Restore Backup",
+                        tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            Spacer(modifier = Modifier.height(30.dp))
+        }
+
+        // 10. Updates & Notifications
         item {
             SettingsCategoryHeader(title = "Updates & notifications")
             Spacer(modifier = Modifier.height(10.dp))
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.Update,
+                title = "Auto Check for Updates",
+                subtitle = "Automatically check GitHub Releases on app launch",
+                checked = autoCheckUpdates,
+                onCheckedChange = { viewModel.setAutoCheckUpdates(it) }
+            )
+
+            SettingsDivider()
 
             ModernClickableRow(
                 icon = Icons.Rounded.SystemUpdate,
@@ -555,7 +941,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             Spacer(modifier = Modifier.height(30.dp))
         }
 
-        // 8. About Aura
+        // 11. About Aura
         item {
             Row(
                 modifier = Modifier
@@ -635,7 +1021,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                                 )
                                 Text(
                                     text = if (option == AppThemeStyle.LIQUID_GLASS && !blurSupported) {
-                                        "Translucent glass UI & Apple Music style (blur on Android 12+)"
+                                        "Static frosted glass & Apple Music style (live blur on Android 12+)"
                                     } else {
                                         option.subtitle
                                     },
@@ -652,12 +1038,68 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = if (liquidGlassEnabled) Color(0xFF1A1E2A) else Color(0xFF181A22),
+            containerColor = dialogContainerColor,
             shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // 1. Audio Stream Quality Dialog
+    // 1. Content Country Dialog
+    if (showCountryDialog) {
+        AlertDialog(
+            onDismissRequest = { showCountryDialog = false },
+            title = {
+                Text(text = "Content Country", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                LazyColumn(modifier = Modifier.height(340.dp)) {
+                    items(ChartSupportedCountries.items.size) { index ->
+                        val code = ChartSupportedCountries.items[index]
+                        val name = ChartSupportedCountries.itemsData[index]
+                        val isSelected = selectedCountry == code
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.selectChartCountry(code)
+                                    showCountryDialog = false
+                                }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.selectChartCountry(code)
+                                    showCountryDialog = false
+                                },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AuraNeonLime,
+                                    unselectedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = "$name ($code)",
+                                color = if (isSelected) AuraNeonLime else Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showCountryDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 2. Audio Stream Quality Dialog
     if (showAudioQualityDialog) {
         AlertDialog(
             onDismissRequest = { showAudioQualityDialog = false },
@@ -706,12 +1148,12 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF181A22),
+            containerColor = dialogContainerColor,
             shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // 2. Video Stream Quality Dialog
+    // 3. Video Stream Quality Dialog
     if (showVideoQualityDialog) {
         AlertDialog(
             onDismissRequest = { showVideoQualityDialog = false },
@@ -760,12 +1202,196 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF181A22),
+            containerColor = dialogContainerColor,
             shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // 3. Romanization Languages Multi-Select Dialog
+    // 4. Audio Reverb Dialog
+    if (showReverbDialog) {
+        AlertDialog(
+            onDismissRequest = { showReverbDialog = false },
+            title = {
+                Text(text = "Audio Reverb", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    AUDIO_REVERB_OPTIONS.forEach { (presetId, label) ->
+                        val isSelected = audioReverbPreset == presetId
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    AuraPlayerManager.setAudioReverbPreset(presetId)
+                                    showReverbDialog = false
+                                }
+                                .padding(vertical = 7.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    AuraPlayerManager.setAudioReverbPreset(presetId)
+                                    showReverbDialog = false
+                                },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AuraNeonLime,
+                                    unselectedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = label,
+                                color = if (isSelected) AuraNeonLime else Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showReverbDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 5. Main Lyrics Provider Dialog
+    if (showLyricsProviderDialog) {
+        AlertDialog(
+            onDismissRequest = { showLyricsProviderDialog = false },
+            title = {
+                Text(text = "Main Lyrics Provider", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    LYRICS_PROVIDER_OPTIONS.forEach { (key, label) ->
+                        val isSelected = mainLyricsProvider == key
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable {
+                                    viewModel.setMainLyricsProvider(key)
+                                    showLyricsProviderDialog = false
+                                }
+                                .padding(vertical = 8.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = {
+                                    viewModel.setMainLyricsProvider(key)
+                                    showLyricsProviderDialog = false
+                                },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AuraNeonLime,
+                                    unselectedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = label,
+                                color = if (isSelected) AuraNeonLime else Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLyricsProviderDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 6. Default Lyrics Offset Dialog
+    if (showLyricsOffsetDialog) {
+        AlertDialog(
+            onDismissRequest = { showLyricsOffsetDialog = false },
+            title = {
+                Text(text = "Default Lyrics Offset", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Applies to tracks without a custom per-song lyric timing offset (negative delays lyrics, positive advances).",
+                        color = TextSecondary,
+                        fontSize = 12.5.sp
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        IconButton(
+                            onClick = { viewModel.setDefaultLyricsOffsetMs(defaultLyricsOffsetMs - 100) },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .auraGlassSurface(shape = CircleShape, fallbackColor = Color(0xFF262A36))
+                        ) {
+                            Icon(Icons.Rounded.Remove, contentDescription = "Decrease 0.1s", tint = Color.White)
+                        }
+                        Text(
+                            text = formatGlobalOffsetLabel(defaultLyricsOffsetMs),
+                            color = if (defaultLyricsOffsetMs != 0) AuraNeonLime else Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
+                        IconButton(
+                            onClick = { viewModel.setDefaultLyricsOffsetMs(defaultLyricsOffsetMs + 100) },
+                            modifier = Modifier
+                                .size(44.dp)
+                                .auraGlassSurface(shape = CircleShape, fallbackColor = Color(0xFF262A36))
+                        ) {
+                            Icon(Icons.Rounded.Add, contentDescription = "Increase 0.1s", tint = Color.White)
+                        }
+                    }
+                    Slider(
+                        value = defaultLyricsOffsetMs.toFloat(),
+                        onValueChange = { raw ->
+                            val snapped = (raw / 100f).roundToInt() * 100
+                            viewModel.setDefaultLyricsOffsetMs(snapped)
+                        },
+                        valueRange = -5000f..5000f,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AuraNeonLime,
+                            activeTrackColor = AuraNeonLime,
+                            inactiveTrackColor = Color(0xFF2B2F3B)
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                if (defaultLyricsOffsetMs != 0) {
+                    TextButton(onClick = { viewModel.setDefaultLyricsOffsetMs(0) }) {
+                        Text("Reset", color = TextSecondary)
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showLyricsOffsetDialog = false }) {
+                    Text("Done", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 7. Romanization Languages Multi-Select Dialog
     if (showRomanizationDialog) {
         AlertDialog(
             onDismissRequest = { showRomanizationDialog = false },
@@ -810,12 +1436,62 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Text("Done", color = AuraNeonLime, fontWeight = FontWeight.Bold)
                 }
             },
-            containerColor = Color(0xFF181A22),
+            containerColor = dialogContainerColor,
             shape = RoundedCornerShape(16.dp)
         )
     }
 
-    // 4. Cache Limit Dialog
+    // 8. SponsorBlock Categories Multi-Select Dialog
+    if (showSponsorBlockCategoriesDialog) {
+        AlertDialog(
+            onDismissRequest = { showSponsorBlockCategoriesDialog = false },
+            title = {
+                Text(text = "SponsorBlock Categories", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                LazyColumn(modifier = Modifier.height(320.dp)) {
+                    items(SPONSORBLOCK_CATEGORY_OPTIONS.size) { index ->
+                        val (key, label) = SPONSORBLOCK_CATEGORY_OPTIONS[index]
+                        val isChecked = sponsorBlockCategories.contains(key)
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { viewModel.toggleSponsorBlockCategory(key) }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Checkbox(
+                                checked = isChecked,
+                                onCheckedChange = { viewModel.toggleSponsorBlockCategory(key) },
+                                colors = CheckboxDefaults.colors(
+                                    checkedColor = AuraNeonLime,
+                                    checkmarkColor = Color.Black,
+                                    uncheckedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = label,
+                                color = if (isChecked) Color.White else TextSecondary,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isChecked) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSponsorBlockCategoriesDialog = false }) {
+                    Text("Done", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 9. Cache Limit Dialog
     if (showCacheLimitDialog) {
         AlertDialog(
             onDismissRequest = { showCacheLimitDialog = false },
@@ -864,7 +1540,76 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Text("Cancel", color = TextSecondary)
                 }
             },
-            containerColor = Color(0xFF181A22),
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 10. Clear Listening History Confirmation Dialog
+    if (showClearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearHistoryConfirm = false },
+            title = {
+                Text(text = "Clear Listening History?", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "This will permanently remove your recently played list and local listening statistics. Your favorites, playlists, and downloads will not be affected.",
+                    color = TextSecondary,
+                    fontSize = 13.5.sp
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearHistoryConfirm = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearListeningHistory()
+                        showClearHistoryConfirm = false
+                    }
+                ) {
+                    Text("Clear", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    // 11. Clear All Downloads Confirmation Dialog
+    if (showClearDownloadsConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearDownloadsConfirm = false },
+            title = {
+                Text(text = "Remove All Downloads?", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    text = "This will delete all ${downloads.size} offline audio tracks (${formatBytesLabel(downloadsBytes)}) from device storage.",
+                    color = TextSecondary,
+                    fontSize = 13.5.sp
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearDownloadsConfirm = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.clearAllDownloads()
+                        cacheRefreshTick++
+                        showClearDownloadsConfirm = false
+                    }
+                ) {
+                    Text("Delete All", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
             shape = RoundedCornerShape(16.dp)
         )
     }
@@ -891,6 +1636,32 @@ private fun SettingsDivider() {
 }
 
 @Composable
+private fun SettingsRowIcon(icon: ImageVector) {
+    val isGlass = LocalLiquidGlassEnabled.current
+    Box(
+        modifier = Modifier
+            .size(36.dp)
+            .then(
+                if (isGlass) {
+                    Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.09f)
+                } else {
+                    Modifier
+                        .clip(CircleShape)
+                        .background(Color.White.copy(alpha = 0.05f))
+                }
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = Color.White.copy(alpha = 0.88f),
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
 private fun ModernSettingsRow(
     icon: ImageVector,
     title: String,
@@ -908,20 +1679,7 @@ private fun ModernSettingsRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.weight(1f)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.05f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            SettingsRowIcon(icon = icon)
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(
@@ -962,20 +1720,7 @@ private fun ModernClickableRow(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.weight(1f)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.05f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            SettingsRowIcon(icon = icon)
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(
@@ -1012,22 +1757,11 @@ private fun ModernSwitchRow(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.weight(1f)
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 10.dp)
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.05f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.size(18.dp)
-                )
-            }
+            SettingsRowIcon(icon = icon)
             Spacer(modifier = Modifier.width(12.dp))
             Column {
                 Text(
@@ -1043,15 +1777,9 @@ private fun ModernSwitchRow(
                 )
             }
         }
-        Switch(
+        AuraLiquidGlassSwitch(
             checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.Black,
-                checkedTrackColor = AuraNeonLime,
-                uncheckedThumbColor = Color.White.copy(alpha = 0.8f),
-                uncheckedTrackColor = Color.White.copy(alpha = 0.15f)
-            )
+            onCheckedChange = onCheckedChange
         )
     }
 }

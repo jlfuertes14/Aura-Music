@@ -11,15 +11,28 @@ import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
 object SponsorBlockRepository {
+    val DEFAULT_CATEGORIES = setOf(
+        "sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic"
+    )
     private val segmentCache = ConcurrentHashMap<String, List<SponsorSegment>>()
     private val rydCache = ConcurrentHashMap<String, ReturnYouTubeDislikeData>()
 
-    suspend fun getSponsorSegments(videoId: String): List<SponsorSegment> = withContext(Dispatchers.IO) {
-        if (videoId.isBlank()) return@withContext emptyList()
-        segmentCache[videoId]?.let { return@withContext it }
+    fun clearSegmentCache() {
+        segmentCache.clear()
+    }
+
+    suspend fun getSponsorSegments(
+        videoId: String,
+        categories: Set<String> = DEFAULT_CATEGORIES
+    ): List<SponsorSegment> = withContext(Dispatchers.IO) {
+        if (videoId.isBlank() || categories.isEmpty()) return@withContext emptyList()
+        val sortedCats = categories.sorted()
+        val cacheKey = "${videoId}_${sortedCats.joinToString(",")}"
+        segmentCache[cacheKey]?.let { return@withContext it }
 
         try {
-            val categoriesParam = "%5B%22sponsor%22,%22selfpromo%22,%22interaction%22,%22intro%22,%22outro%22,%22music_offtopic%22%5D"
+            val encodedCategories = sortedCats.joinToString(",") { "%22$it%22" }
+            val categoriesParam = "%5B$encodedCategories%5D"
             val url = "https://sponsor.ajay.app/api/skipSegments?videoID=$videoId&categories=$categoriesParam"
             val req = Request.Builder()
                 .url(url)
@@ -28,7 +41,7 @@ object SponsorBlockRepository {
 
             SimpMusicExtractorEngine.httpClient.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) {
-                    segmentCache[videoId] = emptyList()
+                    segmentCache[cacheKey] = emptyList()
                     return@withContext emptyList()
                 }
                 val arr = JSONArray(resp.body?.string() ?: "[]")
@@ -50,7 +63,7 @@ object SponsorBlockRepository {
                         )
                     }
                 }
-                segmentCache[videoId] = list
+                segmentCache[cacheKey] = list
                 list
             }
         } catch (e: Exception) {

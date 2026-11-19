@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.media.audiofx.Equalizer
 import android.media.audiofx.LoudnessEnhancer
+import android.media.audiofx.PresetReverb
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -81,6 +82,7 @@ object AuraPlayerManager {
     private var simpleCache: SimpleCache? = null
     private var hardwareEq: Equalizer? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
+    private var presetReverb: PresetReverb? = null
     private var boundAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
     @Volatile
     private var currentTrackLoudnessDb: Float = 0f
@@ -156,6 +158,26 @@ object AuraPlayerManager {
     private val _sponsorBlockEnabled = MutableStateFlow(true)
     val sponsorBlockEnabled: StateFlow<Boolean> = _sponsorBlockEnabled.asStateFlow()
 
+    private val _sponsorBlockCategories = MutableStateFlow(
+        setOf("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
+    )
+    val sponsorBlockCategories: StateFlow<Set<String>> = _sponsorBlockCategories.asStateFlow()
+
+    private val _audioReverbPreset = MutableStateFlow(0)
+    val audioReverbPreset: StateFlow<Int> = _audioReverbPreset.asStateFlow()
+
+    private val _savePlaybackState = MutableStateFlow(true)
+    val savePlaybackState: StateFlow<Boolean> = _savePlaybackState.asStateFlow()
+
+    private val _killServiceOnExit = MutableStateFlow(false)
+    val killServiceOnExit: StateFlow<Boolean> = _killServiceOnExit.asStateFlow()
+
+    private val _playVideoForVideoTrack = MutableStateFlow(false)
+    val playVideoForVideoTrack: StateFlow<Boolean> = _playVideoForVideoTrack.asStateFlow()
+
+    private val _radioAudioOnly = MutableStateFlow(true)
+    val radioAudioOnly: StateFlow<Boolean> = _radioAudioOnly.asStateFlow()
+
     private val _crossfadeSeconds = MutableStateFlow(4)
     val crossfadeSeconds: StateFlow<Int> = _crossfadeSeconds.asStateFlow()
 
@@ -208,6 +230,19 @@ object AuraPlayerManager {
         _skipSilence.value = storage.loadSkipSilence()
         _crossfadeSeconds.value = storage.loadCrossfadeDuration()
         _maxCacheSizeMb.value = storage.loadMaxCacheSize()
+        _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
+        _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
+        _audioReverbPreset.value = storage.loadAudioReverbPreset()
+        _savePlaybackState.value = storage.loadSavePlaybackState()
+        _killServiceOnExit.value = storage.loadKillServiceOnExit()
+        _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
+        _radioAudioOnly.value = storage.loadRadioAudioOnly()
+        if (_savePlaybackState.value) {
+            val savedMode = PlaybackMode.entries.firstOrNull { it.name == storage.loadSavedPlaybackMode() }
+                ?: PlaybackMode.NORMAL
+            _playbackMode.value = savedMode
+            _isShuffleEnabled.value = savedMode == PlaybackMode.SHUFFLE
+        }
 
         SimpMusicExtractorEngine.initExtractors()
 
@@ -375,6 +410,11 @@ object AuraPlayerManager {
             .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.skipSilenceEnabled = _skipSilence.value
+        player.repeatMode = when (_playbackMode.value) {
+            PlaybackMode.REPEAT_ALL -> Player.REPEAT_MODE_ALL
+            PlaybackMode.REPEAT_ONE -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -571,7 +611,7 @@ object AuraPlayerManager {
         prefetchUpcomingTracks(track.videoId)
         if (allowRadioQueue && updatedQueue.size <= 3) {
             radioFetchJob = scope.launch {
-                val radio = SimpMusicExtractorEngine.fetchRadioQueue(track.videoId)
+                val radio = SimpMusicExtractorEngine.fetchRadioQueue(track.videoId, _radioAudioOnly.value)
                 if (radio.isNotEmpty()) {
                     val existingIds = _queue.value.map { it.videoId }.toSet()
                     val fresh = radio.filterNot { existingIds.contains(it.videoId) }
@@ -719,6 +759,9 @@ object AuraPlayerManager {
                 }
             }
         }
+        if (_savePlaybackState.value) {
+            appContext?.let { AuraStorageRepository(it).saveSavedPlaybackMode(nextMode.name) }
+        }
         return nextMode
     }
 
@@ -733,7 +776,7 @@ object AuraPlayerManager {
             // Queue only has 1 song (e.g. played single search track), and user activated Shuffle mode!
             // Dynamically fetch radio queue so playback auto-plays into similar tracks
             scope.launch {
-                val radio = SimpMusicExtractorEngine.fetchRadioQueue(cur.videoId)
+                val radio = SimpMusicExtractorEngine.fetchRadioQueue(cur.videoId, _radioAudioOnly.value)
                 if (radio.isNotEmpty()) {
                     val existingIds = _queue.value.map { it.videoId }.toSet()
                     val fresh = radio.filterNot { existingIds.contains(it.videoId) }
@@ -977,6 +1020,73 @@ object AuraPlayerManager {
 
     fun setSponsorBlockEnabled(enabled: Boolean) {
         _sponsorBlockEnabled.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveSponsorBlockEnabled(enabled) }
+    }
+
+    fun setSponsorBlockCategories(categories: Set<String>) {
+        _sponsorBlockCategories.value = categories
+        appContext?.let { AuraStorageRepository(it).saveSponsorBlockCategories(categories) }
+    }
+
+    fun setAudioReverbPreset(preset: Int) {
+        _audioReverbPreset.value = preset.coerceIn(0, 6)
+        applyEqualizerCurve()
+        appContext?.let { AuraStorageRepository(it).saveAudioReverbPreset(_audioReverbPreset.value) }
+    }
+
+    fun setSavePlaybackState(enabled: Boolean) {
+        _savePlaybackState.value = enabled
+        appContext?.let {
+            val storage = AuraStorageRepository(it)
+            storage.saveSavePlaybackState(enabled)
+            if (enabled) storage.saveSavedPlaybackMode(_playbackMode.value.name)
+        }
+    }
+
+    fun setKillServiceOnExit(enabled: Boolean) {
+        _killServiceOnExit.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveKillServiceOnExit(enabled) }
+    }
+
+    fun setPlayVideoForVideoTrack(enabled: Boolean) {
+        _playVideoForVideoTrack.value = enabled
+        appContext?.let { AuraStorageRepository(it).savePlayVideoForVideoTrack(enabled) }
+    }
+
+    fun setRadioAudioOnly(enabled: Boolean) {
+        _radioAudioOnly.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveRadioAudioOnly(enabled) }
+    }
+
+    fun getAudioSessionId(): Int {
+        return exoPlayer?.audioSessionId ?: boundAudioSessionId
+    }
+
+    fun reloadSettingsFromStorage() {
+        val ctx = appContext ?: return
+        val storage = AuraStorageRepository(ctx)
+        _eqEnabled.value = storage.loadEqualizerEnabled()
+        _equalizerBands.value = storage.loadEqualizerBands()
+        _equalizerPreamp.value = storage.loadEqualizerPreamp()
+        val savedPreset = storage.loadEqualizerPreset()
+        _activeEqPresetName.value = savedPreset
+        _activeEqPreset.value = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.name == savedPreset }
+            ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
+        _audioQuality.value = storage.loadAudioQuality()
+        _videoQuality.value = storage.loadVideoQuality()
+        _loudnessNormalization.value = storage.loadNormalizeVolume()
+        _skipSilence.value = storage.loadSkipSilence()
+        exoPlayer?.skipSilenceEnabled = _skipSilence.value
+        _crossfadeSeconds.value = storage.loadCrossfadeDuration()
+        _maxCacheSizeMb.value = storage.loadMaxCacheSize()
+        _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
+        _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
+        _audioReverbPreset.value = storage.loadAudioReverbPreset()
+        _savePlaybackState.value = storage.loadSavePlaybackState()
+        _killServiceOnExit.value = storage.loadKillServiceOnExit()
+        _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
+        _radioAudioOnly.value = storage.loadRadioAudioOnly()
+        applyEqualizerCurve()
     }
 
     fun setEqualizerBands(bands: List<Float>) {
@@ -1833,6 +1943,16 @@ object AuraPlayerManager {
         } catch (e: Exception) {
             Log.w(TAG, "LoudnessEnhancer binding notice: ${e.message}")
         }
+        try {
+            presetReverb?.release()
+            presetReverb = PresetReverb(0, audioSessionId).apply {
+                val presetShort = _audioReverbPreset.value.coerceIn(0, 6).toShort()
+                preset = presetShort
+                enabled = presetShort != PresetReverb.PRESET_NONE
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "PresetReverb binding notice: ${e.message}")
+        }
         applyEqualizerCurve()
     }
 
@@ -1880,6 +2000,16 @@ object AuraPlayerManager {
             }
         } catch (e: Exception) {
             Log.w(TAG, "LoudnessEnhancer apply notice: ${e.message}")
+        }
+
+        try {
+            presetReverb?.let { reverb ->
+                val presetShort = _audioReverbPreset.value.coerceIn(0, 6).toShort()
+                reverb.preset = presetShort
+                reverb.enabled = presetShort != PresetReverb.PRESET_NONE
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "PresetReverb apply notice: ${e.message}")
         }
 
         // Anti-Clipping Headroom + loudness attenuation for tracks louder than -14 LUFS

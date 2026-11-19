@@ -269,6 +269,12 @@ class AuraMediaService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         val player = mediaSession?.player
+        if (AuraPlayerManager.killServiceOnExit.value) {
+            player?.pause()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
