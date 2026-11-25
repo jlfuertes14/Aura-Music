@@ -95,6 +95,33 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         }
     )
 
+    private val _analyticsRange = MutableStateFlow(AnalyticsRange.DAYS_30)
+    val analyticsRange: StateFlow<AnalyticsRange> = _analyticsRange.asStateFlow()
+
+    private val _analyticsSnapshot = MutableStateFlow(
+        AnalyticsSnapshot(
+            range = AnalyticsRange.DAYS_30,
+            totalMinutes = 0,
+            totalPlays = 0,
+            uniqueArtists = 0,
+            peakHourLabel = "Not enough data",
+            hourlyCounts = List(24) { 0 },
+            topTracks = emptyList(),
+            topArtists = emptyList(),
+            topGenres = emptyList()
+        )
+    )
+    val analyticsSnapshot: StateFlow<AnalyticsSnapshot> = _analyticsSnapshot.asStateFlow()
+
+    private val _cachedTracks = MutableStateFlow<List<AuraTrack>>(emptyList())
+    val cachedTracks: StateFlow<List<AuraTrack>> = _cachedTracks.asStateFlow()
+
+    private val _pendingDeepLinkTab = MutableStateFlow<Int?>(null)
+    val pendingDeepLinkTab: StateFlow<Int?> = _pendingDeepLinkTab.asStateFlow()
+
+    private val _deepLinkExpandPlayer = MutableStateFlow(false)
+    val deepLinkExpandPlayer: StateFlow<Boolean> = _deepLinkExpandPlayer.asStateFlow()
+
     init {
         library = LibraryCoordinator(
             application = application,
@@ -274,33 +301,6 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     val discordToken: StateFlow<String> = settings.discordToken
     val discordRpcEnabled: StateFlow<Boolean> = settings.discordRpcEnabled
     val ytmCookie: StateFlow<String> = settings.ytmCookie
-
-    private val _analyticsRange = MutableStateFlow(AnalyticsRange.DAYS_30)
-    val analyticsRange: StateFlow<AnalyticsRange> = _analyticsRange.asStateFlow()
-
-    private val _analyticsSnapshot = MutableStateFlow(
-        AnalyticsSnapshot(
-            range = AnalyticsRange.DAYS_30,
-            totalMinutes = 0,
-            totalPlays = 0,
-            uniqueArtists = 0,
-            peakHourLabel = "Not enough data",
-            hourlyCounts = List(24) { 0 },
-            topTracks = emptyList(),
-            topArtists = emptyList(),
-            topGenres = emptyList()
-        )
-    )
-    val analyticsSnapshot: StateFlow<AnalyticsSnapshot> = _analyticsSnapshot.asStateFlow()
-
-    private val _cachedTracks = MutableStateFlow<List<AuraTrack>>(emptyList())
-    val cachedTracks: StateFlow<List<AuraTrack>> = _cachedTracks.asStateFlow()
-
-    private val _pendingDeepLinkTab = MutableStateFlow<Int?>(null)
-    val pendingDeepLinkTab: StateFlow<Int?> = _pendingDeepLinkTab.asStateFlow()
-
-    private val _deepLinkExpandPlayer = MutableStateFlow(false)
-    val deepLinkExpandPlayer: StateFlow<Boolean> = _deepLinkExpandPlayer.asStateFlow()
 
     // In-App Updates & Releases
     val currentUpdateRelease: StateFlow<AuraReleaseInfo?> = settings.currentUpdateRelease
