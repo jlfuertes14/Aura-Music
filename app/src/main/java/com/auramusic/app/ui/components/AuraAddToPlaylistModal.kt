@@ -31,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -40,9 +39,8 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
  * Mobile Sheet Modal for adding a track to an existing playlist,
@@ -57,20 +55,22 @@ fun AuraAddToPlaylistModal(
     onSelectPlaylist: (AuraPlaylist) -> Unit,
     onCreateNewPlaylist: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -95,6 +95,7 @@ fun AuraAddToPlaylistModal(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(10.dp))
+                        .background(auraColors.surfaceCard)
                 )
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -102,14 +103,14 @@ fun AuraAddToPlaylistModal(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "Add to playlist",
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "${track.title} • ${track.artist}",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 12.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -118,7 +119,7 @@ fun AuraAddToPlaylistModal(
             }
 
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = auraColors.divider,
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
@@ -127,22 +128,23 @@ fun AuraAddToPlaylistModal(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .heightIn(min = 56.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .clickable(onClick = onCreateNewPlaylist)
-                    .padding(vertical = 12.dp, horizontal = 4.dp),
+                    .padding(vertical = 10.dp, horizontal = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     modifier = Modifier
                         .size(46.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(Color.White.copy(alpha = 0.10f)),
+                        .background(auraColors.circleButtonBg),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.PlaylistAdd,
                         contentDescription = "New Playlist",
-                        tint = AuraNeonLime,
+                        tint = accentTint,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -151,7 +153,7 @@ fun AuraAddToPlaylistModal(
 
                 Text(
                     text = "New Playlist",
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -167,7 +169,7 @@ fun AuraAddToPlaylistModal(
                 ) {
                     Text(
                         text = "No playlists yet. Tap 'New Playlist' above to create one!",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 13.sp
                     )
                 }
@@ -183,6 +185,7 @@ fun AuraAddToPlaylistModal(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 56.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .clickable { onSelectPlaylist(pl) }
                                 .padding(vertical = 8.dp, horizontal = 4.dp),
@@ -201,7 +204,7 @@ fun AuraAddToPlaylistModal(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = pl.name,
-                                    color = TextPrimary,
+                                    color = auraColors.textPrimary,
                                     fontSize = 14.5.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
@@ -210,7 +213,7 @@ fun AuraAddToPlaylistModal(
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = "${pl.tracks.size} songs",
-                                    color = TextSecondary,
+                                    color = auraColors.textSecondary,
                                     fontSize = 12.sp
                                 )
                             }
@@ -220,21 +223,21 @@ fun AuraAddToPlaylistModal(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(if (isAlreadyIn) AuraNeonLime.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.10f)),
+                                    .background(if (isAlreadyIn) auraColors.accent else auraColors.circleButtonBg),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (isAlreadyIn) {
                                     Icon(
                                         imageVector = Icons.Rounded.Check,
                                         contentDescription = "Added",
-                                        tint = AuraNeonLime,
+                                        tint = auraColors.onAccent,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 } else {
                                     Icon(
                                         imageVector = Icons.Rounded.Add,
                                         contentDescription = "Add to Playlist",
-                                        tint = Color.White,
+                                        tint = auraColors.textPrimary,
                                         modifier = Modifier.size(20.dp)
                                     )
                                 }

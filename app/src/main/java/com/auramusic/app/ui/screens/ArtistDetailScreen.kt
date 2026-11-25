@@ -5,7 +5,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -84,10 +83,8 @@ import com.auramusic.app.ui.components.ArtistCarouselSkeleton
 import com.auramusic.app.ui.components.TrackItemSkeleton
 import com.auramusic.app.ui.components.auraShimmer
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import com.auramusic.app.ui.theme.auraGlassSurface
 
@@ -105,6 +102,7 @@ fun ArtistDetailScreen(
     onOpenPlaylist: (ArtistCarouselItem) -> Unit = {},
     enableBackHandler: Boolean = true
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
     var isExpandedSongs by remember(artistDetail.id) { mutableStateOf(false) }
@@ -121,7 +119,7 @@ fun ArtistDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
@@ -133,7 +131,7 @@ fun ArtistDetailScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(430.dp)
-                        .background(Color(0xFF161820))
+                        .background(auraColors.surfaceCard)
                 ) {
                     if (artistDetail.bannerUrl.isNotBlank()) {
                         AsyncImage(
@@ -155,18 +153,17 @@ fun ArtistDetailScreen(
                         modifier = Modifier.fillMaxSize()
                     )
 
-                    // Gradient overlay to darken bottom so text is crisp and readable
+                    // Gradient overlay: holds dark photo scrim behind white hero title, then fades cleanly to auraColors.background
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color.Black.copy(alpha = 0.30f),
-                                        Color.Transparent,
-                                        Color.Black.copy(alpha = 0.65f),
-                                        SpotifyPitchBlack
-                                    )
+                                    0.00f to Color.Black.copy(alpha = 0.30f),
+                                    0.40f to Color.Transparent,
+                                    0.72f to Color.Black.copy(alpha = 0.58f),
+                                    0.94f to Color.Black.copy(alpha = 0.78f),
+                                    1.00f to auraColors.background
                                 )
                             )
                     )
@@ -201,11 +198,11 @@ fun ArtistDetailScreen(
                         }
                     }
 
-                    // Artist name on bottom right & subscriber count directly below it
+                    // Artist name on bottom right & subscriber count directly below it (always over dark photo scrim)
                     Column(
                         modifier = Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 20.dp, bottom = 12.dp),
+                            .padding(end = 20.dp, bottom = 22.dp),
                         horizontalAlignment = Alignment.End
                     ) {
                         Text(
@@ -252,7 +249,7 @@ fun ArtistDetailScreen(
                         text = "Popular Songs",
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         fontSize = 19.sp
                     )
                 }
@@ -290,15 +287,14 @@ fun ArtistDetailScreen(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(20.dp),
-                            color = Color(0xFF1E2028),
-                            border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                            color = auraColors.pillInactiveBg,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(20.dp))
                                 .clickable { isExpandedSongs = !isExpandedSongs }
                         ) {
                             Text(
                                 text = if (isExpandedSongs) "Show Less" else "See More (${artistDetail.topSongs.size - 5} more)",
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 12.5.sp,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -342,13 +338,13 @@ fun ArtistDetailScreen(
                                 text = carousel.title,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontSize = 19.sp
                             )
                             if (carousel.items.isNotEmpty()) {
                                 Text(
                                     text = "${carousel.items.size} items",
-                                    color = TextSecondary,
+                                    color = auraColors.textSecondary,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -375,7 +371,7 @@ fun ArtistDetailScreen(
                                                 modifier = Modifier
                                                     .size(96.dp)
                                                     .clip(CircleShape)
-                                                    .background(Color(0xFF1E2028))
+                                                    .background(auraColors.surfaceCard)
                                             ) {
                                                 AsyncImage(
                                                     model = item.highResArtworkUrl,
@@ -387,7 +383,7 @@ fun ArtistDetailScreen(
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(
                                                 text = item.title,
-                                                color = Color.White,
+                                                color = auraColors.textPrimary,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
                                                 maxLines = 1,
@@ -397,7 +393,7 @@ fun ArtistDetailScreen(
                                             if (item.subtitle.isNotBlank()) {
                                                 Text(
                                                     text = item.subtitle,
-                                                    color = TextSecondary,
+                                                    color = auraColors.textSecondary,
                                                     fontSize = 11.5.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis,
@@ -423,7 +419,7 @@ fun ArtistDetailScreen(
                                                     .width(192.dp)
                                                     .height(108.dp)
                                                     .clip(RoundedCornerShape(12.dp))
-                                                    .background(Color(0xFF1E2028))
+                                                    .background(auraColors.surfaceCard)
                                             ) {
                                                 AsyncImage(
                                                     model = item.highResArtworkUrl,
@@ -452,7 +448,7 @@ fun ArtistDetailScreen(
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(
                                                 text = item.title,
-                                                color = Color.White,
+                                                color = auraColors.textPrimary,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
                                                 maxLines = 1,
@@ -461,7 +457,7 @@ fun ArtistDetailScreen(
                                             if (item.subtitle.isNotBlank()) {
                                                 Text(
                                                     text = item.subtitle,
-                                                    color = TextSecondary,
+                                                    color = auraColors.textSecondary,
                                                     fontSize = 11.5.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -483,7 +479,7 @@ fun ArtistDetailScreen(
                                                 modifier = Modifier
                                                     .size(130.dp)
                                                     .clip(RoundedCornerShape(12.dp))
-                                                    .background(Color(0xFF1E2028))
+                                                    .background(auraColors.surfaceCard)
                                             ) {
                                                 AsyncImage(
                                                     model = item.highResArtworkUrl,
@@ -517,7 +513,7 @@ fun ArtistDetailScreen(
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(
                                                 text = item.title,
-                                                color = Color.White,
+                                                color = auraColors.textPrimary,
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
                                                 maxLines = 1,
@@ -526,7 +522,7 @@ fun ArtistDetailScreen(
                                             if (item.subtitle.isNotBlank()) {
                                                 Text(
                                                     text = item.subtitle,
-                                                    color = TextSecondary,
+                                                    color = auraColors.textSecondary,
                                                     fontSize = 11.5.sp,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -555,12 +551,12 @@ fun ArtistDetailScreen(
                                 text = "Albums & Discography",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontSize = 19.sp
                             )
                             Text(
                                 text = "${artistDetail.albums.size} releases",
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -592,7 +588,7 @@ fun ArtistDetailScreen(
                                         modifier = Modifier
                                             .size(130.dp)
                                             .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFF1E2028))
+                                            .background(auraColors.surfaceCard)
                                     ) {
                                         AsyncImage(
                                             model = album.highResArtworkUrl,
@@ -617,7 +613,7 @@ fun ArtistDetailScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = album.title,
-                                        color = Color.White,
+                                        color = auraColors.textPrimary,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         maxLines = 1,
@@ -625,7 +621,7 @@ fun ArtistDetailScreen(
                                     )
                                     Text(
                                         text = album.year,
-                                        color = TextSecondary,
+                                        color = auraColors.textSecondary,
                                         fontSize = 11.5.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -644,7 +640,7 @@ fun ArtistDetailScreen(
                             text = "Albums & Discography",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             fontSize = 19.sp,
                             modifier = Modifier.padding(horizontal = 20.dp)
                         )
@@ -657,7 +653,7 @@ fun ArtistDetailScreen(
                             text = "Fans might also like",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             fontSize = 19.sp,
                             modifier = Modifier.padding(horizontal = 20.dp)
                         )
@@ -675,11 +671,12 @@ fun ArtistDetailScreen(
             ModalBottomSheet(
                 onDismissRequest = { selectedModalTrack = null },
                 sheetState = sheetState,
-                containerColor = auraGlassSheetColor(Color(0xFF14161C)),
+                containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+                scrimColor = auraColors.scrim,
                 dragHandle = {
                     Surface(
                         modifier = Modifier.padding(vertical = 10.dp),
-                        color = Color.White.copy(alpha = 0.20f),
+                        color = auraColors.dragHandle,
                         shape = RoundedCornerShape(4.dp)
                     ) {
                         Spacer(modifier = Modifier.size(width = 36.dp, height = 4.dp))
@@ -707,7 +704,7 @@ fun ArtistDetailScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = modalTrack.title,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.5.sp,
                                 maxLines = 1,
@@ -715,14 +712,14 @@ fun ArtistDetailScreen(
                             )
                             Text(
                                 text = modalTrack.artist,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 12.sp,
                                 maxLines = 1
                             )
                         }
                     }
 
-                    HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 0.5.dp)
+                    HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
                     Spacer(modifier = Modifier.height(10.dp))
 
                     // Options List
@@ -781,6 +778,7 @@ private fun ArtistPopularSongRow(
     onClick: () -> Unit,
     onOptionsClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -794,7 +792,7 @@ private fun ArtistPopularSongRow(
         // Ranking number 1-10
         Text(
             text = "$rank",
-            color = if (isCurrent) AuraNeonLime else TextSecondary,
+            color = if (isCurrent) auraColors.accent else auraColors.textSecondary,
             fontWeight = FontWeight.Bold,
             fontSize = 14.sp,
             textAlign = TextAlign.Center,
@@ -819,7 +817,7 @@ private fun ArtistPopularSongRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = track.title,
-                color = if (isCurrent) AuraNeonLime else Color.White,
+                color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
                 maxLines = 1,
@@ -828,7 +826,7 @@ private fun ArtistPopularSongRow(
             Spacer(modifier = Modifier.height(2.dp))
             Text(
                 text = if (playCount.isNotBlank()) playCount else track.artist,
-                color = TextSecondary,
+                color = auraColors.textSecondary,
                 fontSize = 12.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
@@ -843,7 +841,7 @@ private fun ArtistPopularSongRow(
             Icon(
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = "More options",
-                tint = TextSecondary,
+                tint = auraColors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -918,6 +916,7 @@ private fun ArtistModalOption(
     label: String,
     onClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -929,13 +928,13 @@ private fun ArtistModalOption(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.85f),
+            tint = auraColors.textPrimary.copy(alpha = 0.85f),
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = label,
-            color = Color.White,
+            color = auraColors.textPrimary,
             fontWeight = FontWeight.Medium,
             fontSize = 14.5.sp
         )

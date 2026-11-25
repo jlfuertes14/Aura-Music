@@ -34,11 +34,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.auramusic.app.ui.theme.LocalIsDarkTheme
 
 /**
- * Shimmer modifier providing a sleek dark-obsidian shimmer pulse across UI elements.
+ * Shimmer modifier providing an adaptive dark-obsidian or soft Apple-light shimmer pulse across UI elements.
  */
 fun Modifier.auraShimmer(): Modifier = composed {
+    val isDark = LocalIsDarkTheme.current
     var size by remember { mutableStateOf(IntSize.Zero) }
     val transition = rememberInfiniteTransition(label = "AuraShimmerTransition")
     val widthPx = size.width.toFloat().coerceAtLeast(400f)
@@ -52,13 +54,23 @@ fun Modifier.auraShimmer(): Modifier = composed {
         label = "AuraShimmerX"
     )
 
+    val shimmerColors = if (isDark) {
+        listOf(
+            Color(0xFF161820),
+            Color(0xFF262936),
+            Color(0xFF161820)
+        )
+    } else {
+        listOf(
+            Color(0xFFEAEAEF),
+            Color(0xFFF5F5F8),
+            Color(0xFFEAEAEF)
+        )
+    }
+
     background(
         brush = Brush.linearGradient(
-            colors = listOf(
-                Color(0xFF161820),
-                Color(0xFF262936),
-                Color(0xFF161820)
-            ),
+            colors = shimmerColors,
             start = Offset(startOffsetX, 0f),
             end = Offset(startOffsetX + widthPx, size.height.toFloat().coerceAtLeast(100f))
         )

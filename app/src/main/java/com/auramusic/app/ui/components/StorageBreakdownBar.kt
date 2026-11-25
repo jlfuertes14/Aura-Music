@@ -1,7 +1,6 @@
 package com.auramusic.app.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,19 +16,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.auramusic.app.ui.theme.LocalIsDarkTheme
-import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.auraGlassSurface
+import com.auramusic.app.ui.theme.LocalAuraColors
 import java.util.Locale
 
 data class StorageSegment(
@@ -47,22 +44,15 @@ fun StorageBreakdownBar(
     segments: List<StorageSegment>,
     modifier: Modifier = Modifier
 ) {
-    val isDark = LocalIsDarkTheme.current
-    val isGlass = LocalLiquidGlassEnabled.current
-    val primaryText = MaterialTheme.colorScheme.onBackground
-    val secondaryText = MaterialTheme.colorScheme.onSurfaceVariant
-
+    val auraColors = LocalAuraColors.current
     val totalBytes = segments.sumOf { it.bytes.coerceAtLeast(0L) }
     val nonZeroSegments = segments.filter { it.bytes > 0L }
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .auraGlassSurface(
-                shape = RoundedCornerShape(16.dp),
-                fallbackColor = if (isDark) Color(0xFF181A22) else MaterialTheme.colorScheme.surfaceVariant,
-                glassAlpha = if (isDark) 0.08f else 0.55f
-            )
+            .clip(RoundedCornerShape(16.dp))
+            .background(auraColors.surfaceCard)
             .padding(horizontal = 14.dp, vertical = 12.dp)
     ) {
         Row(
@@ -72,24 +62,25 @@ fun StorageBreakdownBar(
         ) {
             Text(
                 text = "Storage Footprint",
-                color = primaryText,
+                color = auraColors.textPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
                 text = "${formatStorageBytes(totalBytes)} used",
-                color = secondaryText,
+                color = auraColors.textSecondary,
                 fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                style = TextStyle(fontFeatureSettings = "tnum")
             )
         }
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        val trackColor = when {
-            isGlass && isDark -> Color.White.copy(alpha = 0.08f)
-            isDark -> Color(0xFF252834)
-            else -> Color(0xFFE2E4EC)
+        val trackColor = if (auraColors.isDark) {
+            Color.White.copy(alpha = 0.08f)
+        } else {
+            Color.Black.copy(alpha = 0.08f)
         }
 
         Row(
@@ -131,9 +122,9 @@ fun StorageBreakdownBar(
                 segments.forEach { segment ->
                     StorageLegendPill(
                         segment = segment,
-                        isDark = isDark,
-                        primaryText = primaryText,
-                        secondaryText = secondaryText
+                        pillBg = auraColors.pillInactiveBg,
+                        primaryText = auraColors.textPrimary,
+                        secondaryText = auraColors.textSecondary
                     )
                 }
             }
@@ -144,17 +135,14 @@ fun StorageBreakdownBar(
 @Composable
 private fun StorageLegendPill(
     segment: StorageSegment,
-    isDark: Boolean,
+    pillBg: Color,
     primaryText: Color,
     secondaryText: Color
 ) {
-    val pillBg = if (isDark) Color.White.copy(alpha = 0.06f) else Color.Black.copy(alpha = 0.045f)
-    val pillBorder = if (isDark) Color.White.copy(alpha = 0.09f) else Color.Black.copy(alpha = 0.08f)
     Row(
         modifier = Modifier
             .clip(CircleShape)
             .background(pillBg)
-            .border(width = 0.75.dp, color = pillBorder, shape = CircleShape)
             .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -176,7 +164,8 @@ private fun StorageLegendPill(
             text = formatStorageBytes(segment.bytes),
             color = secondaryText,
             fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
+            fontWeight = FontWeight.SemiBold,
+            style = TextStyle(fontFeatureSettings = "tnum")
         )
     }
 }

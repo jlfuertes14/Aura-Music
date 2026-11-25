@@ -126,13 +126,8 @@ import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.components.AuraPlaylistCover
 import com.auramusic.app.ui.components.AuraPlaylistOptionsModal
 import com.auramusic.app.ui.components.AuraTrackOptionsModal
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.AuraPlayGreen
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.SpotifyCard
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.barBlurStyle
@@ -183,6 +178,7 @@ fun PlaylistDetailsScreen(
     onCreatePlaylist: (name: String, description: String, coverUrl: String) -> Unit = { _, _, _ -> },
     onOpenArtist: (String) -> Unit = {}
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
@@ -368,21 +364,40 @@ fun PlaylistDetailsScreen(
         }
     }
 
-    val headerSolidGradient = remember(dominantColor) {
-        Brush.verticalGradient(
-            colors = listOf(
-                dominantColor,                                         // Top (status bar)
-                dominantColor,                                         // Middle (toolbar title)
-                lerp(dominantColor, Color(0xFF1C1D24), 0.18f),         // Slightly darkened
-                lerp(dominantColor, Color(0xFF14151B), 0.30f)          // Slightly dark / grayed out at bottom (NOT gradient to black)
+    val headerTopTint = if (auraColors.isDark) {
+        dominantColor
+    } else {
+        lerp(dominantColor, auraColors.background, 0.78f)
+    }
+    val headerTextColor = if (auraColors.isDark) Color.White else auraColors.textPrimary
+    val headerSubtextColor = if (auraColors.isDark) Color.White.copy(alpha = 0.70f) else auraColors.textSecondary
+    val headerIconMutedColor = if (auraColors.isDark) Color.White.copy(alpha = 0.60f) else auraColors.textSecondary
+
+    val headerSolidGradient = remember(dominantColor, auraColors.isDark, auraColors.background) {
+        if (auraColors.isDark) {
+            Brush.verticalGradient(
+                colors = listOf(
+                    dominantColor,
+                    dominantColor,
+                    lerp(dominantColor, Color(0xFF1C1D24), 0.18f),
+                    lerp(dominantColor, Color(0xFF14151B), 0.30f)
+                )
             )
-        )
+        } else {
+            Brush.verticalGradient(
+                colors = listOf(
+                    headerTopTint,
+                    lerp(dominantColor, auraColors.background, 0.88f),
+                    auraColors.background
+                )
+            )
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
         // 1. Scrollable Content: background color lives inside the header item up to the globe/time row so it scrolls away with the header and is never sticky
         LazyColumn(
@@ -403,14 +418,24 @@ fun PlaylistDetailsScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(
-                                Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0.0f to dominantColor,
-                                        0.45f to dominantColor,
-                                        0.82f to lerp(dominantColor, SpotifyPitchBlack, 0.65f),
-                                        1.0f to SpotifyPitchBlack
+                                if (auraColors.isDark) {
+                                    Brush.verticalGradient(
+                                        colorStops = arrayOf(
+                                            0.0f to dominantColor,
+                                            0.45f to dominantColor,
+                                            0.82f to lerp(dominantColor, auraColors.background, 0.65f),
+                                            1.0f to auraColors.background
+                                        )
                                     )
-                                )
+                                } else {
+                                    Brush.verticalGradient(
+                                        colorStops = arrayOf(
+                                            0.0f to headerTopTint,
+                                            0.55f to lerp(dominantColor, auraColors.background, 0.88f),
+                                            1.0f to auraColors.background
+                                        )
+                                    )
+                                }
                             )
                             .padding(
                                 top = statusBarTopPadding + 52.dp,
@@ -444,7 +469,7 @@ fun PlaylistDetailsScreen(
                                     .height(38.dp)
                                     .auraGlassSurface(
                                         shape = RoundedCornerShape(if (isGlass) 12.dp else 8.dp),
-                                        fallbackColor = Color(0xFF404352),
+                                        fallbackColor = if (auraColors.isDark) Color(0xFF404352) else auraColors.surfaceCard,
                                         glassAlpha = 0.14f
                                     )
                                     .padding(horizontal = 12.dp),
@@ -453,7 +478,7 @@ fun PlaylistDetailsScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Search,
                                     contentDescription = null,
-                                    tint = Color(0xFFB0B4C0),
+                                    tint = headerSubtextColor,
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -461,14 +486,14 @@ fun PlaylistDetailsScreen(
                                     value = searchInPlaylistQuery,
                                     onValueChange = { searchInPlaylistQuery = it },
                                     singleLine = true,
-                                    textStyle = TextStyle(color = Color.White, fontSize = 13.sp),
-                                    cursorBrush = SolidColor(AuraNeonLime),
+                                    textStyle = TextStyle(color = headerTextColor, fontSize = 13.sp),
+                                    cursorBrush = SolidColor(auraColors.accent),
                                     modifier = Modifier.weight(1f),
                                     decorationBox = { inner ->
                                         if (searchInPlaylistQuery.isEmpty()) {
                                             Text(
                                                 text = "Find in playlist",
-                                                color = Color(0xFFB0B4C0),
+                                                color = headerSubtextColor,
                                                 fontSize = 13.sp
                                             )
                                         }
@@ -483,7 +508,7 @@ fun PlaylistDetailsScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.Close,
                                             contentDescription = "Clear",
-                                            tint = Color(0xFFB0B4C0),
+                                            tint = headerSubtextColor,
                                             modifier = Modifier.size(16.dp)
                                         )
                                     }
@@ -497,7 +522,7 @@ fun PlaylistDetailsScreen(
                                     .height(38.dp)
                                     .auraGlassSurface(
                                         shape = RoundedCornerShape(if (isGlass) 12.dp else 8.dp),
-                                        fallbackColor = Color(0xFF404352),
+                                        fallbackColor = if (auraColors.isDark) Color(0xFF404352) else auraColors.pillInactiveBg,
                                         glassAlpha = 0.14f
                                     )
                                     .clickable {
@@ -520,7 +545,7 @@ fun PlaylistDetailsScreen(
                             ) {
                                 Text(
                                     text = sortOption.displayName,
-                                    color = Color(0xFFD0D4E0),
+                                    color = headerTextColor,
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -555,7 +580,7 @@ fun PlaylistDetailsScreen(
                                 .aspectRatio(1f)
                                 .sizeIn(maxWidth = 285.dp, maxHeight = 285.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF1E2028))
+                                .background(auraColors.surfaceCard)
                                 .clickable { onPickCoverImage() },
                             contentAlignment = Alignment.Center
                         ) {
@@ -571,7 +596,7 @@ fun PlaylistDetailsScreen(
                     // Playlist Title (tracked so pinned header title only appears after this title is covered by the header)
                     Text(
                         text = playlist.name,
-                        color = Color.White,
+                        color = headerTextColor,
                         fontSize = 22.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 2,
@@ -587,7 +612,7 @@ fun PlaylistDetailsScreen(
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = cleanDesc,
-                            color = Color.White.copy(alpha = 0.70f),
+                            color = headerSubtextColor,
                             fontSize = 12.5.sp,
                             lineHeight = 17.sp,
                             maxLines = 2,
@@ -602,15 +627,15 @@ fun PlaylistDetailsScreen(
                     ) {
                         Canvas(modifier = Modifier.size(13.dp)) {
                             val stroke = Stroke(width = 1.2.dp.toPx())
-                            drawCircle(color = Color.White.copy(alpha = 0.60f), style = stroke)
+                            drawCircle(color = headerIconMutedColor, style = stroke)
                             drawLine(
-                                color = Color.White.copy(alpha = 0.60f),
+                                color = headerIconMutedColor,
                                 start = Offset(0f, size.height / 2),
                                 end = Offset(size.width, size.height / 2),
                                 strokeWidth = 1.2.dp.toPx()
                             )
                             drawOval(
-                                color = Color.White.copy(alpha = 0.60f),
+                                color = headerIconMutedColor,
                                 size = Size(size.width * 0.5f, size.height),
                                 topLeft = Offset(size.width * 0.25f, 0f),
                                 style = stroke
@@ -623,17 +648,17 @@ fun PlaylistDetailsScreen(
                         val durText = if (hours > 0) "${hours}h ${minutes}min" else "${minutes}min"
                         Text(
                             text = "${playlist.tracks.size} tracks • $durText",
-                            color = Color.White.copy(alpha = 0.65f),
+                            color = headerSubtextColor,
                             fontSize = 12.sp
                         )
                     }
                     } // End of Colored Top Section (stops at Globe icon & time text row)
 
-                    // Action buttons row (Add, Download, Share, 3-dots, Shuffle, Big Play) on pure black background
+                    // Action buttons row (Download, Share, 3-dots, Shuffle, Big Play) on theme background
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(SpotifyPitchBlack)
+                            .background(auraColors.background)
                             .padding(horizontal = 20.dp)
                             .padding(top = 10.dp, bottom = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -648,7 +673,7 @@ fun PlaylistDetailsScreen(
                                 Icon(
                                     imageVector = if (isDownloadPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
                                     contentDescription = if (isDownloadPaused) "Resume downloads" else "Pause downloads",
-                                    tint = AuraNeonLime,
+                                    tint = auraColors.accent,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
@@ -659,7 +684,7 @@ fun PlaylistDetailsScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
                                     contentDescription = "Cancel downloads",
-                                    tint = Color.White.copy(alpha = 0.85f),
+                                    tint = auraColors.textPrimary.copy(alpha = 0.85f),
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -671,7 +696,7 @@ fun PlaylistDetailsScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Download,
                                     contentDescription = "Download All",
-                                    tint = Color.White.copy(alpha = 0.85f),
+                                    tint = auraColors.textPrimary.copy(alpha = 0.85f),
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -691,7 +716,7 @@ fun PlaylistDetailsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Share,
                                 contentDescription = "Share",
-                                tint = Color.White.copy(alpha = 0.85f),
+                                tint = auraColors.textPrimary.copy(alpha = 0.85f),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -704,7 +729,7 @@ fun PlaylistDetailsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.MoreVert,
                                 contentDescription = "Options",
-                                tint = Color.White.copy(alpha = 0.85f),
+                                tint = auraColors.textPrimary.copy(alpha = 0.85f),
                                 modifier = Modifier.size(22.dp)
                             )
                         }
@@ -721,19 +746,19 @@ fun PlaylistDetailsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.Shuffle,
                                 contentDescription = "Shuffle",
-                                tint = Color.White.copy(alpha = 0.85f),
+                                tint = auraColors.textPrimary.copy(alpha = 0.85f),
                                 modifier = Modifier.size(22.dp)
                             )
                         }
 
                         Spacer(modifier = Modifier.weight(1f))
 
-                        // Big Spotify Green Play Button
+                        // Big Play Button
                         Box(
                             modifier = Modifier
                                 .size(52.dp)
                                 .clip(CircleShape)
-                                .background(AuraPlayGreen)
+                                .background(auraColors.accent)
                                 .clickable {
                                     val contextualTracks = processedTracks.map { it.copy(album = playlist.name) }
                                     contextualTracks.firstOrNull()?.let { first ->
@@ -745,7 +770,7 @@ fun PlaylistDetailsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.PlayArrow,
                                 contentDescription = "Play All",
-                                tint = Color.Black,
+                                tint = auraColors.onAccent,
                                 modifier = Modifier.size(34.dp)
                             )
                         }
@@ -803,7 +828,10 @@ fun PlaylistDetailsScreen(
                         if (isGlass) {
                             Modifier.hazeBlurBar(
                                 state = hazeState,
-                                style = barBlurStyle(dominantColor, tintAlpha = 0.45f * headerBackgroundAlpha)
+                                style = barBlurStyle(
+                                    if (auraColors.isDark) dominantColor else auraColors.background,
+                                    tintAlpha = 0.45f * headerBackgroundAlpha
+                                )
                             )
                         } else {
                             Modifier.background(headerSolidGradient, alpha = headerBackgroundAlpha)
@@ -828,7 +856,7 @@ fun PlaylistDetailsScreen(
                 // Centered Title appearing as collage shrinks
                 Text(
                     text = playlist.name,
-                    color = Color.White,
+                    color = headerTextColor,
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -853,7 +881,11 @@ fun PlaylistDetailsScreen(
                             .size(34.dp)
                             .then(
                                 if (isGlass) {
-                                    Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                    Modifier.auraGlassSurface(
+                                        shape = CircleShape,
+                                        fallbackColor = auraColors.circleButtonBg,
+                                        glassAlpha = 0.14f
+                                    )
                                 } else Modifier
                             ),
                         contentAlignment = Alignment.Center
@@ -861,7 +893,7 @@ fun PlaylistDetailsScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Back",
-                            tint = Color.White,
+                            tint = headerTextColor,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -883,7 +915,11 @@ fun PlaylistDetailsScreen(
                                 .size(34.dp)
                                 .then(
                                     if (isGlass) {
-                                        Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                        Modifier.auraGlassSurface(
+                                            shape = CircleShape,
+                                            fallbackColor = auraColors.circleButtonBg,
+                                            glassAlpha = 0.14f
+                                        )
                                     } else Modifier
                                 ),
                             contentAlignment = Alignment.Center
@@ -891,7 +927,7 @@ fun PlaylistDetailsScreen(
                             Icon(
                                 imageVector = Icons.Rounded.MoreVert,
                                 contentDescription = "Playlist Options",
-                                tint = Color.White,
+                                tint = headerTextColor,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -905,9 +941,9 @@ fun PlaylistDetailsScreen(
     if (showEditTitleDialog) {
         AlertDialog(
             onDismissRequest = { showEditTitleDialog = false },
-            containerColor = auraGlassSheetColor(SpotifyCard),
+            containerColor = auraGlassSheetColor(auraColors.sheetBackground),
             title = {
-                Text("Rename Playlist", color = TextPrimary, fontWeight = FontWeight.Bold)
+                Text("Rename Playlist", color = auraColors.textPrimary, fontWeight = FontWeight.Bold)
             },
             text = {
                 OutlinedTextField(
@@ -916,10 +952,10 @@ fun PlaylistDetailsScreen(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AuraPlayGreen,
-                        unfocusedBorderColor = TextSecondary.copy(alpha = 0.3f),
-                        focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary
+                        focusedBorderColor = auraColors.accent,
+                        unfocusedBorderColor = auraColors.divider,
+                        focusedTextColor = auraColors.textPrimary,
+                        unfocusedTextColor = auraColors.textPrimary
                     )
                 )
             },
@@ -932,12 +968,12 @@ fun PlaylistDetailsScreen(
                         showEditTitleDialog = false
                     }
                 ) {
-                    Text("Save", color = AuraPlayGreen, fontWeight = FontWeight.Bold)
+                    Text("Save", color = auraColors.accent, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showEditTitleDialog = false }) {
-                    Text("Cancel", color = TextSecondary)
+                    Text("Cancel", color = auraColors.textSecondary)
                 }
             }
         )

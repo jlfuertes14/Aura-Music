@@ -1,7 +1,6 @@
 package com.auramusic.app.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -45,8 +44,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auramusic.app.core.media.AudioOutputDevice
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
@@ -60,20 +58,22 @@ fun AuraOutputSheet(
     onSelectDevice: (AudioOutputDevice?) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.72f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -89,18 +89,21 @@ fun AuraOutputSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(AuraNeonLime.copy(alpha = 0.14f)),
+                            .background(auraColors.circleButtonBg),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Speaker,
                             contentDescription = null,
-                            tint = AuraNeonLime,
+                            tint = accentTint,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -109,26 +112,28 @@ fun AuraOutputSheet(
                         Text(
                             text = "Audio Output",
                             style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
                             text = "Choose playback route for Aura",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = auraColors.textSecondary
                         )
                     }
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Close Audio Output",
-                        tint = TextSecondary
+                        tint = auraColors.textSecondary
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(14.dp))
+            HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(8.dp))
 
             OutputDeviceRow(
                 icon = Icons.Rounded.PhoneAndroid,
@@ -142,22 +147,22 @@ fun AuraOutputSheet(
                 }
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
-            HorizontalDivider(color = Color.White.copy(alpha = 0.07f), thickness = 0.5.dp)
-            Spacer(modifier = Modifier.height(10.dp))
+            HorizontalDivider(
+                color = auraColors.divider,
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
 
             if (devices.isEmpty()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.04f))
-                        .padding(16.dp),
+                        .padding(vertical = 22.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = "No additional audio routes detected",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 13.sp
                     )
                 }
@@ -166,7 +171,7 @@ fun AuraOutputSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(max = 340.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     items(devices, key = { it.id }) { device ->
                         val isExplicitSelected = selectedDeviceId == device.id
@@ -207,17 +212,22 @@ private fun OutputDeviceRow(
     badge: String?,
     onClick: () -> Unit
 ) {
-    val bgColor = if (isSelected) AuraNeonLime.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.05f)
-    val borderColor = if (isSelected) AuraNeonLime.copy(alpha = 0.45f) else Color.White.copy(alpha = 0.07f)
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
+    val rowBg = if (isSelected) {
+        auraColors.accent.copy(alpha = if (auraColors.isDark) 0.14f else 0.18f)
+    } else {
+        Color.Transparent
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 56.dp)
             .clip(RoundedCornerShape(14.dp))
-            .background(bgColor)
-            .border(width = 1.dp, color = borderColor, shape = RoundedCornerShape(14.dp))
+            .background(rowBg)
             .clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
@@ -229,16 +239,13 @@ private fun OutputDeviceRow(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .background(
-                        if (isSelected) AuraNeonLime.copy(alpha = 0.18f)
-                        else Color.White.copy(alpha = 0.07f)
-                    ),
+                    .background(if (isSelected) auraColors.accent else auraColors.circleButtonBg),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (isSelected) AuraNeonLime else Color.White,
+                    tint = if (isSelected) auraColors.onAccent else auraColors.textPrimary,
                     modifier = Modifier.size(19.dp)
                 )
             }
@@ -246,16 +253,16 @@ private fun OutputDeviceRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
-                    color = if (isSelected) AuraNeonLime else Color.White,
+                    color = auraColors.textPrimary,
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    color = TextSecondary,
+                    color = auraColors.textSecondary,
                     fontSize = 12.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -266,14 +273,14 @@ private fun OutputDeviceRow(
         if (badge != null) {
             Text(
                 text = badge,
-                color = if (isSelected) AuraNeonLime else TextSecondary,
+                color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .padding(start = 8.dp)
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.08f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                    .background(if (isSelected) auraColors.accent else auraColors.pillInactiveBg)
+                    .padding(horizontal = 9.dp, vertical = 4.dp)
             )
         }
 
@@ -282,7 +289,7 @@ private fun OutputDeviceRow(
             Icon(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = "Selected route",
-                tint = AuraNeonLime,
+                tint = accentTint,
                 modifier = Modifier.size(20.dp)
             )
         }

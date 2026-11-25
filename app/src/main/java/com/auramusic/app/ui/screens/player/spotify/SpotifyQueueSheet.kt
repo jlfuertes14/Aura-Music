@@ -62,7 +62,7 @@ import androidx.compose.ui.zIndex
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.components.AudioPlayingIndicator
-import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
+import com.auramusic.app.ui.components.ForceLightIconsSystemBarsEffect
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
@@ -103,7 +103,7 @@ internal fun SpotifyQueueSheet(
             }
         }
     ) {
-        ForceWhiteSystemBarsEffect()
+        ForceLightIconsSystemBarsEffect()
         Box(
             modifier = Modifier
                 .fillMaxWidth()

@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,8 +40,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
  * Universal Mobile 3-Dot Options Bottom Sheet Modal for Community & Search Playlists.
@@ -55,21 +56,23 @@ fun AuraCommunityPlaylistOptionsModal(
     onPlayPlaylist: () -> Unit,
     onOpenDetails: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -94,12 +97,13 @@ fun AuraCommunityPlaylistOptionsModal(
                     modifier = Modifier
                         .size(54.dp)
                         .clip(RoundedCornerShape(10.dp))
+                        .background(auraColors.surfaceCard)
                 )
                 Spacer(modifier = Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = playlist.title,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         maxLines = 1,
@@ -115,7 +119,7 @@ fun AuraCommunityPlaylistOptionsModal(
                     }
                     Text(
                         text = subtitle.ifBlank { "Playlist" },
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 12.5.sp,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -124,7 +128,7 @@ fun AuraCommunityPlaylistOptionsModal(
             }
 
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = auraColors.divider,
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
@@ -133,7 +137,8 @@ fun AuraCommunityPlaylistOptionsModal(
             CommunityPlaylistOptionRow(
                 icon = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (isSaved) "Remove from Library" else "Save to Library",
-                iconTint = if (isSaved) AuraNeonLime else Color.White,
+                iconTint = if (isSaved) accentTint else auraColors.textPrimary,
+                textColor = auraColors.textPrimary,
                 onClick = {
                     onToggleSave()
                     onDismiss()
@@ -144,7 +149,8 @@ fun AuraCommunityPlaylistOptionsModal(
             CommunityPlaylistOptionRow(
                 icon = Icons.Rounded.PlayArrow,
                 label = "Play Playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
+                textColor = auraColors.textPrimary,
                 onClick = {
                     onPlayPlaylist()
                     onDismiss()
@@ -155,7 +161,8 @@ fun AuraCommunityPlaylistOptionsModal(
             CommunityPlaylistOptionRow(
                 icon = Icons.AutoMirrored.Rounded.QueueMusic,
                 label = "View Playlist Details",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
+                textColor = auraColors.textPrimary,
                 onClick = {
                     onOpenDetails()
                     onDismiss()
@@ -166,7 +173,8 @@ fun AuraCommunityPlaylistOptionsModal(
             CommunityPlaylistOptionRow(
                 icon = Icons.Rounded.Share,
                 label = "Share Playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
+                textColor = auraColors.textPrimary,
                 onClick = {
                     val shareUrl = if (playlist.id.startsWith("http")) playlist.id else "https://music.youtube.com/playlist?list=${playlist.id.removePrefix("VL")}"
                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -186,11 +194,13 @@ private fun CommunityPlaylistOptionRow(
     icon: ImageVector,
     label: String,
     iconTint: Color,
+    textColor: Color,
     onClick: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 12.dp),
@@ -205,7 +215,7 @@ private fun CommunityPlaylistOptionRow(
         Spacer(modifier = Modifier.width(14.dp))
         Text(
             text = label,
-            color = Color.White,
+            color = textColor,
             fontWeight = FontWeight.Medium,
             fontSize = 14.sp
         )

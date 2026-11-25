@@ -7,7 +7,6 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -77,9 +76,8 @@ import com.auramusic.app.domain.model.PlaylistDetail
 import com.auramusic.app.ui.components.AudioPlayingIndicator
 import com.auramusic.app.ui.components.LazyColumnScrollbar
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextSecondary
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.barBlurStyle
@@ -103,6 +101,7 @@ fun PlaylistDetailScreen(
     onToggleSave: () -> Unit = {},
     enableBackHandler: Boolean = true
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     var selectedModalTrack by remember { mutableStateOf<AuraTrack?>(null) }
     var isRepeatMode by remember { mutableStateOf(false) }
@@ -145,7 +144,7 @@ fun PlaylistDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
         LazyColumn(
             state = listState,
@@ -164,11 +163,19 @@ fun PlaylistDetailScreen(
                             .fillMaxWidth()
                             .background(
                                 Brush.verticalGradient(
-                                    colors = listOf(
-                                        Color(0xFF242732),
-                                        Color(0xFF161820),
-                                        SpotifyPitchBlack
-                                    )
+                                    colors = if (auraColors.isDark) {
+                                        listOf(
+                                            Color(0xFF242732),
+                                            Color(0xFF161820),
+                                            auraColors.background
+                                        )
+                                    } else {
+                                        listOf(
+                                            auraColors.groupedBackground,
+                                            auraColors.surfaceCard,
+                                            auraColors.background
+                                        )
+                                    }
                                 )
                             )
                     ) {
@@ -182,14 +189,18 @@ fun PlaylistDetailScreen(
                                 .size(44.dp)
                                 .then(
                                     if (isGlass) {
-                                        Modifier.auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f)
+                                        Modifier.auraGlassSurface(
+                                            shape = CircleShape,
+                                            fallbackColor = auraColors.circleButtonBg,
+                                            glassAlpha = 0.14f
+                                        )
                                     } else Modifier
                                 )
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Color.White,
+                                tint = auraColors.textPrimary,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
@@ -208,7 +219,7 @@ fun PlaylistDetailScreen(
                                 modifier = Modifier
                                     .size(240.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF1E2028))
+                                    .background(auraColors.surfaceCard)
                             )
                         }
 
@@ -221,7 +232,7 @@ fun PlaylistDetailScreen(
                             // Podcast Title
                             Text(
                                 text = playlistDetail.title,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 23.sp,
                                 lineHeight = 30.sp,
@@ -246,7 +257,7 @@ fun PlaylistDetailScreen(
                                 }
                                 Text(
                                     text = playlistDetail.author.ifBlank { playlistDetail.title },
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Bold,
                                     maxLines = 1,
@@ -259,22 +270,22 @@ fun PlaylistDetailScreen(
                             // "Podcasts" label
                             Text(
                                 text = "Podcasts",
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium
                             )
 
                             Spacer(modifier = Modifier.height(16.dp))
 
-                            // Action Buttons Row: Play (white circle), Like, Shuffle, Share
+                            // Action Buttons Row: Play, Like, Shuffle, Share
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                // Big White Play Button
+                                // Big Play Button
                                 Surface(
                                     shape = CircleShape,
-                                    color = Color.White,
+                                    color = auraColors.accent,
                                     modifier = Modifier
                                         .size(46.dp)
                                         .clip(CircleShape)
@@ -288,7 +299,7 @@ fun PlaylistDetailScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.PlayArrow,
                                             contentDescription = "Play All Episodes",
-                                            tint = Color.Black,
+                                            tint = auraColors.onAccent,
                                             modifier = Modifier.size(28.dp)
                                         )
                                     }
@@ -304,7 +315,7 @@ fun PlaylistDetailScreen(
                                     Icon(
                                         imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                         contentDescription = if (isSaved) "Saved" else "Save",
-                                        tint = if (isSaved) AuraNeonLime else Color.White,
+                                        tint = if (isSaved) auraColors.accent else auraColors.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -324,7 +335,7 @@ fun PlaylistDetailScreen(
                                     Icon(
                                         imageVector = Icons.Rounded.Shuffle,
                                         contentDescription = "Shuffle Episodes",
-                                        tint = Color.White,
+                                        tint = auraColors.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -348,7 +359,7 @@ fun PlaylistDetailScreen(
                                     Icon(
                                         imageVector = Icons.Rounded.Share,
                                         contentDescription = "Share",
-                                        tint = Color.White,
+                                        tint = auraColors.textPrimary,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
@@ -359,7 +370,7 @@ fun PlaylistDetailScreen(
                                 Spacer(modifier = Modifier.height(14.dp))
                                 Text(
                                     text = playlistDetail.description,
-                                    color = Color.White.copy(alpha = 0.82f),
+                                    color = auraColors.textSecondary,
                                     fontSize = 13.sp,
                                     lineHeight = 18.5.sp,
                                     maxLines = if (isDescriptionExpanded) Int.MAX_VALUE else 3,
@@ -368,7 +379,7 @@ fun PlaylistDetailScreen(
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
                                     text = if (isDescriptionExpanded) "Less" else "More",
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.5.sp,
                                     modifier = Modifier
@@ -383,7 +394,7 @@ fun PlaylistDetailScreen(
                             // Total Tracks / Episodes Count
                             Text(
                                 text = "${playlistDetail.tracks.size} tracks",
-                                color = Color.White.copy(alpha = 0.85f),
+                                color = auraColors.textSecondary,
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(bottom = 8.dp)
@@ -416,7 +427,7 @@ fun PlaylistDetailScreen(
                             modifier = Modifier
                                 .size(width = 66.dp, height = 44.dp)
                                 .clip(RoundedCornerShape(6.dp))
-                                .background(Color(0xFF1E2028)),
+                                .background(auraColors.surfaceCard),
                             contentAlignment = Alignment.Center
                         ) {
                             AsyncImage(
@@ -448,7 +459,7 @@ fun PlaylistDetailScreen(
                         ) {
                             Text(
                                 text = item.track.title,
-                                color = if (isCurrent) AuraNeonLime else Color.White,
+                                color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.5.sp,
                                 maxLines = 1,
@@ -457,7 +468,7 @@ fun PlaylistDetailScreen(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = item.viewCount,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 11.5.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -466,7 +477,7 @@ fun PlaylistDetailScreen(
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = item.description,
-                                    color = TextSecondary.copy(alpha = 0.70f),
+                                    color = auraColors.textMuted,
                                     fontSize = 11.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -482,7 +493,7 @@ fun PlaylistDetailScreen(
                             Icon(
                                 imageVector = Icons.Rounded.MoreVert,
                                 contentDescription = "Episode options",
-                                tint = Color.White.copy(alpha = 0.70f),
+                                tint = auraColors.textSecondary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -507,18 +518,17 @@ fun PlaylistDetailScreen(
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Gradient overlay to darken bottom so text is crisp and readable
+                        // Gradient overlay: keeps dark photo scrim behind white hero text, then fades cleanly into auraColors.background
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .background(
                                     Brush.verticalGradient(
-                                        colors = listOf(
-                                            Color.Black.copy(alpha = 0.35f),
-                                            Color.Transparent,
-                                            Color.Black.copy(alpha = 0.70f),
-                                            SpotifyPitchBlack
-                                        )
+                                        0.00f to Color.Black.copy(alpha = 0.35f),
+                                        0.40f to Color.Transparent,
+                                        0.70f to Color.Black.copy(alpha = 0.65f),
+                                        0.92f to Color.Black.copy(alpha = 0.78f),
+                                        1.00f to auraColors.background
                                     )
                                 )
                         )
@@ -552,11 +562,11 @@ fun PlaylistDetailScreen(
                             }
                         }
 
-                        // Playlist title on bottom right & views/author directly below it
+                        // Playlist title on bottom right & views/author directly below it (over dark photo scrim)
                         Column(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                .padding(end = 20.dp, bottom = 12.dp)
+                                .padding(end = 20.dp, bottom = 22.dp)
                                 .fillMaxWidth(0.85f),
                             horizontalAlignment = Alignment.End
                         ) {
@@ -572,7 +582,7 @@ fun PlaylistDetailScreen(
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 text = playlistDetail.author,
-                                color = TextSecondary,
+                                color = Color.White.copy(alpha = 0.80f),
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.Medium,
                                 textAlign = TextAlign.End,
@@ -607,7 +617,7 @@ fun PlaylistDetailScreen(
                         Column {
                             Text(
                                 text = "Tracks",
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 18.sp
                             )
@@ -623,7 +633,7 @@ fun PlaylistDetailScreen(
                             }
                             Text(
                                 text = subtitleText,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 12.sp
                             )
                         }
@@ -639,14 +649,19 @@ fun PlaylistDetailScreen(
                                     .size(44.dp)
                                     .then(
                                         if (isGlass) {
-                                            Modifier.auraGlassSurface(shape = CircleShape, selected = isSaved, glassAlpha = 0.10f)
+                                            Modifier.auraGlassSurface(
+                                                shape = CircleShape,
+                                                selected = isSaved,
+                                                fallbackColor = auraColors.circleButtonBg,
+                                                glassAlpha = 0.10f
+                                            )
                                         } else Modifier
                                     )
                             ) {
                                 Icon(
                                     imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                     contentDescription = if (isSaved) "Remove from Library" else "Save to Library",
-                                    tint = if (isSaved) AuraNeonLime else Color.White,
+                                    tint = if (isSaved) auraColors.accent else auraColors.textPrimary,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -668,14 +683,19 @@ fun PlaylistDetailScreen(
                                         .size(44.dp)
                                         .then(
                                             if (isGlass) {
-                                                Modifier.auraGlassSurface(shape = CircleShape, selected = isRepeatMode, glassAlpha = 0.10f)
+                                                Modifier.auraGlassSurface(
+                                                    shape = CircleShape,
+                                                    selected = isRepeatMode,
+                                                    fallbackColor = auraColors.circleButtonBg,
+                                                    glassAlpha = 0.10f
+                                                )
                                             } else Modifier
                                         )
                                 ) {
                                     Icon(
                                         imageVector = if (isRepeatMode) Icons.Rounded.Repeat else Icons.Rounded.Shuffle,
                                         contentDescription = if (isRepeatMode) "Repeat All" else "Shuffle Playlist",
-                                        tint = if (isRepeatMode) AuraNeonLime else Color.White,
+                                        tint = if (isRepeatMode) auraColors.accent else auraColors.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -685,7 +705,7 @@ fun PlaylistDetailScreen(
                                 // Play All Button
                                 Surface(
                                     shape = CircleShape,
-                                    color = AuraNeonLime,
+                                    color = auraColors.accent,
                                     modifier = Modifier
                                         .size(44.dp)
                                         .clip(CircleShape)
@@ -695,7 +715,7 @@ fun PlaylistDetailScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.PlayArrow,
                                             contentDescription = "Play Playlist",
-                                            tint = Color.Black,
+                                            tint = auraColors.onAccent,
                                             modifier = Modifier.size(26.dp)
                                         )
                                     }
@@ -727,7 +747,7 @@ fun PlaylistDetailScreen(
                         // Ranking number 1, 2, 3...
                         Text(
                             text = "${item.rank}",
-                            color = if (isCurrent) AuraNeonLime else TextSecondary,
+                            color = if (isCurrent) auraColors.accent else auraColors.textSecondary,
                             fontSize = 14.sp,
                             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
                             modifier = Modifier.width(28.dp),
@@ -770,7 +790,7 @@ fun PlaylistDetailScreen(
                         ) {
                             Text(
                                 text = item.track.title,
-                                color = if (isCurrent) AuraNeonLime else Color.White,
+                                color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 13.5.sp,
                                 maxLines = 1,
@@ -780,7 +800,7 @@ fun PlaylistDetailScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     text = item.track.artist,
-                                    color = TextSecondary,
+                                    color = auraColors.textSecondary,
                                     fontSize = 11.5.sp,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
@@ -790,7 +810,7 @@ fun PlaylistDetailScreen(
                                     val isMetric = item.viewCount.contains("play", ignoreCase = true) || item.viewCount.contains("view", ignoreCase = true)
                                     Text(
                                         text = " • ${item.viewCount}",
-                                        color = if (isMetric) AuraNeonLime.copy(alpha = 0.90f) else TextSecondary.copy(alpha = 0.75f),
+                                        color = if (isMetric) auraColors.accent.copy(alpha = 0.90f) else auraColors.textMuted,
                                         fontSize = 11.sp,
                                         fontWeight = if (isMetric) FontWeight.SemiBold else FontWeight.Normal,
                                         maxLines = 1
@@ -807,7 +827,7 @@ fun PlaylistDetailScreen(
                             Icon(
                                 imageVector = Icons.Rounded.MoreVert,
                                 contentDescription = "Song options",
-                                tint = Color.White.copy(alpha = 0.70f),
+                                tint = auraColors.textSecondary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -843,7 +863,7 @@ fun PlaylistDetailScreen(
                         .fillMaxWidth()
                         .hazeBlurBar(
                             state = hazeState,
-                            style = barBlurStyle(SpotifyPitchBlack, tintAlpha = 0.52f)
+                            style = barBlurStyle(auraColors.background, tintAlpha = 0.52f)
                         )
                         .statusBarsPadding()
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -859,13 +879,17 @@ fun PlaylistDetailScreen(
                         Box(
                             modifier = Modifier
                                 .size(34.dp)
-                                .auraGlassSurface(shape = CircleShape, glassAlpha = 0.14f),
+                                .auraGlassSurface(
+                                    shape = CircleShape,
+                                    fallbackColor = auraColors.circleButtonBg,
+                                    glassAlpha = 0.14f
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                 contentDescription = "Back",
-                                tint = Color.White,
+                                tint = auraColors.textPrimary,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -873,7 +897,7 @@ fun PlaylistDetailScreen(
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
                         text = playlistDetail.title,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp,
                         maxLines = 1,
@@ -891,12 +915,12 @@ fun PlaylistDetailScreen(
                         onClick = onClose,
                         modifier = Modifier
                             .size(44.dp)
-                            .background(Color.Black.copy(alpha = 0.65f), CircleShape)
+                            .background(auraColors.circleButtonBg.copy(alpha = 0.85f), CircleShape)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Back",
-                            tint = Color.White,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -909,8 +933,8 @@ fun PlaylistDetailScreen(
             ModalBottomSheet(
                 onDismissRequest = { selectedModalTrack = null },
                 sheetState = sheetState,
-                containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-                scrimColor = Color.Black.copy(alpha = 0.75f)
+                containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+                scrimColor = auraColors.scrim
             ) {
                 com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect()
                 Column(
@@ -936,7 +960,7 @@ fun PlaylistDetailScreen(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = track.title,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 15.sp,
                                 maxLines = 1,
@@ -944,7 +968,7 @@ fun PlaylistDetailScreen(
                             )
                             Text(
                                 text = track.artist,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 fontSize = 12.5.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -953,7 +977,7 @@ fun PlaylistDetailScreen(
                     }
 
                     HorizontalDivider(
-                        color = Color.White.copy(alpha = 0.08f),
+                        color = auraColors.divider,
                         thickness = 0.5.dp,
                         modifier = Modifier.padding(bottom = 12.dp)
                     )
@@ -1012,6 +1036,7 @@ private fun PlaylistModalOptionItem(
     label: String,
     onClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1023,13 +1048,13 @@ private fun PlaylistModalOptionItem(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.85f),
+            tint = auraColors.textPrimary.copy(alpha = 0.85f),
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = label,
-            color = Color.White,
+            color = auraColors.textPrimary,
             fontWeight = FontWeight.Medium,
             fontSize = 14.5.sp
         )

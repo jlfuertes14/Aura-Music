@@ -82,7 +82,7 @@ import coil.compose.AsyncImage
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.NowPlayingStyle
-import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
+import com.auramusic.app.ui.components.ForceLightIconsSystemBarsEffect
 import com.auramusic.app.ui.theme.TextSecondary
 import kotlinx.coroutines.launch
 
@@ -149,7 +149,7 @@ internal fun NowPlayingOptionsModal(
             }
         }
     ) {
-        ForceWhiteSystemBarsEffect()
+        ForceLightIconsSystemBarsEffect()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

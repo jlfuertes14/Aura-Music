@@ -4,7 +4,6 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -20,7 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -40,7 +38,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -55,6 +52,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,8 +61,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.ReturnYouTubeDislikeData
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import java.text.NumberFormat
 import java.util.Locale
@@ -90,6 +87,8 @@ fun AuraTrackInfoSheet(
     onSeekToSec: (Int) -> Unit,
     onDismiss: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val context = LocalContext.current
     @Suppress("DEPRECATION")
@@ -105,15 +104,15 @@ fun AuraTrackInfoSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -143,13 +142,13 @@ fun AuraTrackInfoSheet(
                         modifier = Modifier
                             .size(52.dp)
                             .clip(RoundedCornerShape(10.dp))
-                            .background(Color.White.copy(alpha = 0.08f))
+                            .background(auraColors.surfaceCard)
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = track.title,
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             style = MaterialTheme.typography.titleSmall,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
@@ -157,7 +156,7 @@ fun AuraTrackInfoSheet(
                         )
                         Text(
                             text = track.artist,
-                            color = TextSecondary,
+                            color = auraColors.textSecondary,
                             fontSize = 12.5.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -165,7 +164,7 @@ fun AuraTrackInfoSheet(
                         if (track.album.isNotBlank()) {
                             Text(
                                 text = track.album,
-                                color = TextSecondary.copy(alpha = 0.8f),
+                                color = auraColors.textMuted,
                                 fontSize = 11.5.sp,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -173,42 +172,49 @@ fun AuraTrackInfoSheet(
                         }
                     }
                 }
-                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Close Track Info",
-                        tint = TextSecondary
+                        tint = auraColors.textSecondary
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Copy / Open YouTube URL buttons
+            // Copy / Open YouTube URL buttons (borderless)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                OutlinedButton(
+                Button(
                     onClick = {
                         clipboard.setText(AnnotatedString(youtubeMusicUrl))
                         Toast.makeText(context, "Copied YouTube Music URL", Toast.LENGTH_SHORT).show()
                     },
                     enabled = hasValidVideoId,
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f)
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = auraColors.circleButtonBg,
+                        contentColor = auraColors.textPrimary,
+                        disabledContainerColor = auraColors.pillInactiveBg.copy(alpha = 0.55f),
+                        disabledContentColor = auraColors.textMuted
+                    ),
+                    elevation = null,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 44.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.ContentCopy,
                         contentDescription = null,
-                        tint = if (hasValidVideoId) Color.White else TextSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Copy URL",
-                        color = if (hasValidVideoId) Color.White else TextSecondary,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -228,12 +234,16 @@ fun AuraTrackInfoSheet(
                     enabled = hasValidVideoId,
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = AuraNeonLime,
-                        contentColor = Color.Black,
-                        disabledContainerColor = Color.White.copy(alpha = 0.08f)
+                        containerColor = auraColors.accent,
+                        contentColor = auraColors.onAccent,
+                        disabledContainerColor = auraColors.pillInactiveBg.copy(alpha = 0.55f),
+                        disabledContentColor = auraColors.textMuted
                     ),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
-                    modifier = Modifier.weight(1f)
+                    elevation = null,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 11.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 44.dp)
                 ) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
@@ -251,18 +261,18 @@ fun AuraTrackInfoSheet(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Stats for Nerds telemetry card
+            // Stats for Nerds telemetry list (borderless grouped list)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Rounded.Info,
                     contentDescription = null,
-                    tint = AuraNeonLime,
+                    tint = accentTint,
                     modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
                     text = "STATS FOR NERDS",
-                    color = TextSecondary,
+                    color = auraColors.textSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.8.sp
@@ -274,17 +284,20 @@ fun AuraTrackInfoSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(14.dp))
-                    .background(Color.White.copy(alpha = 0.05f))
-                    .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(14.dp))
-                    .padding(14.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                    .background(auraColors.surfaceCard)
+                    .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
-                StatRow("Video ID", track.videoId.ifBlank { "Unavailable" }, monospace = true)
-                StatRow("Codec", track.codec.ifBlank { "Unknown" })
-                StatRow("Bitrate", "${track.bitrateKbps} kbps")
-                StatRow("Loudness", String.format(Locale.US, "%.1f dB", track.loudnessDb))
-                StatRow("Source", track.source.replaceFirstChar { it.uppercase() })
-                StatRow("Duration", formatSecondsLabel(track.durationSeconds))
+                StatRow("Video ID", track.videoId.ifBlank { "Unavailable" }, monospace = true, textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                StatRow("Codec", track.codec.ifBlank { "Unknown" }, textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                StatRow("Bitrate", "${track.bitrateKbps} kbps", textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                StatRow("Loudness", String.format(Locale.US, "%.1f dB", track.loudnessDb), textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                StatRow("Source", track.source.replaceFirstChar { it.uppercase() }, textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                StatRow("Duration", formatSecondsLabel(track.durationSeconds), textPrimary = auraColors.textPrimary, textSecondary = auraColors.textSecondary)
             }
 
             if (displayViews != null || rydData != null) {
@@ -298,6 +311,10 @@ fun AuraTrackInfoSheet(
                             icon = Icons.Rounded.Visibility,
                             label = "Views",
                             value = formatCompactNumber(views),
+                            accentTint = accentTint,
+                            surfaceColor = auraColors.surfaceCard,
+                            textPrimary = auraColors.textPrimary,
+                            textSecondary = auraColors.textSecondary,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -306,12 +323,20 @@ fun AuraTrackInfoSheet(
                             icon = Icons.Rounded.ThumbUp,
                             label = "Likes",
                             value = formatCompactNumber(rydData.likes),
+                            accentTint = accentTint,
+                            surfaceColor = auraColors.surfaceCard,
+                            textPrimary = auraColors.textPrimary,
+                            textSecondary = auraColors.textSecondary,
                             modifier = Modifier.weight(1f)
                         )
                         EngagementPill(
                             icon = Icons.Rounded.ThumbDown,
                             label = "Dislikes",
                             value = formatCompactNumber(rydData.dislikes),
+                            accentTint = accentTint,
+                            surfaceColor = auraColors.surfaceCard,
+                            textPrimary = auraColors.textPrimary,
+                            textSecondary = auraColors.textSecondary,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -324,13 +349,13 @@ fun AuraTrackInfoSheet(
                     Icon(
                         imageVector = Icons.Rounded.Schedule,
                         contentDescription = null,
-                        tint = AuraNeonLime,
+                        tint = accentTint,
                         modifier = Modifier.size(15.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "TIMESTAMPS (TAP TO SEEK)",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.8.sp
@@ -346,20 +371,15 @@ fun AuraTrackInfoSheet(
                         Surface(
                             onClick = { onSeekToSec(ts.seconds) },
                             shape = RoundedCornerShape(10.dp),
-                            color = AuraNeonLime.copy(alpha = 0.12f),
-                            modifier = Modifier.border(
-                                width = 1.dp,
-                                color = AuraNeonLime.copy(alpha = 0.35f),
-                                shape = RoundedCornerShape(10.dp)
-                            )
+                            color = auraColors.pillInactiveBg
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
                                     text = ts.label,
-                                    color = AuraNeonLime,
+                                    color = accentTint,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -368,7 +388,7 @@ fun AuraTrackInfoSheet(
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(
                                         text = ts.contextLabel,
-                                        color = Color.White,
+                                        color = auraColors.textPrimary,
                                         fontSize = 11.5.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -382,11 +402,11 @@ fun AuraTrackInfoSheet(
 
             if (description.isNotBlank()) {
                 Spacer(modifier = Modifier.height(16.dp))
-                HorizontalDivider(color = Color.White.copy(alpha = 0.07f), thickness = 0.5.dp)
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
                     text = "DESCRIPTION",
-                    color = TextSecondary,
+                    color = auraColors.textSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 0.8.sp
@@ -394,7 +414,7 @@ fun AuraTrackInfoSheet(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
                     text = description.trim(),
-                    color = Color.White.copy(alpha = 0.86f),
+                    color = auraColors.textPrimary.copy(alpha = 0.86f),
                     fontSize = 12.5.sp,
                     lineHeight = 18.sp
                 )
@@ -407,24 +427,29 @@ fun AuraTrackInfoSheet(
 private fun StatRow(
     label: String,
     value: String,
-    monospace: Boolean = false
+    monospace: Boolean = false,
+    textPrimary: Color,
+    textSecondary: Color
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 9.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
             text = label,
-            color = TextSecondary,
+            color = textSecondary,
             fontSize = 12.5.sp
         )
         Text(
             text = value,
-            color = Color.White,
+            color = textPrimary,
             fontSize = 12.5.sp,
             fontWeight = FontWeight.SemiBold,
             fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+            style = TextStyle(fontFeatureSettings = "tnum"),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.padding(start = 12.dp)
@@ -437,13 +462,16 @@ private fun EngagementPill(
     icon: ImageVector,
     label: String,
     value: String,
+    accentTint: Color,
+    surfaceColor: Color,
+    textPrimary: Color,
+    textSecondary: Color,
     modifier: Modifier = Modifier
 ) {
     Column(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.05f))
-            .border(1.dp, Color.White.copy(alpha = 0.07f), RoundedCornerShape(12.dp))
+            .background(surfaceColor)
             .padding(horizontal = 10.dp, vertical = 9.dp),
         horizontalAlignment = Alignment.Start
     ) {
@@ -451,22 +479,23 @@ private fun EngagementPill(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = AuraNeonLime,
+                tint = accentTint,
                 modifier = Modifier.size(13.dp)
             )
             Spacer(modifier = Modifier.width(4.dp))
             Text(
                 text = label,
-                color = TextSecondary,
+                color = textSecondary,
                 fontSize = 10.5.sp
             )
         }
         Spacer(modifier = Modifier.height(3.dp))
         Text(
             text = value,
-            color = Color.White,
+            color = textPrimary,
             fontSize = 13.5.sp,
             fontWeight = FontWeight.Bold,
+            style = TextStyle(fontFeatureSettings = "tnum"),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )

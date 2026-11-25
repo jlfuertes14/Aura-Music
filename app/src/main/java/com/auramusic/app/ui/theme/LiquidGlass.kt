@@ -33,6 +33,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -99,16 +100,43 @@ fun Modifier.glassBackdropSource(backdrop: LayerBackdrop): Modifier = this.layer
 fun Modifier.auraGlassSurface(
     shape: Shape = RoundedCornerShape(18.dp),
     selected: Boolean = false,
-    fallbackColor: Color = Color(0xFF1A1D26),
+    fallbackColor: Color = LocalAuraColors.current.surfaceCard,
     glassAlpha: Float = if (selected) 0.16f else 0.085f,
     borderTopAlpha: Float = if (selected) 0.34f else 0.22f,
     borderBottomAlpha: Float = 0.06f,
     borderWidth: Dp = 0.75.dp,
 ): Modifier {
+    val isDark = LocalIsDarkTheme.current
     if (!LocalLiquidGlassEnabled.current) {
+        val resolvedFallback = if (!isDark && fallbackColor.luminance() < 0.25f) {
+            LocalAuraColors.current.surfaceCard
+        } else {
+            fallbackColor
+        }
         return this
             .clip(shape)
-            .background(fallbackColor)
+            .background(resolvedFallback)
+    }
+    if (!isDark) {
+        val lightFill = if (selected) {
+            Color(0xFFE5E5EA).copy(alpha = 0.92f)
+        } else {
+            Color(0xFFF2F2F7).copy(alpha = 0.88f)
+        }
+        return this
+            .clip(shape)
+            .background(lightFill)
+            .then(
+                if (borderWidth > 0.dp) {
+                    Modifier.border(
+                        width = 0.5.dp,
+                        color = Color.Black.copy(alpha = if (selected) 0.08f else 0.04f),
+                        shape = shape,
+                    )
+                } else {
+                    Modifier
+                },
+            )
     }
     return this
         .clip(shape)
@@ -127,11 +155,24 @@ fun Modifier.auraGlassSurface(
 
 /**
  * Returns a translucent glass-tinted modal sheet container color when Liquid Glass is active,
- * or [defaultColor] under the Default theme.
+ * or [defaultColor] under the Default theme. Adapts cleanly to Light Mode (`#F9F9FB`).
  */
 @Composable
-fun auraGlassSheetColor(defaultColor: Color = Color(0xFF14161E)): Color =
-    if (LocalLiquidGlassEnabled.current) Color(0xFF151822).copy(alpha = 0.90f) else defaultColor
+fun auraGlassSheetColor(defaultColor: Color = LocalAuraColors.current.sheetBackground): Color {
+    val isDark = LocalIsDarkTheme.current
+    val isGlass = LocalLiquidGlassEnabled.current
+    return if (isDark) {
+        if (isGlass) Color(0xFF151822).copy(alpha = 0.90f) else defaultColor
+    } else {
+        if (isGlass) {
+            Color(0xFFF9F9FB).copy(alpha = 0.92f)
+        } else if (defaultColor.luminance() > 0.5f) {
+            defaultColor
+        } else {
+            Color(0xFFF9F9FB)
+        }
+    }
+}
 
 /**
  * Applies the Liquid Glass effect (vibrancy, color controls, blur, AGSL lens refraction on API 33+,
@@ -147,7 +188,11 @@ fun Modifier.liquidGlass(
     shape: Shape = CircleShape,
     interactive: Boolean = true,
     highlight: Highlight = Highlight.Default,
-    fallbackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+    fallbackColor: Color = if (LocalIsDarkTheme.current) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    } else {
+        Color.White.copy(alpha = 0.82f)
+    },
     minScrim: Float = 0.12f,
     maxScrim: Float = 0.50f,
 ): Modifier {
@@ -162,7 +207,7 @@ fun Modifier.liquidGlass(
         isDark = isDark,
         backdrop = backdrop,
         layer = null,
-        luminance = { 0.5f },
+        luminance = { if (isDark) 0.5f else 0.78f },
         shape = shape,
         interaction = if (interactive) interaction else null,
         highlight = highlight,
@@ -187,7 +232,11 @@ fun Modifier.liquidGlass(
     minScrim: Float = 0.12f,
     maxScrim: Float = 0.50f,
     pressedScale: Float = 1.04f,
-    fallbackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+    fallbackColor: Color = if (LocalIsDarkTheme.current) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    } else {
+        Color.White.copy(alpha = 0.82f)
+    },
 ): Modifier {
     if (!LocalLiquidGlassEnabled.current) {
         return this
@@ -221,7 +270,11 @@ fun LiquidGlassContainer(
     shape: Shape = CircleShape,
     interactive: Boolean = true,
     highlight: Highlight = Highlight.Default,
-    fallbackColor: Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+    fallbackColor: Color = if (LocalIsDarkTheme.current) {
+        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f)
+    } else {
+        Color.White.copy(alpha = 0.82f)
+    },
     contentAlignment: Alignment = Alignment.Center,
     content: @Composable BoxScope.() -> Unit,
 ) {
@@ -247,7 +300,7 @@ fun LiquidGlassIconButton(
     imageVector: ImageVector,
     modifier: Modifier = Modifier.size(48.dp),
     shape: Shape = CircleShape,
-    tint: Color = Color.White,
+    tint: Color = LocalAuraColors.current.textPrimary,
     contentDescription: String? = null,
     interactive: Boolean = true,
     highlight: Highlight = Highlight.Plain,
@@ -336,21 +389,15 @@ fun Modifier.drawInteractiveGlass(
         val baseColor = if (isDark) {
             Color(0xFF1C202B).copy(alpha = 0.90f)
         } else {
-            Color(0xFFF3F5FA).copy(alpha = 0.90f)
+            Color.White.copy(alpha = 0.82f)
         }
-        return this
-            .clip(shape)
-            .background(baseColor, shape)
-            .background(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = if (isDark) 0.15f else 0.35f),
-                        Color.White.copy(alpha = if (isDark) 0.05f else 0.12f),
-                    ),
-                ),
-                shape = shape,
-            )
-            .border(
+        val sheenColors = if (isDark) {
+            listOf(Color.White.copy(alpha = 0.15f), Color.White.copy(alpha = 0.05f))
+        } else {
+            listOf(Color.White.copy(alpha = 0.45f), Color.Transparent)
+        }
+        val rimModifier = if (isDark) {
+            Modifier.border(
                 width = 0.75.dp,
                 brush = Brush.verticalGradient(
                     colors = listOf(
@@ -360,6 +407,21 @@ fun Modifier.drawInteractiveGlass(
                 ),
                 shape = shape,
             )
+        } else {
+            Modifier.border(
+                width = 0.5.dp,
+                color = Color.Black.copy(alpha = 0.06f),
+                shape = shape,
+            )
+        }
+        return this
+            .clip(shape)
+            .background(baseColor, shape)
+            .background(
+                brush = Brush.verticalGradient(colors = sheenColors),
+                shape = shape,
+            )
+            .then(rimModifier)
             .then(
                 if (interaction != null) {
                     Modifier.pointerInput(interaction) { interaction.detectPress(this) }
@@ -413,29 +475,39 @@ fun Modifier.drawInteractiveGlass(
                 layer?.record { drawBackdrop() }
             },
             onDrawSurface = {
-                val baseDarken = lerp(minScrim, maxScrim, ((luminance() - 0.3f) / 0.5f).coerceIn(0f, 1f))
-                val darken = if (!supportsAgslRefraction) {
-                    // Android 12 frosted blur look: slightly stronger frosted scrim + soft white frost veil
-                    maxOf(baseDarken, 0.24f)
+                val lumNorm = ((luminance() - 0.3f) / 0.5f).coerceIn(0f, 1f)
+                if (isDark) {
+                    val baseDarken = lerp(minScrim, maxScrim, lumNorm)
+                    val darken = if (!supportsAgslRefraction) {
+                        // Android 12 frosted blur look: slightly stronger frosted scrim + soft white frost veil
+                        maxOf(baseDarken, 0.24f)
+                    } else {
+                        baseDarken
+                    }
+                    drawRect(Color.Black.copy(alpha = darken))
+                    if (!supportsAgslRefraction) {
+                        drawRect(Color.White.copy(alpha = 0.08f))
+                    }
                 } else {
-                    baseDarken
-                }
-                drawRect((if (isDark) Color.Black else Color.White).copy(alpha = darken))
-                if (!supportsAgslRefraction) {
-                    drawRect(Color.White.copy(alpha = if (isDark) 0.08f else 0.16f))
+                    // Apple iOS/Music light frosted glass: airy translucent white (rgba(255,255,255,0.82))
+                    val lightFrost = lerp(maxOf(minScrim, 0.68f), maxOf(maxScrim, 0.82f), lumNorm)
+                    drawRect(Color.White.copy(alpha = lightFrost))
+                    if (!supportsAgslRefraction) {
+                        drawRect(Color.White.copy(alpha = 0.08f))
+                    }
                 }
                 val press = interaction?.pressProgress ?: 0f
                 if (press > 0f) {
                     drawRect(
                         brush = Brush.radialGradient(
                             colors = listOf(
-                                Color.White.copy(alpha = 0.18f * press),
+                                (if (isDark) Color.White else Color(0xFF1C1C1E)).copy(alpha = (if (isDark) 0.18f else 0.08f) * press),
                                 Color.Transparent,
                             ),
                             center = interaction?.touchPosition ?: Offset(size.width / 2f, size.height / 2f),
                             radius = size.minDimension.coerceAtLeast(1f) * 1.2f,
                         ),
-                        blendMode = BlendMode.Plus,
+                        blendMode = if (isDark) BlendMode.Plus else BlendMode.SrcOver,
                     )
                 }
             },

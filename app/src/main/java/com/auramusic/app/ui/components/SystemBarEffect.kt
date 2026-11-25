@@ -72,11 +72,35 @@ fun SystemBarEffect(
 }
 
 /**
- * Ensures dark modals and bottom sheets keep bright white system bar icons while open,
- * and restores the host Activity window's contrast to [LocalIsDarkTheme.current] on dispose.
+ * Syncs modal and bottom sheet system bar icon contrast with [LocalIsDarkTheme.current]:
+ * - Dark mode -> bright white system bar icons.
+ * - Light mode -> crisp dark system bar icons on light frosted sheets.
+ * Restores the host Activity window's contrast to [LocalIsDarkTheme.current] on dispose.
  */
 @Composable
 fun ForceWhiteSystemBarsEffect() {
+    val view = LocalView.current
+    val appIsDark = LocalIsDarkTheme.current
+
+    DisposableEffect(view, appIsDark) {
+        val dialogWindow = resolveDialogWindow(view)
+        val activityWindow = resolveActivityWindow(view)
+
+        dialogWindow?.let { applySystemBarAppearance(it, isDarkTheme = appIsDark) }
+        activityWindow?.let { applySystemBarAppearance(it, isDarkTheme = appIsDark) }
+
+        onDispose {
+            activityWindow?.let { applySystemBarAppearance(it, isDarkTheme = appIsDark) }
+        }
+    }
+}
+
+/**
+ * Forces bright white system bar icons while dark immersive overlays (e.g., full-bleed dark
+ * Now Playing or lyrics views) are open, and restores [LocalIsDarkTheme.current] on dispose.
+ */
+@Composable
+fun ForceLightIconsSystemBarsEffect() {
     val view = LocalView.current
     val appIsDark = LocalIsDarkTheme.current
 

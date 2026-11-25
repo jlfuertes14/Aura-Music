@@ -16,8 +16,10 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -79,11 +81,11 @@ val BadgeExplicitBg = Color(0xFF6B7280)
 
 val AuraDarkScheme = darkColorScheme(
     primary = AuraNeonLime,
-    onPrimary = Color.Black,
-    primaryContainer = Color(0xFF283308),
+    onPrimary = Color(0xFF0E1014),
+    primaryContainer = AuraNeonLime.copy(alpha = 0.18f),
     onPrimaryContainer = AuraNeonLime,
     secondary = AuraLilacCard,
-    onSecondary = Color.Black,
+    onSecondary = Color(0xFF0E1014),
     secondaryContainer = Color(0xFF2B2246),
     onSecondaryContainer = AuraLilacCard,
     tertiary = PillActiveBg,
@@ -101,20 +103,20 @@ val AuraDarkScheme = darkColorScheme(
     outline = AuraCardBorder
 )
 
-// Crisp Alabaster Light Theme Tokens
-val AuraLightBg = Color(0xFFF8F8FA)
+// Crisp Apple Light Theme Tokens
+val AuraLightBg = Color(0xFFFFFFFF)
 val AuraLightSurface = Color(0xFFFFFFFF)
-val AuraLightSurfaceVariant = Color(0xFFF0F1F5)
-val AuraLightCard = Color(0xFFFFFFFF)
-val AuraLightCardBorder = Color(0xFFE4E6EE)
-val AuraLightTextPrimary = Color(0xFF111216)
-val AuraLightTextSecondary = Color(0xFF5A6070)
+val AuraLightSurfaceVariant = Color(0xFFF2F2F7)
+val AuraLightCard = Color(0xFFF2F2F7)
+val AuraLightCardBorder = Color(0xFFE5E5EA)
+val AuraLightTextPrimary = Color(0xFF1C1C1E)
+val AuraLightTextSecondary = Color(0xFF6E6E73)
 val AuraLightAccent = Color(0xFF4D6B00)
 
 val AuraLightScheme = lightColorScheme(
     primary = AuraLightAccent,
     onPrimary = Color.White,
-    primaryContainer = AuraNeonLime,
+    primaryContainer = AuraLightAccent.copy(alpha = 0.18f),
     onPrimaryContainer = Color(0xFF141C00),
     secondary = Color(0xFF6750A4),
     onSecondary = Color.White,
@@ -129,13 +131,85 @@ val AuraLightScheme = lightColorScheme(
     surfaceVariant = AuraLightSurfaceVariant,
     onSurfaceVariant = AuraLightTextSecondary,
     surfaceContainerLowest = Color(0xFFFFFFFF),
-    surfaceContainerLow = Color(0xFFF4F5F8),
-    surfaceContainer = Color(0xFFEEEFF4),
-    surfaceContainerHigh = Color(0xFFE7E9F0),
-    surfaceContainerHighest = Color(0xFFDFE2EB),
+    surfaceContainerLow = Color(0xFFF9F9FB),
+    surfaceContainer = Color(0xFFF2F2F7),
+    surfaceContainerHigh = Color(0xFFEBEBF0),
+    surfaceContainerHighest = Color(0xFFE5E5EA),
     outline = AuraLightCardBorder,
-    outlineVariant = Color(0xFFD5D8E2)
+    outlineVariant = Color(0xFFD1D1D6)
 )
+
+/**
+ * Returns crisp dark ink (`#0E1014`) on bright surfaces such as Aura Neon Lime (`#D4F644`),
+ * and white ink on dark accents.
+ */
+fun Color.contrastInk(): Color = if (this.luminance() > 0.45f) Color(0xFF0E1014) else Color.White
+
+@Immutable
+data class AuraThemeColors(
+    val isDark: Boolean,
+    val background: Color,
+    val groupedBackground: Color,
+    val surface: Color,
+    val surfaceCard: Color,
+    val surfaceElevated: Color,
+    val circleButtonBg: Color,
+    val pillInactiveBg: Color,
+    val pillInactiveText: Color,
+    val textPrimary: Color,
+    val textSecondary: Color,
+    val textMuted: Color,
+    val divider: Color,
+    val sheetBackground: Color,
+    val dragHandle: Color,
+    val scrim: Color,
+    val accent: Color,
+    val onAccent: Color,
+)
+
+val AuraDarkThemeColors = AuraThemeColors(
+    isDark = true,
+    background = Color(0xFF121316),
+    groupedBackground = Color(0xFF0E0F12),
+    surface = Color(0xFF181A20),
+    surfaceCard = Color(0xFF1E2026),
+    surfaceElevated = Color(0xFF252731),
+    circleButtonBg = Color(0xFF22242B),
+    pillInactiveBg = Color(0xFF1E1F25),
+    pillInactiveText = Color(0xFF9E9EA7),
+    textPrimary = Color(0xFFFFFFFF),
+    textSecondary = Color(0xFF8E909A),
+    textMuted = Color(0xFF6B7280),
+    divider = Color.White.copy(alpha = 0.08f),
+    sheetBackground = Color(0xFF14161E),
+    dragHandle = Color.White.copy(alpha = 0.22f),
+    scrim = Color.Black.copy(alpha = 0.72f),
+    accent = AuraNeonLime,
+    onAccent = AuraNeonLime.contrastInk(),
+)
+
+val AuraLightThemeColors = AuraThemeColors(
+    isDark = false,
+    background = Color(0xFFFFFFFF),
+    groupedBackground = Color(0xFFF2F2F7),
+    surface = Color(0xFFFFFFFF),
+    surfaceCard = Color(0xFFF2F2F7),
+    surfaceElevated = Color(0xFFFFFFFF),
+    circleButtonBg = Color(0xFFEBEBF0),
+    pillInactiveBg = Color(0xFFEBEBF0),
+    pillInactiveText = Color(0xFF3C3C43),
+    textPrimary = Color(0xFF1C1C1E),
+    textSecondary = Color(0xFF6E6E73),
+    textMuted = Color(0xFF8E8E93),
+    divider = Color.Black.copy(alpha = 0.08f),
+    sheetBackground = Color(0xFFF9F9FB),
+    dragHandle = Color.Black.copy(alpha = 0.18f),
+    scrim = Color.Black.copy(alpha = 0.38f),
+    accent = AuraLightAccent,
+    onAccent = AuraLightAccent.contrastInk(),
+)
+
+val LocalAuraColors = staticCompositionLocalOf { AuraDarkThemeColors }
 
 /**
  * 10 curated accent swatches for [ThemeColorSource.CUSTOM] selection in Appearance settings.
@@ -287,25 +361,17 @@ private fun applyCustomAccent(
     val adjustedPrimaryHsl = hsl.copyOf().apply {
         if (!isDark && this[2] > 0.52f) {
             // Deepen bright pastel/neon swatches in Light mode so icons & text maintain WCAG contrast
-            this[2] = 0.36f
+            this[2] = 0.32f
         } else if (isDark && this[2] < 0.35f) {
             this[2] = 0.55f
         }
     }
     val adjustedPrimaryArgb = ColorUtils.HSLToColor(adjustedPrimaryHsl)
     val primaryColor = Color(adjustedPrimaryArgb)
-    val onPrimaryColor = if (ColorUtils.calculateLuminance(adjustedPrimaryArgb) > 0.18) {
-        Color.Black
-    } else {
-        Color.White
-    }
+    val onPrimaryColor = primaryColor.contrastInk()
 
-    val containerHsl = hsl.copyOf().apply {
-        this[1] = (this[1] * 0.72f).coerceIn(0.15f, 0.75f)
-        this[2] = if (isDark) 0.22f else 0.90f
-    }
-    val containerColor = Color(ColorUtils.HSLToColor(containerHsl))
-    val onContainerColor = if (isDark) Color(0xFFF3F4F6) else Color(0xFF111216)
+    val containerColor = primaryColor.copy(alpha = 0.18f)
+    val onContainerColor = if (isDark) primaryColor else Color(0xFF141C00)
 
     val secondaryHsl = hsl.copyOf().apply {
         this[0] = (this[0] + 28f) % 360f
@@ -314,11 +380,7 @@ private fun applyCustomAccent(
     }
     val secondaryArgb = ColorUtils.HSLToColor(secondaryHsl)
     val secondaryColor = Color(secondaryArgb)
-    val onSecondaryColor = if (ColorUtils.calculateLuminance(secondaryArgb) > 0.18) {
-        Color.Black
-    } else {
-        Color.White
-    }
+    val onSecondaryColor = secondaryColor.contrastInk()
 
     return baseScheme.copy(
         primary = primaryColor,
@@ -403,6 +465,12 @@ fun AuraMusicTheme(
     )
     val typography = if (resolvedIsDark) AuraTypography else AuraLightTypography
     val themeStyle = if (liquidGlassEnabled) AppThemeStyle.LIQUID_GLASS else AppThemeStyle.DEFAULT
+    val baseAuraColors = if (resolvedIsDark) AuraDarkThemeColors else AuraLightThemeColors
+    val resolvedAccent = colorScheme.primary
+    val resolvedAuraColors = baseAuraColors.copy(
+        accent = resolvedAccent,
+        onAccent = resolvedAccent.contrastInk()
+    )
 
     MaterialTheme(
         colorScheme = colorScheme,
@@ -413,6 +481,7 @@ fun AuraMusicTheme(
             LocalLyricsStyle provides lyricsStyle,
             LocalIsDarkTheme provides resolvedIsDark,
             LocalAuraThemeStyle provides themeStyle,
+            LocalAuraColors provides resolvedAuraColors,
         ) {
             SystemBarEffect(isDarkTheme = resolvedIsDark)
             content()

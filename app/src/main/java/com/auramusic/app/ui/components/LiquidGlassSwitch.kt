@@ -31,10 +31,11 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.glassBackdropSource
 import com.auramusic.app.ui.theme.rememberGlassBackdrop
@@ -63,6 +64,9 @@ fun AuraLiquidGlassSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val auraColors = LocalAuraColors.current
+    val isDark = auraColors.isDark
+
     if (!LocalLiquidGlassEnabled.current) {
         Switch(
             checked = checked,
@@ -70,10 +74,11 @@ fun AuraLiquidGlassSwitch(
             enabled = enabled,
             modifier = modifier,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = Color.Black,
-                checkedTrackColor = AuraNeonLime,
-                uncheckedThumbColor = Color.White.copy(alpha = 0.85f),
-                uncheckedTrackColor = Color.White.copy(alpha = 0.15f),
+                checkedThumbColor = auraColors.onAccent,
+                checkedTrackColor = auraColors.accent,
+                uncheckedThumbColor = if (isDark) Color.White.copy(alpha = 0.88f) else Color.White,
+                uncheckedTrackColor = if (isDark) Color.White.copy(alpha = 0.15f) else Color(0xFFD1D1D6),
+                uncheckedBorderColor = Color.Transparent,
             ),
         )
         return
@@ -102,23 +107,44 @@ fun AuraLiquidGlassSwitch(
         animationSpec = spring(dampingRatio = 0.56f, stiffness = 420f),
         label = "liquidSwitchThumbScale",
     )
+    val activeAccentEnd = lerp(auraColors.accent, Color(0xFF0E1014), if (isDark) 0.14f else 0.08f)
     val trackStartColor by animateColorAsState(
-        targetValue = if (checked) AuraNeonLime.copy(alpha = 0.90f) else Color.White.copy(alpha = 0.14f),
+        targetValue = if (checked) {
+            auraColors.accent.copy(alpha = if (isDark) 0.90f else 0.96f)
+        } else if (isDark) {
+            Color.White.copy(alpha = 0.14f)
+        } else {
+            Color(0xFF787880).copy(alpha = 0.18f)
+        },
         animationSpec = tween(durationMillis = 220),
         label = "liquidSwitchTrackStart",
     )
     val trackEndColor by animateColorAsState(
-        targetValue = if (checked) Color(0xFF9EE82A).copy(alpha = 0.78f) else Color.White.copy(alpha = 0.08f),
+        targetValue = if (checked) {
+            activeAccentEnd.copy(alpha = if (isDark) 0.78f else 0.88f)
+        } else if (isDark) {
+            Color.White.copy(alpha = 0.08f)
+        } else {
+            Color(0xFF787880).copy(alpha = 0.14f)
+        },
         animationSpec = tween(durationMillis = 220),
         label = "liquidSwitchTrackEnd",
     )
     val borderTopColor by animateColorAsState(
-        targetValue = if (checked) Color.White.copy(alpha = 0.58f) else Color.White.copy(alpha = 0.34f),
+        targetValue = if (isDark) {
+            if (checked) Color.White.copy(alpha = 0.58f) else Color.White.copy(alpha = 0.34f)
+        } else {
+            Color.Black.copy(alpha = if (checked) 0.05f else 0.07f)
+        },
         animationSpec = tween(durationMillis = 220),
         label = "liquidSwitchBorderTop",
     )
     val borderBottomColor by animateColorAsState(
-        targetValue = if (checked) AuraNeonLime.copy(alpha = 0.34f) else Color.White.copy(alpha = 0.08f),
+        targetValue = if (isDark) {
+            if (checked) auraColors.accent.copy(alpha = 0.34f) else Color.White.copy(alpha = 0.08f)
+        } else {
+            Color.Black.copy(alpha = 0.04f)
+        },
         animationSpec = tween(durationMillis = 220),
         label = "liquidSwitchBorderBottom",
     )
@@ -163,13 +189,13 @@ fun AuraLiquidGlassSwitch(
                     )
                     .background(
                         Brush.verticalGradient(
-                            0.0f to Color.White.copy(alpha = if (checked) 0.24f else 0.14f),
+                            0.0f to Color.White.copy(alpha = if (checked) 0.24f else if (isDark) 0.14f else 0.30f),
                             0.45f to Color.Transparent,
-                            1.0f to Color.Black.copy(alpha = 0.14f),
+                            1.0f to Color.Black.copy(alpha = if (isDark) 0.14f else 0.05f),
                         ),
                     )
                     .border(
-                        width = 0.85.dp,
+                        width = if (isDark) 0.85.dp else 0.5.dp,
                         brush = Brush.verticalGradient(listOf(borderTopColor, borderBottomColor)),
                         shape = CircleShape,
                     ),
@@ -195,19 +221,42 @@ fun AuraLiquidGlassSwitch(
                 .shadow(
                     elevation = if (isPressed) 6.dp else 3.dp,
                     shape = CircleShape,
-                    ambientColor = Color.Black.copy(alpha = 0.36f),
-                    spotColor = Color.Black.copy(alpha = 0.48f),
+                    ambientColor = Color.Black.copy(alpha = if (isDark) 0.36f else 0.14f),
+                    spotColor = Color.Black.copy(alpha = if (isDark) 0.48f else 0.20f),
                 )
 
             if (supportsHardwareBlur) {
                 // Android 12+ (API 31-32 frosted blur) & Android 13+ (API 33+ real AGSL lens refraction)
-                val restingWhiteAlpha = if (isGlassLensActive) 0.34f else 0.78f
+                val restingWhiteAlpha = if (isGlassLensActive) {
+                    if (isDark) 0.34f else 0.48f
+                } else {
+                    if (isDark) 0.78f else 0.94f
+                }
+                val thumbBorderColors = if (isDark) {
+                    listOf(
+                        Color.White.copy(alpha = 0.95f),
+                        Color.White.copy(alpha = if (isGlassLensActive) 0.30f else 0.48f),
+                    )
+                } else {
+                    listOf(
+                        Color.Black.copy(alpha = 0.04f),
+                        Color.Black.copy(alpha = 0.09f),
+                    )
+                }
                 Box(
                     modifier = thumbBaseModifier
                         .drawBackdrop(
                             backdrop = switchBackdrop,
                             shape = { CircleShape },
-                            highlight = { Highlight.Default.copy(alpha = if (isGlassLensActive) 0.92f else 0.65f) },
+                            highlight = {
+                                Highlight.Default.copy(
+                                    alpha = if (isDark) {
+                                        if (isGlassLensActive) 0.92f else 0.65f
+                                    } else {
+                                        if (isGlassLensActive) 0.55f else 0.30f
+                                    },
+                                )
+                            },
                             effects = {
                                 if (supportsAgsl) {
                                     vibrancy()
@@ -232,35 +281,36 @@ fun AuraLiquidGlassSwitch(
                             },
                         )
                         .border(
-                            width = 0.85.dp,
-                            brush = Brush.verticalGradient(
-                                listOf(
-                                    Color.White.copy(alpha = 0.95f),
-                                    Color.White.copy(alpha = if (isGlassLensActive) 0.30f else 0.48f),
-                                ),
-                            ),
+                            width = if (isDark) 0.85.dp else 0.5.dp,
+                            brush = Brush.verticalGradient(thumbBorderColors),
                             shape = CircleShape,
                         ),
                 )
             } else {
                 // Android 8.0-11 static frosted crystal thumb
+                val staticThumbColors = if (isDark) {
+                    if (checked) {
+                        listOf(Color(0xFFFFFFFF), Color(0xFFEAF3D4))
+                    } else {
+                        listOf(Color.White.copy(alpha = 0.95f), Color(0xFFD8DEE9).copy(alpha = 0.88f))
+                    }
+                } else {
+                    listOf(Color(0xFFFFFFFF), Color(0xFFF6F6F8))
+                }
+                val staticThumbBorder = if (isDark) {
+                    listOf(Color.White, Color.White.copy(alpha = 0.35f))
+                } else {
+                    listOf(Color.Black.copy(alpha = 0.04f), Color.Black.copy(alpha = 0.09f))
+                }
                 Box(
                     modifier = thumbBaseModifier
                         .clip(CircleShape)
                         .background(
-                            brush = Brush.verticalGradient(
-                                colors = if (checked) {
-                                    listOf(Color(0xFFFFFFFF), Color(0xFFEAF3D4))
-                                } else {
-                                    listOf(Color.White.copy(alpha = 0.95f), Color(0xFFD8DEE9).copy(alpha = 0.88f))
-                                },
-                            ),
+                            brush = Brush.verticalGradient(colors = staticThumbColors),
                         )
                         .border(
-                            width = 0.85.dp,
-                            brush = Brush.verticalGradient(
-                                listOf(Color.White, Color.White.copy(alpha = 0.35f)),
-                            ),
+                            width = if (isDark) 0.85.dp else 0.5.dp,
+                            brush = Brush.verticalGradient(staticThumbBorder),
                             shape = CircleShape,
                         ),
                 ) {

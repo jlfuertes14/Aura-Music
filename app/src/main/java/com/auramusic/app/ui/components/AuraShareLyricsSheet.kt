@@ -18,7 +18,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -82,7 +81,7 @@ import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -114,6 +113,8 @@ fun AuraShareLyricsSheet(
     palette: AuraPalette,
     onDismiss: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -148,15 +149,15 @@ fun AuraShareLyricsSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.72f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -172,18 +173,21 @@ fun AuraShareLyricsSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
                     Box(
                         modifier = Modifier
                             .size(38.dp)
                             .clip(CircleShape)
-                            .background(AuraNeonLime.copy(alpha = 0.14f)),
+                            .background(auraColors.circleButtonBg),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.FormatQuote,
                             contentDescription = null,
-                            tint = AuraNeonLime,
+                            tint = accentTint,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -192,13 +196,13 @@ fun AuraShareLyricsSheet(
                         Text(
                             text = "Share Lyric Card",
                             style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
                             text = "Tap up to $MAX_SELECTED_LYRIC_LINES consecutive lines (${selectedLines.size}/$MAX_SELECTED_LYRIC_LINES)",
                             style = MaterialTheme.typography.bodySmall,
-                            color = TextSecondary
+                            color = auraColors.textSecondary
                         )
                     }
                 }
@@ -209,7 +213,7 @@ fun AuraShareLyricsSheet(
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Close Share Lyric Card",
-                        tint = TextSecondary
+                        tint = auraColors.textSecondary
                     )
                 }
             }
@@ -226,7 +230,7 @@ fun AuraShareLyricsSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 4 Background Theme Pills
+            // 4 Background Theme Pills (borderless)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -238,14 +242,8 @@ fun AuraShareLyricsSheet(
                     Surface(
                         onClick = { selectedTheme = theme },
                         shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) AuraNeonLime else Color.White.copy(alpha = 0.08f),
-                        modifier = Modifier
-                            .heightIn(min = 40.dp)
-                            .border(
-                                width = 1.dp,
-                                color = if (isSelected) AuraNeonLime else Color.White.copy(alpha = 0.10f),
-                                shape = RoundedCornerShape(12.dp)
-                            )
+                        color = if (isSelected) auraColors.accent else auraColors.pillInactiveBg,
+                        modifier = Modifier.heightIn(min = 40.dp)
                     ) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -256,12 +254,11 @@ fun AuraShareLyricsSheet(
                                     .size(12.dp)
                                     .clip(CircleShape)
                                     .background(themeSwatchColor(theme, palette))
-                                    .border(1.dp, Color.White.copy(alpha = 0.3f), CircleShape)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = theme.label,
-                                color = if (isSelected) Color.Black else Color.White,
+                                color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
                                 fontSize = 12.5.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -282,7 +279,7 @@ fun AuraShareLyricsSheet(
                 ) {
                     Text(
                         text = "No lyric lines available for this track.",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
@@ -291,15 +288,15 @@ fun AuraShareLyricsSheet(
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 120.dp, max = 210.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     itemsIndexed(selectableLines) { idx, lineText ->
                         val isLineSelected = selectedRange?.contains(idx) == true
                         val rowBg by animateColorAsState(
                             targetValue = if (isLineSelected) {
-                                AuraNeonLime.copy(alpha = 0.16f)
+                                auraColors.accent.copy(alpha = if (auraColors.isDark) 0.16f else 0.18f)
                             } else {
-                                Color.White.copy(alpha = 0.05f)
+                                Color.Transparent
                             },
                             animationSpec = tween(durationMillis = 180, easing = CardEase),
                             label = "lyricLineBg"
@@ -307,17 +304,9 @@ fun AuraShareLyricsSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .heightIn(min = 48.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(rowBg)
-                                .border(
-                                    width = 1.dp,
-                                    color = if (isLineSelected) {
-                                        AuraNeonLime.copy(alpha = 0.55f)
-                                    } else {
-                                        Color.White.copy(alpha = 0.06f)
-                                    },
-                                    shape = RoundedCornerShape(12.dp)
-                                )
                                 .clickable {
                                     selectedRange = toggleConsecutiveSelection(
                                         current = selectedRange,
@@ -330,7 +319,7 @@ fun AuraShareLyricsSheet(
                         ) {
                             Text(
                                 text = lineText,
-                                color = if (isLineSelected) Color.White else Color.White.copy(alpha = 0.72f),
+                                color = if (isLineSelected) auraColors.textPrimary else auraColors.textSecondary,
                                 fontSize = 14.sp,
                                 fontWeight = if (isLineSelected) FontWeight.SemiBold else FontWeight.Normal,
                                 modifier = Modifier.weight(1f)
@@ -340,7 +329,7 @@ fun AuraShareLyricsSheet(
                                 Icon(
                                     imageVector = Icons.Rounded.Check,
                                     contentDescription = "Selected line",
-                                    tint = AuraNeonLime,
+                                    tint = accentTint,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -380,11 +369,12 @@ fun AuraShareLyricsSheet(
                 },
                 enabled = selectedLines.isNotEmpty() && !isSharing,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AuraNeonLime,
-                    contentColor = Color.Black,
-                    disabledContainerColor = Color.White.copy(alpha = 0.10f),
-                    disabledContentColor = TextSecondary
+                    containerColor = auraColors.accent,
+                    contentColor = auraColors.onAccent,
+                    disabledContainerColor = auraColors.pillInactiveBg,
+                    disabledContentColor = auraColors.textMuted
                 ),
+                elevation = null,
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -392,7 +382,7 @@ fun AuraShareLyricsSheet(
             ) {
                 if (isSharing) {
                     CircularProgressIndicator(
-                        color = Color.Black,
+                        color = auraColors.onAccent,
                         strokeWidth = 2.dp,
                         modifier = Modifier.size(20.dp)
                     )
@@ -428,15 +418,6 @@ private fun LyricCardPreview(
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
             .background(bgBrush)
-            .border(
-                width = 1.dp,
-                color = if (theme == LyricCardTheme.WARM_CREAM) {
-                    Color.Black.copy(alpha = 0.08f)
-                } else {
-                    Color.White.copy(alpha = 0.14f)
-                },
-                shape = RoundedCornerShape(20.dp)
-            )
             .padding(18.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
@@ -705,13 +686,6 @@ private fun renderHighResLyricCardBitmap(
         }
     }
     canvas.drawRoundRect(panelRect, 48f, 48f, panelFillPaint)
-
-    val panelStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 2.5f
-        color = if (isCream) 0x1F000000 else 0x2EFFFFFF
-    }
-    canvas.drawRoundRect(panelRect, 48f, 48f, panelStrokePaint)
 
     // 3. Header: Artwork tile (or tinted placeholder) + Track Title & Artist
     val contentLeft = 112f

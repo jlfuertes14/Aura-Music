@@ -100,7 +100,7 @@ import com.auramusic.app.ui.components.AuraShareLyricsSheet
 import com.auramusic.app.ui.components.AuraSleepTimerSheet
 import com.auramusic.app.ui.components.AuraSpeedPitchSheet
 import com.auramusic.app.ui.components.AuraTrackInfoSheet
-import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
+import com.auramusic.app.ui.components.ForceLightIconsSystemBarsEffect
 import com.auramusic.app.ui.components.formatSleepTimerStatus
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricStrip
@@ -226,6 +226,10 @@ fun AuraNowPlayingSheet(
     val lyricsAvailable = displayLyrics != null && (
         displayLyrics.syncedLines.isNotEmpty() || displayLyrics.plainLyrics.isNotBlank()
     )
+
+    if (playerCollapseProgress < 0.5f) {
+        ForceLightIconsSystemBarsEffect()
+    }
 
     val context = LocalContext.current
     LaunchedEffect(track.videoId, track.artist) {
@@ -880,7 +884,7 @@ private fun AuraNowPlayingOptionsSheet(
             }
         }
     ) {
-        ForceWhiteSystemBarsEffect()
+        ForceLightIconsSystemBarsEffect()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

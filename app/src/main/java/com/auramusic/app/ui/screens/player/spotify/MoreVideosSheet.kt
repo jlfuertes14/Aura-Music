@@ -40,7 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
-import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
+import com.auramusic.app.ui.components.ForceLightIconsSystemBarsEffect
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.TextSecondary
 
@@ -72,7 +72,7 @@ internal fun LivePerformancesModal(
             }
         }
     ) {
-        ForceWhiteSystemBarsEffect()
+        ForceLightIconsSystemBarsEffect()
         Column(
             modifier = Modifier
                 .fillMaxWidth()

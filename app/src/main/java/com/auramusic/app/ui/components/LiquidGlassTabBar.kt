@@ -42,11 +42,13 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.util.VelocityTracker
@@ -62,8 +64,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.lerp
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.LocalIsDarkTheme
+import com.auramusic.app.ui.theme.AuraLightAccent
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.drawInteractiveGlass
 import com.auramusic.app.ui.theme.inspectDragGestures
 import com.auramusic.app.ui.theme.rememberGlassInteraction
@@ -119,7 +121,8 @@ fun AuraLiquidGlassTabBar(
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val animationScope = rememberCoroutineScope()
     val barInteraction = rememberGlassInteraction()
-    val isDark = LocalIsDarkTheme.current
+    val auraColors = LocalAuraColors.current
+    val isDark = auraColors.isDark
 
     BoxWithConstraints(
         modifier = modifier
@@ -192,6 +195,18 @@ fun AuraLiquidGlassTabBar(
             Box(
                 Modifier
                     .matchParentSize()
+                    .then(
+                        if (!isDark) {
+                            Modifier.shadow(
+                                elevation = 12.dp,
+                                shape = CapsuleShape,
+                                ambientColor = Color.Black.copy(alpha = 0.10f),
+                                spotColor = Color.Black.copy(alpha = 0.14f),
+                            )
+                        } else {
+                            Modifier
+                        },
+                    )
                     .drawInteractiveGlass(
                         isDark = isDark,
                         backdrop = backdrop,
@@ -221,22 +236,35 @@ fun AuraLiquidGlassTabBar(
                         .clip(CapsuleShape)
                         .background(
                             brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.22f),
-                                    Color.White.copy(alpha = 0.11f),
-                                ),
+                                colors = if (isDark) {
+                                    listOf(
+                                        Color.White.copy(alpha = 0.22f),
+                                        Color.White.copy(alpha = 0.11f),
+                                    )
+                                } else {
+                                    listOf(
+                                        Color(0xFF1C1C1E).copy(alpha = 0.08f),
+                                        Color(0xFF1C1C1E).copy(alpha = 0.05f),
+                                    )
+                                },
                             ),
                             shape = CapsuleShape,
                         )
-                        .border(
-                            width = 0.75.dp,
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = 0.36f),
-                                    Color.White.copy(alpha = 0.10f),
-                                ),
-                            ),
-                            shape = CapsuleShape,
+                        .then(
+                            if (isDark) {
+                                Modifier.border(
+                                    width = 0.75.dp,
+                                    brush = Brush.verticalGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.36f),
+                                            Color.White.copy(alpha = 0.10f),
+                                        ),
+                                    ),
+                                    shape = CapsuleShape,
+                                )
+                            } else {
+                                Modifier
+                            },
                         )
                 } else {
                     val supportsAgslRefraction = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
@@ -268,8 +296,8 @@ fun AuraLiquidGlassTabBar(
                                     lens(10f.dp.toPx() * progress, 14f.dp.toPx() * progress, chromaticAberration = true)
                                 }
                             },
-                            highlight = { Highlight.Default.copy(alpha = 0.6f) },
-                            shadow = { Shadow(radius = 4f.dp, alpha = 0.4f) },
+                            highlight = { Highlight.Default.copy(alpha = if (isDark) 0.6f else 0.32f) },
+                            shadow = { Shadow(radius = 4f.dp, alpha = if (isDark) 0.4f else 0.08f) },
                             innerShadow = {
                                 val progress = dampedDrag.pressProgress
                                 InnerShadow(radius = 8f.dp * progress, alpha = progress)
@@ -283,9 +311,15 @@ fun AuraLiquidGlassTabBar(
                             },
                             onDrawSurface = {
                                 val lumNorm = ((luminance.value - 0.3f) / 0.5f).coerceIn(0f, 1f)
-                                val darken = if (isDark) lerp(0.16f, 0.40f, lumNorm) else lerp(0.06f, 0.14f, lumNorm)
-                                drawRect(Color.Black.copy(alpha = darken))
-                                drawRect(Color.White.copy(alpha = if (supportsAgslRefraction) 0.16f else 0.20f))
+                                if (isDark) {
+                                    val darken = lerp(0.16f, 0.40f, lumNorm)
+                                    drawRect(Color.Black.copy(alpha = darken))
+                                    drawRect(Color.White.copy(alpha = if (supportsAgslRefraction) 0.16f else 0.20f))
+                                } else {
+                                    val subtleInk = lerp(0.05f, 0.09f, lumNorm)
+                                    drawRect(Color(0xFF1C1C1E).copy(alpha = subtleInk))
+                                    drawRect(Color.White.copy(alpha = 0.28f))
+                                }
                             },
                         )
                 }
@@ -297,6 +331,17 @@ fun AuraLiquidGlassTabBar(
                 )
 
                 // 3. Crisp tab icons & labels on top
+                val activeTabColor = if (!isDark && auraColors.accent.luminance() > 0.45f) {
+                    AuraLightAccent
+                } else {
+                    auraColors.accent
+                }
+                val inactiveTabColor = if (isDark) {
+                    Color.White.copy(alpha = 0.82f)
+                } else {
+                    Color(0xFF1C1C1E).copy(alpha = 0.74f)
+                }
+
                 Row(
                     modifier = Modifier
                         .matchParentSize()
@@ -307,7 +352,7 @@ fun AuraLiquidGlassTabBar(
                     tabs.forEachIndexed { position, tab ->
                         val isSelected = currentIndex == position
                         val contentColor by animateColorAsState(
-                            targetValue = if (isSelected) AuraNeonLime else Color.White.copy(alpha = 0.82f),
+                            targetValue = if (isSelected) activeTabColor else inactiveTabColor,
                             animationSpec = tween(durationMillis = 180),
                             label = "liquidTabColor",
                         )

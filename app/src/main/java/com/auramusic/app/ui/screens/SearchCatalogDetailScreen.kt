@@ -62,10 +62,7 @@ import com.auramusic.app.domain.model.YtmCommunityPlaylist
 import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
 import com.auramusic.app.ui.components.AuraTrackOptionsModal
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
 
 private val FluidEasing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 
@@ -90,6 +87,7 @@ fun SearchCatalogDetailScreen(
     onCreatePlaylist: (String, String, String) -> Unit = { _, _, _ -> },
     onRetry: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
     val pageWidth = (configuration.screenWidthDp.dp - 48.dp)
@@ -101,7 +99,7 @@ fun SearchCatalogDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
             // =========================================================================
@@ -113,9 +111,8 @@ fun SearchCatalogDetailScreen(
                     .background(
                         Brush.verticalGradient(
                             colors = listOf(
-                                Color(0xFF14161E),
-                                Color(0xFF101218).copy(alpha = 0.95f),
-                                SpotifyPitchBlack
+                                auraColors.surface,
+                                auraColors.background
                             )
                         )
                     )
@@ -135,7 +132,7 @@ fun SearchCatalogDetailScreen(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                             contentDescription = "Back",
-                            tint = Color.White,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -145,7 +142,7 @@ fun SearchCatalogDetailScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = catalogDetail.title,
-                            color = TextPrimary,
+                            color = auraColors.textPrimary,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold,
                                 letterSpacing = (-0.3).sp
@@ -159,7 +156,7 @@ fun SearchCatalogDetailScreen(
                             } else {
                                 "YouTube Music Catalog"
                             },
-                            color = TextSecondary,
+                            color = auraColors.textSecondary,
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1
                         )
@@ -210,7 +207,7 @@ fun SearchCatalogDetailScreen(
                                 ) {
                                     Text(
                                         text = "No playlists or albums available in this category.",
-                                        color = TextSecondary,
+                                        color = auraColors.textSecondary,
                                         style = MaterialTheme.typography.bodyMedium
                                     )
                                 }
@@ -306,6 +303,7 @@ private fun CatalogErrorState(
     errorMessage: String,
     onRetry: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -318,14 +316,14 @@ private fun CatalogErrorState(
         ) {
             Text(
                 text = "Could not load category",
-                color = TextPrimary,
+                color = auraColors.textPrimary,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold
             )
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 text = errorMessage,
-                color = TextSecondary,
+                color = auraColors.textSecondary,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 2
             )
@@ -333,7 +331,7 @@ private fun CatalogErrorState(
             Box(
                 modifier = Modifier
                     .clip(RoundedCornerShape(20.dp))
-                    .background(Color(0xFF232530))
+                    .background(auraColors.pillInactiveBg)
                     .clickable(onClick = onRetry)
                     .padding(horizontal = 20.dp, vertical = 10.dp)
             ) {
@@ -341,13 +339,13 @@ private fun CatalogErrorState(
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
                         contentDescription = "Retry",
-                        tint = AuraNeonLime,
+                        tint = auraColors.accent,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Retry",
-                        color = AuraNeonLime,
+                        color = auraColors.accent,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )
@@ -359,6 +357,7 @@ private fun CatalogErrorState(
 
 @Composable
 private fun CatalogDetailSkeleton() {
+    val auraColors = LocalAuraColors.current
     val transition = rememberInfiniteTransition(label = "catalogSkeleton")
     val alpha by transition.animateFloat(
         initialValue = 0.2f,
@@ -383,7 +382,7 @@ private fun CatalogDetailSkeleton() {
                     modifier = Modifier
                         .size(width = 160.dp, height = 20.dp)
                         .clip(RoundedCornerShape(6.dp))
-                        .background(Color.White.copy(alpha = alpha))
+                        .background(auraColors.textMuted.copy(alpha = alpha * 0.45f))
                 )
                 // Row of Card Placeholders
                 LazyRow(
@@ -396,13 +395,13 @@ private fun CatalogDetailSkeleton() {
                                 modifier = Modifier
                                     .size(136.dp)
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color.White.copy(alpha = alpha))
+                                    .background(auraColors.textMuted.copy(alpha = alpha * 0.45f))
                             )
                             Box(
                                 modifier = Modifier
                                     .size(width = 110.dp, height = 14.dp)
                                     .clip(RoundedCornerShape(4.dp))
-                                    .background(Color.White.copy(alpha = alpha * 0.7f))
+                                    .background(auraColors.textMuted.copy(alpha = alpha * 0.32f))
                             )
                         }
                     }
