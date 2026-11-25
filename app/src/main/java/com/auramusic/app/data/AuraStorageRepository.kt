@@ -4,208 +4,556 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.datastore.preferences.core.Preferences
+import com.auramusic.app.core.recommendations.LocalRecommendationEngine
+import com.auramusic.app.data.db.AuraDatabase
+import com.auramusic.app.data.db.LocalPlaylistEntity
+import com.auramusic.app.data.db.LyricsOffsetEntity
+import com.auramusic.app.data.db.OfflineLyricsEntity
+import com.auramusic.app.data.db.OfflinePaletteEntity
+import com.auramusic.app.data.db.PlaybackEventEntity
+import com.auramusic.app.data.db.PlaylistTrackEntity
+import com.auramusic.app.data.db.SavedQueueEntity
+import com.auramusic.app.data.db.SearchHistoryEntity
+import com.auramusic.app.data.db.SmartDownloadEntity
+import com.auramusic.app.data.db.toAuraPalette
+import com.auramusic.app.data.db.toAuraTrack
+import com.auramusic.app.data.db.toDownloadEntity
+import com.auramusic.app.data.db.toEntity
+import com.auramusic.app.data.db.toFavoriteEntity
+import com.auramusic.app.data.db.toPlaylistTrackEntity
+import com.auramusic.app.data.db.toRecentEntity
+import com.auramusic.app.data.prefs.AuraPreferencesStore
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.domain.model.ListeningStats
 import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricsData
-import com.auramusic.app.domain.model.ListeningStats
 import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.NowPlayingStyle
-import com.auramusic.app.ui.theme.isLyricsBlurSupported
-import com.auramusic.app.core.recommendations.LocalRecommendationEngine
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Calendar
 
-class AuraStorageRepository(context: Context) {
-    private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences("aura_music_storage", Context.MODE_PRIVATE)
-
-    fun loadFavorites(): List<AuraTrack> {
-        val raw = prefs.getString("favorites_json", null) ?: return emptyList()
-        return parseTrackArray(raw)
+class AuraStorageRepository @JvmOverloads constructor(
+    context: Context,
+    private val db: AuraDatabase = AuraDatabase.getInstance(context),
+    private val prefsStore: AuraPreferencesStore = AuraPreferencesStore.getInstance(context)
+) {
+    private val appContext: Context = context.applicationContext
+    private val legacyPrefs: SharedPreferences by lazy {
+        appContext.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
     }
 
-    fun saveFavorites(tracks: List<AuraTrack>) {
-        prefs.edit().putString("favorites_json", serializeTrackArray(tracks).toString()).apply()
+    init {
+        ensureMigrated()
     }
 
-    fun loadDownloads(): List<AuraTrack> {
-        val raw = prefs.getString("downloads_json", null) ?: return emptyList()
-        return parseTrackArray(raw)
+    private fun ensureMigrated() {
+        if (processMigrated) return
+        synchronized(migrationLock) {
+            if (processMigrated) return
+            if (prefsStore.getBoolean(AuraPreferencesStore.Keys.MIGRATED_TO_ROOM_V1, false)) {
+                processMigrated = true
+                return
+            }
+            runBlocking(Dispatchers.IO) {
+                migrateFromLegacySharedPreferences()
+            }
+            processMigrated = true
+        }
     }
 
-    fun saveDownloads(tracks: List<AuraTrack>) {
-        prefs.edit().putString("downloads_json", serializeTrackArray(tracks).toString()).apply()
+    private suspend fun migrateFromLegacySharedPreferences() {
+        val allLegacy = legacyPrefs.all
+        if (allLegacy.isEmpty()) {
+            prefsStore.putBoolean(AuraPreferencesStore.Keys.MIGRATED_TO_ROOM_V1, true)
+            return
+        }
+
+        val now = System.currentTimeMillis()
+
+        // 1. Favorites
+        (allLegacy["favorites_json"] as? String)?.let { raw ->
+            val tracks = parseTrackArray(raw)
+            if (tracks.isNotEmpty()) {
+                db.favoriteTrackDao().replaceAll(
+                    tracks.mapIndexed { idx, track -> track.toFavoriteEntity(idx, now) }
+                )
+            }
+        }
+
+        // 2. Downloads
+        (allLegacy["downloads_json"] as? String)?.let { raw ->
+            val tracks = parseTrackArray(raw)
+            if (tracks.isNotEmpty()) {
+                db.downloadTrackDao().replaceAll(
+                    tracks.mapIndexed { idx, track -> track.toDownloadEntity(idx, now) }
+                )
+            }
+        }
+
+        // 3. Playlists
+        (allLegacy["playlists_json"] as? String)?.let { raw ->
+            val playlists = parsePlaylistsJson(raw)
+            if (playlists.isNotEmpty()) {
+                val playlistEntities = playlists.mapIndexed { idx, pl ->
+                    LocalPlaylistEntity(
+                        id = pl.id,
+                        name = pl.name,
+                        description = pl.description,
+                        coverUrl = pl.coverUrl,
+                        isPodcast = pl.isPodcast,
+                        position = idx,
+                        updatedAtMs = now
+                    )
+                }
+                val trackEntities = playlists.flatMap { pl ->
+                    pl.tracks.mapIndexed { trackIdx, track ->
+                        track.toPlaylistTrackEntity(pl.id, trackIdx)
+                    }
+                }
+                db.playlistDao().replaceAll(playlistEntities, trackEntities)
+            }
+        }
+
+        // 4. Recently Played
+        (allLegacy["recently_played_tracks"] as? String)?.let { raw ->
+            val recent = parseTrackArray(raw)
+                .distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
+                .take(RECENT_LIMIT)
+            if (recent.isNotEmpty()) {
+                val entities = recent.mapIndexed { idx, track ->
+                    track.toRecentEntity(
+                        identityKey = recentIdentityKey(track),
+                        playedAtMs = now - idx * 1_000L
+                    )
+                }
+                db.recentTrackDao().replaceAll(entities)
+            }
+        }
+
+        // 5. Offline Lyrics
+        val lyricsEntities = allLegacy.entries.mapNotNull { (key, value) ->
+            if (!key.startsWith("offline_lyrics_")) return@mapNotNull null
+            val videoId = key.removePrefix("offline_lyrics_")
+            val raw = value as? String ?: return@mapNotNull null
+            if (videoId.isBlank()) return@mapNotNull null
+            val source = runCatching { JSONObject(raw).optString("source", "SimpMusic Offline") }
+                .getOrDefault("SimpMusic Offline")
+            OfflineLyricsEntity(
+                videoId = videoId,
+                lyricsJson = raw,
+                translatedJson = null,
+                source = source,
+                updatedAtMs = now
+            )
+        }
+        if (lyricsEntities.isNotEmpty()) {
+            db.offlineLyricsDao().upsertAll(lyricsEntities)
+        }
+
+        // 6. Offline Palettes
+        val paletteEntities = allLegacy.entries.mapNotNull { (key, value) ->
+            if (!key.startsWith("offline_palette_")) return@mapNotNull null
+            val videoId = key.removePrefix("offline_palette_")
+            val raw = value as? String ?: return@mapNotNull null
+            if (videoId.isBlank()) return@mapNotNull null
+            parsePaletteFromJson(raw)?.toEntity(videoId, now)
+        }
+        if (paletteEntities.isNotEmpty()) {
+            db.offlinePaletteDao().upsertAll(paletteEntities)
+        }
+
+        // 7. Lyrics Offsets
+        val offsetEntities = allLegacy.entries.mapNotNull { (key, value) ->
+            if (!key.startsWith("lyric_offset_")) return@mapNotNull null
+            val videoId = key.removePrefix("lyric_offset_")
+            val offsetMs = (value as? Number)?.toInt() ?: return@mapNotNull null
+            if (videoId.isBlank()) return@mapNotNull null
+            LyricsOffsetEntity(videoId = videoId, offsetMs = offsetMs.coerceIn(-120000, 120000))
+        }
+        if (offsetEntities.isNotEmpty()) {
+            db.lyricsOffsetDao().upsertAll(offsetEntities)
+        }
+
+        // 8. Listening Stats -> PlaybackEventEntity
+        migrateLegacyListeningStats(allLegacy, now)
+
+        // 9. Consolidated Spotify resolution cache + Settings -> DataStore
+        val spotResolvedJson = JSONObject()
+        allLegacy.forEach { (key, value) ->
+            if (key.startsWith("spot_res_") && value is String) {
+                spotResolvedJson.put(key, value)
+            }
+        }
+
+        val updates = mutableMapOf<Preferences.Key<*>, Any?>()
+        (allLegacy["recommendation_signals"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.RECOMMENDATION_SIGNALS] = it
+        }
+        (allLegacy["explore_cover_cache_json"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.EXPLORE_COVER_CACHE_JSON] = it
+        }
+        if (spotResolvedJson.length() > 0) {
+            updates[AuraPreferencesStore.Keys.SPOTIFY_RESOLVED_CACHE_JSON] = spotResolvedJson.toString()
+        }
+        (allLegacy["setting_app_theme_style"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.APP_THEME_STYLE] = it
+        }
+        (allLegacy["setting_liquid_glass_enabled"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.LIQUID_GLASS_ENABLED] = it
+        }
+        (allLegacy["now_playing_style"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.NOW_PLAYING_STYLE] = it
+        }
+        (allLegacy["setting_lyrics_style"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.LYRICS_STYLE] = it
+        }
+        (allLegacy["setting_audio_quality"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.AUDIO_QUALITY] = it
+        }
+        (allLegacy["setting_video_quality"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.VIDEO_QUALITY] = it
+        }
+        (allLegacy["setting_romanization_languages"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.ROMANIZATION_LANGUAGES] = it
+        }
+        (allLegacy["setting_normalize_volume"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.NORMALIZE_VOLUME] = it
+        }
+        (allLegacy["setting_skip_silence"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.SKIP_SILENCE] = it
+        }
+        (allLegacy["setting_crossfade_sec"] as? Number)?.let {
+            updates[AuraPreferencesStore.Keys.CROSSFADE_SEC] = it.toInt()
+        }
+        (allLegacy["setting_max_cache_mb"] as? Number)?.let {
+            updates[AuraPreferencesStore.Keys.MAX_CACHE_MB] = it.toInt()
+        }
+        (allLegacy["setting_eq_bands"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.EQ_BANDS] = it
+        }
+        (allLegacy["setting_eq_preamp"] as? Number)?.let {
+            updates[AuraPreferencesStore.Keys.EQ_PREAMP] = it.toFloat()
+        }
+        (allLegacy["setting_eq_preset"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.EQ_PRESET] = it
+        }
+        (allLegacy["setting_eq_enabled"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.EQ_ENABLED] = it
+        }
+        (allLegacy["setting_chart_country"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.CHART_COUNTRY] = it
+        }
+        (allLegacy["setting_auto_download_liked"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.AUTO_DOWNLOAD_LIKED] = it
+        }
+        (allLegacy["setting_play_video_for_video_track"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.PLAY_VIDEO_FOR_VIDEO_TRACK] = it
+        }
+        (allLegacy["setting_radio_audio_only"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.RADIO_AUDIO_ONLY] = it
+        }
+        (allLegacy["setting_audio_reverb_preset"] as? Number)?.let {
+            updates[AuraPreferencesStore.Keys.AUDIO_REVERB_PRESET] = it.toInt()
+        }
+        (allLegacy["setting_save_playback_state"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.SAVE_PLAYBACK_STATE] = it
+        }
+        (allLegacy["setting_saved_playback_mode"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.SAVED_PLAYBACK_MODE] = it
+        }
+        (allLegacy["setting_kill_service_on_exit"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.KILL_SERVICE_ON_EXIT] = it
+        }
+        (allLegacy["setting_sponsorblock_enabled"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.SPONSORBLOCK_ENABLED] = it
+        }
+        (allLegacy["setting_sponsorblock_categories"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.SPONSORBLOCK_CATEGORIES] = it
+        }
+        (allLegacy["setting_main_lyrics_provider"] as? String)?.let {
+            updates[AuraPreferencesStore.Keys.MAIN_LYRICS_PROVIDER] = it
+        }
+        (allLegacy["setting_default_lyrics_offset_ms"] as? Number)?.let {
+            updates[AuraPreferencesStore.Keys.DEFAULT_LYRICS_OFFSET_MS] = it.toInt()
+        }
+        (allLegacy["setting_record_listening_history"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.RECORD_LISTENING_HISTORY] = it
+        }
+        (allLegacy["setting_auto_check_updates"] as? Boolean)?.let {
+            updates[AuraPreferencesStore.Keys.AUTO_CHECK_UPDATES] = it
+        }
+        updates[AuraPreferencesStore.Keys.MIGRATED_TO_ROOM_V1] = true
+        prefsStore.editBatch(updates)
     }
 
-    fun loadPlaylists(): List<AuraPlaylist> {
-        val raw = prefs.getString("playlists_json", null) ?: return emptyList()
-        return try {
-            val arr = JSONArray(raw)
-            val list = mutableListOf<AuraPlaylist>()
-            for (i in 0 until arr.length()) {
-                val obj = arr.optJSONObject(i) ?: continue
-                val tracksArr = obj.optJSONArray("tracks") ?: JSONArray()
-                val rawDesc = obj.optString("description")
-                val cleanDesc = if (rawDesc.startsWith("Imported from Spotify", ignoreCase = true)) "" else rawDesc
-                list.add(
-                    AuraPlaylist(
-                        id = obj.optString("id"),
-                        name = obj.optString("name"),
-                        description = cleanDesc,
-                        coverUrl = obj.optString("coverUrl"),
-                        tracks = parseTrackArray(tracksArr.toString()),
-                        isPodcast = obj.optBoolean("isPodcast", false)
+    private suspend fun migrateLegacyListeningStats(allLegacy: Map<String, *>, now: Long) {
+        val totalMin = (allLegacy["stats_total_min"] as? Number)?.toInt() ?: 0
+        val totalPlays = (allLegacy["stats_tracks_played"] as? Number)?.toInt() ?: 0
+        val rawTrackPlays = allLegacy["stats_track_plays"] as? String
+
+        val events = mutableListOf<PlaybackEventEntity>()
+        if (!rawTrackPlays.isNullOrBlank()) {
+            runCatching {
+                val playedTracks = JSONObject(rawTrackPlays)
+                playedTracks.keys().forEach { videoId ->
+                    val row = playedTracks.optJSONObject(videoId) ?: return@forEach
+                    val count = row.optInt("count", 0).coerceIn(0, 1_000)
+                    if (count <= 0) return@forEach
+                    val trackJson = row.optJSONObject("track") ?: return@forEach
+                    val track = parseTrackArray(JSONArray().put(trackJson).toString()).firstOrNull()
+                        ?: return@forEach
+                    val perPlayMs = (track.durationSeconds / 60).coerceAtLeast(3) * 60_000L
+                    repeat(count) {
+                        events.add(
+                            PlaybackEventEntity(
+                                videoId = track.videoId.ifBlank { videoId },
+                                title = track.title,
+                                artist = track.artist,
+                                genre = track.genre,
+                                artworkUrl = track.artworkUrl,
+                                timestampMs = now,
+                                hourOfDay = -1, // Unknown hour for legacy aggregated counts
+                                durationPlayedMs = perPlayMs,
+                                completed = true,
+                                album = track.album,
+                                durationSeconds = track.durationSeconds
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // Preserve any legacy play/minute count not captured by stats_track_plays
+        val remainingPlays = (totalPlays - events.size).coerceAtLeast(0)
+        val migratedMin = (events.sumOf { it.durationPlayedMs } / 60_000L).toInt()
+        val remainingMin = (totalMin - migratedMin).coerceAtLeast(0)
+        if (remainingPlays > 0) {
+            val basePerPlayMin = (remainingMin / remainingPlays).coerceAtLeast(0)
+            val remainderMin = remainingMin - (basePerPlayMin * remainingPlays)
+            repeat(remainingPlays) { idx ->
+                val minutes = basePerPlayMin + if (idx == 0) remainderMin else 0
+                events.add(
+                    PlaybackEventEntity(
+                        videoId = "",
+                        title = "Migrated Play",
+                        artist = "",
+                        genre = "",
+                        artworkUrl = "",
+                        timestampMs = now,
+                        hourOfDay = -1,
+                        durationPlayedMs = minutes * 60_000L,
+                        completed = true
                     )
                 )
             }
-            list
-        } catch (e: Exception) {
-            emptyList()
+        } else if (remainingMin > 0 && events.isNotEmpty()) {
+            val first = events[0]
+            events[0] = first.copy(durationPlayedMs = first.durationPlayedMs + remainingMin * 60_000L)
+        } else if (totalMin > 0 && events.isEmpty()) {
+            events.add(
+                PlaybackEventEntity(
+                    videoId = "",
+                    title = "Migrated Listening",
+                    artist = "",
+                    genre = "",
+                    artworkUrl = "",
+                    timestampMs = now,
+                    hourOfDay = -1,
+                    durationPlayedMs = totalMin * 60_000L,
+                    completed = true
+                )
+            )
+        }
+
+        if (events.isNotEmpty()) {
+            db.playbackEventDao().insertAll(events)
+        }
+    }
+
+    fun loadFavorites(): List<AuraTrack> = runBlocking(Dispatchers.IO) {
+        db.favoriteTrackDao().getAll().map { it.toAuraTrack() }
+    }
+
+    fun saveFavorites(tracks: List<AuraTrack>) {
+        val now = System.currentTimeMillis()
+        runBlocking(Dispatchers.IO) {
+            db.favoriteTrackDao().replaceAll(
+                tracks.mapIndexed { idx, track -> track.toFavoriteEntity(idx, now) }
+            )
+        }
+    }
+
+    fun loadDownloads(): List<AuraTrack> = runBlocking(Dispatchers.IO) {
+        db.downloadTrackDao().getAll().map { it.toAuraTrack() }
+    }
+
+    fun saveDownloads(tracks: List<AuraTrack>) {
+        val now = System.currentTimeMillis()
+        runBlocking(Dispatchers.IO) {
+            db.downloadTrackDao().replaceAll(
+                tracks.mapIndexed { idx, track -> track.toDownloadEntity(idx, now) }
+            )
+        }
+    }
+
+    fun loadPlaylists(): List<AuraPlaylist> = runBlocking(Dispatchers.IO) {
+        val playlists = db.playlistDao().getAllPlaylists()
+        val tracksByPlaylist = db.playlistDao().getAllPlaylistTracks().groupBy { it.playlistId }
+        playlists.map { pl ->
+            val cleanDesc = if (pl.description.startsWith("Imported from Spotify", ignoreCase = true)) {
+                ""
+            } else {
+                pl.description
+            }
+            AuraPlaylist(
+                id = pl.id,
+                name = pl.name,
+                description = cleanDesc,
+                coverUrl = pl.coverUrl,
+                tracks = tracksByPlaylist[pl.id].orEmpty().map { it.toAuraTrack() },
+                isPodcast = pl.isPodcast
+            )
         }
     }
 
     fun savePlaylists(playlists: List<AuraPlaylist>) {
-        val arr = JSONArray()
-        playlists.forEach { pl ->
-            arr.put(JSONObject().apply {
-                put("id", pl.id)
-                put("name", pl.name)
-                put("description", pl.description)
-                put("coverUrl", pl.coverUrl)
-                put("tracks", serializeTrackArray(pl.tracks))
-                put("isPodcast", pl.isPodcast)
-            })
+        val now = System.currentTimeMillis()
+        runBlocking(Dispatchers.IO) {
+            val playlistEntities = playlists.mapIndexed { idx, pl ->
+                LocalPlaylistEntity(
+                    id = pl.id,
+                    name = pl.name,
+                    description = pl.description,
+                    coverUrl = pl.coverUrl,
+                    isPodcast = pl.isPodcast,
+                    position = idx,
+                    updatedAtMs = now
+                )
+            }
+            val trackEntities = playlists.flatMap { pl ->
+                pl.tracks.mapIndexed { idx, track ->
+                    track.toPlaylistTrackEntity(pl.id, idx)
+                }
+            }
+            db.playlistDao().replaceAll(playlistEntities, trackEntities)
         }
-        prefs.edit().putString("playlists_json", arr.toString()).apply()
     }
 
     fun getLyricsOffsetMs(videoId: String): Int {
-        return prefs.getInt("lyric_offset_$videoId", 0)
+        if (videoId.isBlank()) return 0
+        return runBlocking(Dispatchers.IO) {
+            db.lyricsOffsetDao().getOffsetMs(videoId) ?: 0
+        }
     }
 
     fun setLyricsOffsetMs(videoId: String, offsetMs: Int) {
-        prefs.edit().putInt("lyric_offset_$videoId", offsetMs.coerceIn(-120000, 120000)).apply()
+        if (videoId.isBlank()) return
+        runBlocking(Dispatchers.IO) {
+            db.lyricsOffsetDao().upsert(
+                LyricsOffsetEntity(
+                    videoId = videoId,
+                    offsetMs = offsetMs.coerceIn(-120000, 120000)
+                )
+            )
+        }
     }
 
     fun saveOfflineLyrics(videoId: String, lyrics: LyricsData) {
+        if (videoId.isBlank()) return
         try {
-            val json = JSONObject().apply {
-                put("videoId", lyrics.videoId)
-                put("plainLyrics", lyrics.plainLyrics)
-                put("source", lyrics.source)
-                put("hasRomanization", lyrics.hasRomanization)
-                val linesArr = JSONArray()
-                lyrics.syncedLines.forEach { line ->
-                    linesArr.put(JSONObject().apply {
-                        put("timeSec", line.timeSec.toDouble())
-                        put("endTimeSec", line.endTimeSec.toDouble())
-                        put("text", line.text)
-                        if (line.romanizedText != null) {
-                            put("romanizedText", line.romanizedText)
-                        }
-                    })
-                }
-                put("syncedLines", linesArr)
+            val lyricsJson = serializeLyricsData(lyrics).toString()
+            val now = System.currentTimeMillis()
+            runBlocking(Dispatchers.IO) {
+                val existing = db.offlineLyricsDao().getByVideoId(videoId)
+                db.offlineLyricsDao().upsert(
+                    OfflineLyricsEntity(
+                        videoId = videoId,
+                        lyricsJson = lyricsJson,
+                        translatedJson = existing?.translatedJson,
+                        source = lyrics.source,
+                        updatedAtMs = now
+                    )
+                )
             }
-            prefs.edit().putString("offline_lyrics_$videoId", json.toString()).apply()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Non-critical
         }
     }
 
     fun loadOfflineLyrics(videoId: String): LyricsData? {
-        val raw = prefs.getString("offline_lyrics_$videoId", null) ?: return null
-        return try {
-            val obj = JSONObject(raw)
-            val linesArr = obj.optJSONArray("syncedLines") ?: JSONArray()
-            val lines = mutableListOf<LyricLine>()
-            for (i in 0 until linesArr.length()) {
-                val lObj = linesArr.optJSONObject(i) ?: continue
-                lines.add(
-                    LyricLine(
-                        timeSec = lObj.optDouble("timeSec", 0.0).toFloat(),
-                        endTimeSec = lObj.optDouble("endTimeSec", 0.0).toFloat(),
-                        text = lObj.optString("text", ""),
-                        romanizedText = if (lObj.has("romanizedText")) lObj.getString("romanizedText") else null
+        if (videoId.isBlank()) return null
+        val entity = runBlocking(Dispatchers.IO) {
+            db.offlineLyricsDao().getByVideoId(videoId)
+        } ?: return null
+        return parseLyricsData(entity.lyricsJson, videoId)
+    }
+
+    fun saveTranslatedLyrics(videoId: String, lyrics: LyricsData) {
+        if (videoId.isBlank()) return
+        try {
+            val translatedJson = serializeLyricsData(lyrics).toString()
+            val now = System.currentTimeMillis()
+            runBlocking(Dispatchers.IO) {
+                val existing = db.offlineLyricsDao().getByVideoId(videoId)
+                if (existing != null) {
+                    db.offlineLyricsDao().updateTranslation(videoId, translatedJson, now)
+                } else {
+                    db.offlineLyricsDao().upsert(
+                        OfflineLyricsEntity(
+                            videoId = videoId,
+                            lyricsJson = translatedJson,
+                            translatedJson = translatedJson,
+                            source = lyrics.source,
+                            updatedAtMs = now
+                        )
                     )
-                )
+                }
             }
-            LyricsData(
-                videoId = obj.optString("videoId", videoId),
-                plainLyrics = obj.optString("plainLyrics", ""),
-                syncedLines = lines,
-                source = obj.optString("source", "SimpMusic Offline"),
-                hasRomanization = obj.optBoolean("hasRomanization", false)
-            )
-        } catch (e: Exception) {
-            null
+        } catch (_: Exception) {
+            // Non-critical
         }
     }
 
+    fun loadTranslatedLyrics(videoId: String): LyricsData? {
+        if (videoId.isBlank()) return null
+        val entity = runBlocking(Dispatchers.IO) {
+            db.offlineLyricsDao().getByVideoId(videoId)
+        } ?: return null
+        val raw = entity.translatedJson ?: return null
+        return parseLyricsData(raw, videoId)
+    }
+
     fun saveOfflinePalette(videoId: String, palette: AuraPalette) {
+        if (videoId.isBlank()) return
         try {
-            val json = JSONObject().apply {
-                put("primary", palette.primary.toArgb())
-                put("secondary", palette.secondary.toArgb())
-                put("backgroundTop", palette.backgroundTop.toArgb())
-                put("backgroundBottom", palette.backgroundBottom.toArgb())
-                put("surfaceGlass", palette.surfaceGlass.toArgb())
-                put("appleMusicBackdrop", palette.appleMusicBackdrop.toArgb())
+            val entity = palette.toEntity(videoId, System.currentTimeMillis())
+            runBlocking(Dispatchers.IO) {
+                db.offlinePaletteDao().upsert(entity)
             }
-            prefs.edit().putString("offline_palette_$videoId", json.toString()).apply()
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Non-critical
         }
     }
 
     fun loadOfflinePalette(videoId: String): AuraPalette? {
-        val raw = prefs.getString("offline_palette_$videoId", null) ?: return null
-        return try {
-            val obj = JSONObject(raw)
-            val primaryColor = Color(obj.getInt("primary"))
-            AuraPalette(
-                primary = primaryColor,
-                secondary = Color(obj.getInt("secondary")),
-                backgroundTop = Color(obj.getInt("backgroundTop")),
-                backgroundBottom = Color(obj.getInt("backgroundBottom")),
-                surfaceGlass = Color(obj.getInt("surfaceGlass")),
-                appleMusicBackdrop = if (obj.has("appleMusicBackdrop")) {
-                    Color(obj.getInt("appleMusicBackdrop"))
-                } else {
-                    primaryColor
-                }
-            )
-        } catch (e: Exception) {
-            null
+        if (videoId.isBlank()) return null
+        return runBlocking(Dispatchers.IO) {
+            db.offlinePaletteDao().getByVideoId(videoId)?.toAuraPalette()
         }
     }
 
-    fun loadAppThemeStyle(): AppThemeStyle {
-        val saved = prefs.getString("setting_app_theme_style", null)
-        if (saved != null) {
-            return AppThemeStyle.entries.firstOrNull { it.name == saved } ?: AppThemeStyle.LIQUID_GLASS
-        }
-        val legacyStyle = prefs.getString("now_playing_style", null)
-        val legacyGlass = if (prefs.contains("setting_liquid_glass_enabled")) {
-            prefs.getBoolean("setting_liquid_glass_enabled", true)
-        } else null
-        return when {
-            legacyStyle == NowPlayingStyle.SPOTIFY.name && legacyGlass == false -> AppThemeStyle.DEFAULT
-            else -> AppThemeStyle.LIQUID_GLASS
-        }
-    }
+    fun loadAppThemeStyle(): AppThemeStyle = prefsStore.appThemeStyle.value
 
     fun saveAppThemeStyle(style: AppThemeStyle) {
-        val isGlass = style == AppThemeStyle.LIQUID_GLASS
-        prefs.edit()
-            .putString("setting_app_theme_style", style.name)
-            .putBoolean("setting_liquid_glass_enabled", isGlass)
-            .putString("now_playing_style", if (isGlass) NowPlayingStyle.LIQUID_GLASS.name else NowPlayingStyle.SPOTIFY.name)
-            .putString("setting_lyrics_style", if (isGlass) LyricsStyle.APPLE_MUSIC.name else LyricsStyle.CLASSIC.name)
-            .apply()
+        prefsStore.editBatch(appThemeStyleUpdates(style))
     }
 
     fun loadNowPlayingStyle(): NowPlayingStyle =
@@ -230,39 +578,36 @@ class AuraStorageRepository(context: Context) {
     }
 
     fun recordRecentlyPlayed(track: AuraTrack) {
-        val current = loadRecentlyPlayed().toMutableList()
-        val targetId = track.videoId.ifBlank { track.id }
-        val targetKey = LocalRecommendationEngine.songIdentityKey(track)
-        current.removeAll {
-            (targetId.isNotBlank() && (it.videoId == targetId || it.id == targetId)) ||
-            it.videoId == track.videoId ||
-            (it.videoId.isBlank() && it.id == track.id) ||
-            (targetKey.isNotBlank() && LocalRecommendationEngine.songIdentityKey(it) == targetKey)
+        val now = System.currentTimeMillis()
+        val key = recentIdentityKey(track)
+        runBlocking(Dispatchers.IO) {
+            db.recentTrackDao().deleteMatching(
+                videoId = track.videoId.ifBlank { track.id },
+                identityKey = key
+            )
+            db.recentTrackDao().upsert(track.toRecentEntity(key, now))
+            db.recentTrackDao().trimToLimit(RECENT_LIMIT)
         }
-        current.add(0, track)
-        val capped = current.distinctBy { LocalRecommendationEngine.songIdentityKey(it) }.take(30)
-        prefs.edit().putString("recently_played_tracks", serializeTrackArray(capped).toString()).apply()
     }
 
     fun removeRecentlyPlayed(videoId: String, trackKey: String? = null) {
-        val current = loadRecentlyPlayed().toMutableList()
-        current.removeAll {
-            it.videoId == videoId ||
-            it.id == videoId ||
-            (trackKey != null && LocalRecommendationEngine.songIdentityKey(it) == trackKey)
+        runBlocking(Dispatchers.IO) {
+            db.recentTrackDao().deleteMatching(videoId = videoId, identityKey = trackKey)
         }
-        prefs.edit().putString("recently_played_tracks", serializeTrackArray(current).toString()).apply()
     }
 
-    fun loadRecentlyPlayed(): List<AuraTrack> {
-        val raw = prefs.getString("recently_played_tracks", null) ?: return emptyList()
-        return parseTrackArray(raw).distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
+    fun loadRecentlyPlayed(): List<AuraTrack> = runBlocking(Dispatchers.IO) {
+        db.recentTrackDao().getRecent(RECENT_LIMIT)
+            .map { it.toAuraTrack() }
+            .distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
     }
 
     fun recordRecommendationSignal(track: AuraTrack, signal: String) {
         if (track.videoId.isBlank()) return
         runCatching {
-            val all = JSONObject(prefs.getString("recommendation_signals", "{}") ?: "{}")
+            val all = JSONObject(
+                prefsStore.getString(AuraPreferencesStore.Keys.RECOMMENDATION_SIGNALS, "{}") ?: "{}"
+            )
             val row = all.optJSONObject(track.videoId) ?: JSONObject()
             val key = when (signal) {
                 "play" -> "plays"
@@ -272,12 +617,14 @@ class AuraStorageRepository(context: Context) {
             }
             row.put(key, row.optInt(key, 0) + 1)
             all.put(track.videoId, row)
-            prefs.edit().putString("recommendation_signals", all.toString()).apply()
+            prefsStore.putString(AuraPreferencesStore.Keys.RECOMMENDATION_SIGNALS, all.toString())
         }
     }
 
     fun loadRecommendationInteractionScores(): Map<String, Float> = runCatching {
-        val all = JSONObject(prefs.getString("recommendation_signals", "{}") ?: "{}")
+        val all = JSONObject(
+            prefsStore.getString(AuraPreferencesStore.Keys.RECOMMENDATION_SIGNALS, "{}") ?: "{}"
+        )
         all.keys().asSequence().mapNotNull { videoId ->
             val row = all.optJSONObject(videoId) ?: return@mapNotNull null
             val score = row.optInt("plays") * 0.45f +
@@ -287,137 +634,165 @@ class AuraStorageRepository(context: Context) {
         }.toMap()
     }.getOrDefault(emptyMap())
 
+    fun recordPlaybackEvent(track: AuraTrack, durationPlayedMs: Long, completed: Boolean) {
+        val now = System.currentTimeMillis()
+        val hourOfDay = Calendar.getInstance().apply { timeInMillis = now }.get(Calendar.HOUR_OF_DAY)
+        val safeDurationMs = durationPlayedMs.coerceAtLeast(0L)
+        runBlocking(Dispatchers.IO) {
+            db.playbackEventDao().insert(
+                PlaybackEventEntity(
+                    videoId = track.videoId,
+                    title = track.title,
+                    artist = track.artist,
+                    genre = track.genre,
+                    artworkUrl = track.artworkUrl,
+                    timestampMs = now,
+                    hourOfDay = hourOfDay,
+                    durationPlayedMs = safeDurationMs,
+                    completed = completed,
+                    album = track.album,
+                    durationSeconds = track.durationSeconds
+                )
+            )
+        }
+    }
+
+    fun queryPlaybackEventsSince(sinceMs: Long): List<PlaybackEventEntity> = runBlocking(Dispatchers.IO) {
+        db.playbackEventDao().querySince(sinceMs)
+    }
+
     fun recordTrackPlay(track: AuraTrack): ListeningStats {
         recordRecentlyPlayed(track)
-        val totalMin = prefs.getInt("stats_total_min", 0) + (track.durationSeconds / 60).coerceAtLeast(3)
-        val totalPlays = prefs.getInt("stats_tracks_played", 0) + 1
-        prefs.edit()
-            .putInt("stats_total_min", totalMin)
-            .putInt("stats_tracks_played", totalPlays)
-            .apply()
-
-        if (track.videoId.isNotBlank()) {
-            val playedTracks = JSONObject(prefs.getString("stats_track_plays", "{}") ?: "{}")
-            val row = playedTracks.optJSONObject(track.videoId) ?: JSONObject()
-            row.put("count", row.optInt("count", 0) + 1)
-            row.put("track", serializeTrackArray(listOf(track)).optJSONObject(0))
-            playedTracks.put(track.videoId, row)
-            prefs.edit().putString("stats_track_plays", playedTracks.toString()).apply()
-        }
-
-        val artistsJson = JSONObject(prefs.getString("stats_artists", "{}") ?: "{}")
-        val cleanArtist = track.artist.split(",", "ft.").firstOrNull()?.trim() ?: track.artist
-        artistsJson.put(cleanArtist, artistsJson.optInt(cleanArtist, 0) + 1)
-        prefs.edit().putString("stats_artists", artistsJson.toString()).apply()
-
-        val genresJson = JSONObject(prefs.getString("stats_genres", "{}") ?: "{}")
-        genresJson.put(track.genre, genresJson.optInt(track.genre, 0) + 1)
-        prefs.edit().putString("stats_genres", genresJson.toString()).apply()
-
+        val estimatedPlayMs = (track.durationSeconds / 60).coerceAtLeast(3) * 60_000L
+        recordPlaybackEvent(track, durationPlayedMs = estimatedPlayMs, completed = true)
         return loadListeningStats()
     }
 
-    fun loadListeningStats(): ListeningStats {
-        val totalMin = prefs.getInt("stats_total_min", 0)
-        val totalPlays = prefs.getInt("stats_tracks_played", 0)
+    fun loadListeningStats(): ListeningStats = runBlocking(Dispatchers.IO) {
+        val dao = db.playbackEventDao()
+        val totalMinutes = (dao.getTotalDurationPlayedMs() / 60_000L).toInt()
+        val tracksPlayed = dao.getEventCount()
 
-        val artistsJson = JSONObject(prefs.getString("stats_artists", "{}") ?: "{}")
-        val topArtists = artistsJson.keys().asSequence()
-            .map { it to artistsJson.optInt(it, 1) }
-            .sortedByDescending { it.second }
+        val artistCounts = LinkedHashMap<String, Int>()
+        dao.getTopArtists(limit = 50).forEach { row ->
+            val cleanArtist = row.name.split(",", "ft.").firstOrNull()?.trim().orEmpty()
+            if (cleanArtist.isNotBlank()) {
+                artistCounts[cleanArtist] = (artistCounts[cleanArtist] ?: 0) + row.playCount
+            }
+        }
+        val topArtists = artistCounts.entries
+            .sortedByDescending { it.value }
             .take(5)
-            .toList()
+            .map { it.key to it.value }
 
-        val genresJson = JSONObject(prefs.getString("stats_genres", "{}") ?: "{}")
-        val topGenres = genresJson.keys().asSequence()
-            .map { it to genresJson.optInt(it, 1) }
-            .sortedByDescending { it.second }
-            .take(4)
-            .toList()
+        val topGenres = dao.getTopGenres(limit = 4)
+            .map { it.name to it.playCount }
 
-        val topTracks = runCatching {
-            val playedTracks = JSONObject(prefs.getString("stats_track_plays", "{}") ?: "{}")
-            playedTracks.keys().asSequence().mapNotNull { videoId ->
-                val row = playedTracks.optJSONObject(videoId) ?: return@mapNotNull null
-                val count = row.optInt("count", 0)
-                if (count <= 0) return@mapNotNull null
-                val trackJson = row.optJSONObject("track") ?: return@mapNotNull null
-                val track = parseTrackArray(JSONArray().put(trackJson).toString()).firstOrNull()
-                    ?: return@mapNotNull null
-                track to count
-            }.sortedByDescending { it.second }.take(3).toList()
-        }.getOrDefault(emptyList())
+        val topTracks = dao.getTopTracks(limit = 3).map { row ->
+            AuraTrack(
+                id = if (row.videoId.isNotBlank()) "yt_${row.videoId}" else "track_${row.title.hashCode()}",
+                videoId = row.videoId,
+                title = row.title,
+                artist = row.artist,
+                album = row.album,
+                durationSeconds = row.durationSeconds,
+                artworkUrl = row.artworkUrl,
+                genre = row.genre
+            ) to row.playCount
+        }
 
-        return ListeningStats(
-            totalMinutes = totalMin,
-            tracksPlayed = totalPlays,
+        val hourly = dao.getHourlyDistribution()
+        val peakHourLabel = if (hourly.isNotEmpty()) {
+            val peakHour = hourly.first().hourOfDay
+            "${formatHourLabel(peakHour)} – ${formatHourLabel((peakHour + 1) % 24)}"
+        } else {
+            "Not enough data"
+        }
+
+        ListeningStats(
+            totalMinutes = totalMinutes,
+            tracksPlayed = tracksPlayed,
             topArtists = topArtists,
             topGenres = topGenres,
             topTracks = topTracks,
-            peakHourLabel = "10:00 PM – 1:00 AM"
+            peakHourLabel = peakHourLabel
         )
     }
 
-    private fun serializeTrackArray(tracks: List<AuraTrack>): JSONArray {
-        val arr = JSONArray()
-        tracks.forEach { t ->
-            arr.put(JSONObject().apply {
-                put("id", t.id)
-                put("videoId", t.videoId)
-                put("title", t.title)
-                put("artist", t.artist)
-                put("album", t.album)
-                put("durationSeconds", t.durationSeconds)
-                put("artworkUrl", t.artworkUrl)
-                put("genre", t.genre)
-                put("source", t.source)
-                put("isDownloaded", t.isDownloaded)
-                put("localFilePath", t.localFilePath ?: "")
-                put("isPodcast", t.isPodcast)
-                t.musicVideoType?.let { put("musicVideoType", it) }
-                t.viewCount?.let { put("viewCount", it) }
-            })
-        }
-        return arr
-    }
-
-    private fun parseTrackArray(rawJson: String): List<AuraTrack> {
-        return try {
-            val arr = JSONArray(rawJson)
-            val out = mutableListOf<AuraTrack>()
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i) ?: continue
-                val vid = o.optString("videoId")
-                val title = o.optString("title", "Unknown Track")
-                if (title.isBlank() && vid.isBlank()) continue
-                val trackId = o.optString("id", if (vid.isNotBlank()) "yt_$vid" else "spot_${System.currentTimeMillis()}_$i")
-                out.add(
-                    AuraTrack(
-                        id = trackId,
-                        videoId = vid,
-                        title = title,
-                        artist = o.optString("artist", "Unknown Artist"),
-                        album = o.optString("album", "YouTube Music"),
-                        durationSeconds = o.optInt("durationSeconds", 210),
-                        artworkUrl = o.optString("artworkUrl"),
-                        source = o.optString("source", if (vid.startsWith("spotify_pending")) "spotify" else "youtube"),
-                        genre = o.optString("genre", "Pop"),
-                        isDownloaded = o.optBoolean("isDownloaded", false),
-                        localFilePath = o.optString("localFilePath").takeIf { it.isNotBlank() },
-                        isPodcast = o.optBoolean("isPodcast", false),
-                        musicVideoType = o.optString("musicVideoType").takeIf { it.isNotBlank() },
-                        viewCount = if (o.has("viewCount")) o.optLong("viewCount") else null
-                    )
+    fun savePlaybackQueue(tracks: List<AuraTrack>) {
+        runBlocking(Dispatchers.IO) {
+            val entities = tracks.mapIndexed { idx, track ->
+                SavedQueueEntity(
+                    position = idx,
+                    trackJson = serializeTrackArray(listOf(track)).optJSONObject(0)?.toString() ?: "{}"
                 )
             }
-            out
-        } catch (e: Exception) {
-            emptyList()
+            db.savedQueueDao().replaceAll(entities)
+        }
+    }
+
+    fun loadPlaybackQueue(): List<AuraTrack> = runBlocking(Dispatchers.IO) {
+        val rows = db.savedQueueDao().getAll()
+        if (rows.isEmpty()) return@runBlocking emptyList()
+        val arr = JSONArray()
+        rows.forEach { row ->
+            runCatching { JSONObject(row.trackJson) }.getOrNull()?.let { arr.put(it) }
+        }
+        parseTrackArray(arr.toString())
+    }
+
+    fun saveSearchHistory(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isBlank()) return
+        val now = System.currentTimeMillis()
+        runBlocking(Dispatchers.IO) {
+            db.searchHistoryDao().upsert(SearchHistoryEntity(query = trimmed, timestampMs = now))
+        }
+    }
+
+    fun loadSearchHistory(limit: Int = 30): List<String> = runBlocking(Dispatchers.IO) {
+        db.searchHistoryDao().getRecent(limit).map { it.query }
+    }
+
+    fun removeSearchHistory(query: String) {
+        runBlocking(Dispatchers.IO) {
+            db.searchHistoryDao().deleteByQuery(query)
+        }
+    }
+
+    fun clearSearchHistory() {
+        runBlocking(Dispatchers.IO) {
+            db.searchHistoryDao().clearAll()
+        }
+    }
+
+    fun saveSmartDownload(videoId: String, isSmartDownload: Boolean) {
+        if (videoId.isBlank()) return
+        val now = System.currentTimeMillis()
+        runBlocking(Dispatchers.IO) {
+            db.smartDownloadDao().upsert(
+                SmartDownloadEntity(
+                    videoId = videoId,
+                    downloadedAtMs = now,
+                    isSmartDownload = isSmartDownload
+                )
+            )
+        }
+    }
+
+    fun loadSmartDownloads(): List<SmartDownloadEntity> = runBlocking(Dispatchers.IO) {
+        db.smartDownloadDao().getAll()
+    }
+
+    fun removeSmartDownload(videoId: String) {
+        if (videoId.isBlank()) return
+        runBlocking(Dispatchers.IO) {
+            db.smartDownloadDao().deleteByVideoId(videoId)
         }
     }
 
     fun cacheSpotifyResolvedTrack(title: String, artist: String, track: AuraTrack) {
-        val cleanKey = "spot_res_" + "${title.trim().lowercase()}_${artist.trim().lowercase()}".replace(Regex("[^a-z0-9_]"), "_")
+        val cleanKey = spotifyCacheKey(title, artist)
         val obj = JSONObject().apply {
             put("id", track.id)
             put("videoId", track.videoId)
@@ -428,12 +803,20 @@ class AuraStorageRepository(context: Context) {
             put("artworkUrl", track.artworkUrl)
             put("source", track.source)
         }
-        prefs.edit().putString(cleanKey, obj.toString()).apply()
+        runCatching {
+            val mapJson = JSONObject(
+                prefsStore.getString(AuraPreferencesStore.Keys.SPOTIFY_RESOLVED_CACHE_JSON, "{}") ?: "{}"
+            )
+            mapJson.put(cleanKey, obj.toString())
+            prefsStore.putString(AuraPreferencesStore.Keys.SPOTIFY_RESOLVED_CACHE_JSON, mapJson.toString())
+        }
     }
 
     fun getCachedSpotifyResolvedTrack(title: String, artist: String): AuraTrack? {
-        val cleanKey = "spot_res_" + "${title.trim().lowercase()}_${artist.trim().lowercase()}".replace(Regex("[^a-z0-9_]"), "_")
-        val raw = prefs.getString(cleanKey, null) ?: return null
+        val cleanKey = spotifyCacheKey(title, artist)
+        val rawMap = prefsStore.getString(AuraPreferencesStore.Keys.SPOTIFY_RESOLVED_CACHE_JSON, "{}") ?: "{}"
+        val raw = runCatching { JSONObject(rawMap).optString(cleanKey, "") }.getOrDefault("")
+            .ifBlank { legacyPrefs.getString(cleanKey, null) ?: return null }
         return try {
             val o = JSONObject(raw)
             val vid = o.optString("videoId")
@@ -454,162 +837,224 @@ class AuraStorageRepository(context: Context) {
     }
 
     // --- SimpMusic Settings & Fidelity Persistence ---
-    fun loadAudioQuality(): String = prefs.getString("setting_audio_quality", "Auto") ?: "Auto"
+    fun loadAudioQuality(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.AUDIO_QUALITY, "Auto") ?: "Auto"
+
     fun saveAudioQuality(quality: String) {
-        prefs.edit().putString("setting_audio_quality", quality).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.AUDIO_QUALITY, quality)
     }
 
-    fun loadVideoQuality(): String = prefs.getString("setting_video_quality", "Auto (1080p)") ?: "Auto (1080p)"
+    fun loadVideoQuality(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.VIDEO_QUALITY, "Auto (1080p)") ?: "Auto (1080p)"
+
     fun saveVideoQuality(quality: String) {
-        prefs.edit().putString("setting_video_quality", quality).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.VIDEO_QUALITY, quality)
     }
 
     fun loadRomanizationLanguages(): Set<String> {
-        val raw = prefs.getString("setting_romanization_languages", null)
+        val raw = prefsStore.getString(AuraPreferencesStore.Keys.ROMANIZATION_LANGUAGES, null)
         return raw?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet()
             ?: setOf("Japanese", "Korean", "Chinese")
     }
+
     fun saveRomanizationLanguages(languages: Set<String>) {
-        prefs.edit().putString("setting_romanization_languages", languages.joinToString(",")).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.ROMANIZATION_LANGUAGES, languages.joinToString(","))
     }
 
-    fun loadNormalizeVolume(): Boolean = prefs.getBoolean("setting_normalize_volume", true)
+    fun loadNormalizeVolume(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.NORMALIZE_VOLUME, true)
+
     fun saveNormalizeVolume(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_normalize_volume", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.NORMALIZE_VOLUME, enabled)
     }
 
-    fun loadSkipSilence(): Boolean = prefs.getBoolean("setting_skip_silence", false)
+    fun loadSkipSilence(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.SKIP_SILENCE, false)
+
     fun saveSkipSilence(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_skip_silence", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.SKIP_SILENCE, enabled)
     }
 
-    fun loadCrossfadeDuration(): Int = prefs.getInt("setting_crossfade_sec", 0)
+    fun loadCrossfadeDuration(): Int =
+        prefsStore.getInt(AuraPreferencesStore.Keys.CROSSFADE_SEC, 0)
+
     fun saveCrossfadeDuration(sec: Int) {
-        prefs.edit().putInt("setting_crossfade_sec", sec).apply()
+        prefsStore.putInt(AuraPreferencesStore.Keys.CROSSFADE_SEC, sec)
     }
 
-    fun loadMaxCacheSize(): Int = prefs.getInt("setting_max_cache_mb", 1024)
+    fun loadMaxCacheSize(): Int =
+        prefsStore.getInt(AuraPreferencesStore.Keys.MAX_CACHE_MB, 1024)
+
     fun saveMaxCacheSize(sizeMb: Int) {
-        prefs.edit().putInt("setting_max_cache_mb", sizeMb).apply()
+        prefsStore.putInt(AuraPreferencesStore.Keys.MAX_CACHE_MB, sizeMb)
     }
 
     fun loadEqualizerBands(): List<Float> {
-        val raw = prefs.getString("setting_eq_bands", null) ?: return listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
+        val raw = prefsStore.getString(AuraPreferencesStore.Keys.EQ_BANDS, null)
+            ?: return listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
         return raw.split(",").mapNotNull { it.toFloatOrNull() }.takeIf { it.size == 10 }
             ?: listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f)
     }
+
     fun saveEqualizerBands(bands: List<Float>) {
-        prefs.edit().putString("setting_eq_bands", bands.joinToString(",")).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.EQ_BANDS, bands.joinToString(","))
     }
 
-    fun loadEqualizerPreamp(): Float = prefs.getFloat("setting_eq_preamp", 0f)
+    fun loadEqualizerPreamp(): Float =
+        prefsStore.getFloat(AuraPreferencesStore.Keys.EQ_PREAMP, 0f)
+
     fun saveEqualizerPreamp(preampDb: Float) {
-        prefs.edit().putFloat("setting_eq_preamp", preampDb).apply()
+        prefsStore.putFloat(AuraPreferencesStore.Keys.EQ_PREAMP, preampDb)
     }
 
-    fun loadEqualizerPreset(): String = prefs.getString("setting_eq_preset", "Flat") ?: "Flat"
+    fun loadEqualizerPreset(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.EQ_PRESET, "Flat") ?: "Flat"
+
     fun saveEqualizerPreset(name: String) {
-        prefs.edit().putString("setting_eq_preset", name).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.EQ_PRESET, name)
     }
 
-    fun loadEqualizerEnabled(): Boolean = prefs.getBoolean("setting_eq_enabled", false)
+    fun loadEqualizerEnabled(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.EQ_ENABLED, false)
+
     fun saveEqualizerEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_eq_enabled", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.EQ_ENABLED, enabled)
     }
 
-    fun loadChartCountry(): String = prefs.getString("setting_chart_country", "US") ?: "US"
+    fun loadChartCountry(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.CHART_COUNTRY, "US") ?: "US"
+
     fun saveChartCountry(code: String) {
-        prefs.edit().putString("setting_chart_country", code).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.CHART_COUNTRY, code)
     }
 
-    fun loadAutoDownloadLikedSongs(): Boolean = prefs.getBoolean("setting_auto_download_liked", false)
+    fun loadAutoDownloadLikedSongs(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.AUTO_DOWNLOAD_LIKED, false)
+
     fun saveAutoDownloadLikedSongs(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_auto_download_liked", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.AUTO_DOWNLOAD_LIKED, enabled)
     }
 
-    fun loadPlayVideoForVideoTrack(): Boolean = prefs.getBoolean("setting_play_video_for_video_track", false)
+    fun loadPlayVideoForVideoTrack(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.PLAY_VIDEO_FOR_VIDEO_TRACK, false)
+
     fun savePlayVideoForVideoTrack(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_play_video_for_video_track", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.PLAY_VIDEO_FOR_VIDEO_TRACK, enabled)
     }
 
-    fun loadRadioAudioOnly(): Boolean = prefs.getBoolean("setting_radio_audio_only", true)
+    fun loadRadioAudioOnly(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.RADIO_AUDIO_ONLY, true)
+
     fun saveRadioAudioOnly(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_radio_audio_only", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.RADIO_AUDIO_ONLY, enabled)
     }
 
-    fun loadAudioReverbPreset(): Int = prefs.getInt("setting_audio_reverb_preset", 0)
+    fun loadAudioReverbPreset(): Int =
+        prefsStore.getInt(AuraPreferencesStore.Keys.AUDIO_REVERB_PRESET, 0)
+
     fun saveAudioReverbPreset(preset: Int) {
-        prefs.edit().putInt("setting_audio_reverb_preset", preset).apply()
+        prefsStore.putInt(AuraPreferencesStore.Keys.AUDIO_REVERB_PRESET, preset)
     }
 
-    fun loadSavePlaybackState(): Boolean = prefs.getBoolean("setting_save_playback_state", true)
+    fun loadSavePlaybackState(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.SAVE_PLAYBACK_STATE, true)
+
     fun saveSavePlaybackState(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_save_playback_state", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.SAVE_PLAYBACK_STATE, enabled)
     }
 
-    fun loadSavedPlaybackMode(): String = prefs.getString("setting_saved_playback_mode", "NORMAL") ?: "NORMAL"
+    fun loadSavedPlaybackMode(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.SAVED_PLAYBACK_MODE, "NORMAL") ?: "NORMAL"
+
     fun saveSavedPlaybackMode(mode: String) {
-        prefs.edit().putString("setting_saved_playback_mode", mode).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.SAVED_PLAYBACK_MODE, mode)
     }
 
-    fun loadKillServiceOnExit(): Boolean = prefs.getBoolean("setting_kill_service_on_exit", false)
+    fun loadKillServiceOnExit(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.KILL_SERVICE_ON_EXIT, false)
+
     fun saveKillServiceOnExit(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_kill_service_on_exit", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.KILL_SERVICE_ON_EXIT, enabled)
     }
 
-    fun loadSponsorBlockEnabled(): Boolean = prefs.getBoolean("setting_sponsorblock_enabled", true)
+    fun loadSponsorBlockEnabled(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.SPONSORBLOCK_ENABLED, true)
+
     fun saveSponsorBlockEnabled(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_sponsorblock_enabled", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.SPONSORBLOCK_ENABLED, enabled)
     }
 
     fun loadSponsorBlockCategories(): Set<String> {
-        val raw = prefs.getString("setting_sponsorblock_categories", null)
+        val raw = prefsStore.getString(AuraPreferencesStore.Keys.SPONSORBLOCK_CATEGORIES, null)
         return raw?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet()
             ?: setOf("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
     }
+
     fun saveSponsorBlockCategories(categories: Set<String>) {
-        prefs.edit().putString("setting_sponsorblock_categories", categories.joinToString(",")).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.SPONSORBLOCK_CATEGORIES, categories.joinToString(","))
     }
 
-    fun loadMainLyricsProvider(): String = prefs.getString("setting_main_lyrics_provider", "SimpMusic") ?: "SimpMusic"
+    fun loadMainLyricsProvider(): String =
+        prefsStore.getString(AuraPreferencesStore.Keys.MAIN_LYRICS_PROVIDER, "SimpMusic") ?: "SimpMusic"
+
     fun saveMainLyricsProvider(provider: String) {
-        prefs.edit().putString("setting_main_lyrics_provider", provider).apply()
+        prefsStore.putString(AuraPreferencesStore.Keys.MAIN_LYRICS_PROVIDER, provider)
     }
 
-    fun loadDefaultLyricsOffsetMs(): Int = prefs.getInt("setting_default_lyrics_offset_ms", 0)
+    fun loadDefaultLyricsOffsetMs(): Int =
+        prefsStore.getInt(AuraPreferencesStore.Keys.DEFAULT_LYRICS_OFFSET_MS, 0)
+
     fun saveDefaultLyricsOffsetMs(offsetMs: Int) {
-        prefs.edit().putInt("setting_default_lyrics_offset_ms", offsetMs.coerceIn(-10000, 10000)).apply()
+        prefsStore.putInt(
+            AuraPreferencesStore.Keys.DEFAULT_LYRICS_OFFSET_MS,
+            offsetMs.coerceIn(-10000, 10000)
+        )
     }
 
-    fun loadRecordListeningHistory(): Boolean = prefs.getBoolean("setting_record_listening_history", true)
+    fun loadRecordListeningHistory(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.RECORD_LISTENING_HISTORY, true)
+
     fun saveRecordListeningHistory(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_record_listening_history", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.RECORD_LISTENING_HISTORY, enabled)
     }
 
     fun clearListeningHistory() {
-        prefs.edit()
-            .remove("recently_played_tracks")
-            .remove("stats_total_min")
-            .remove("stats_tracks_played")
-            .remove("stats_track_plays")
-            .remove("stats_artists")
-            .remove("stats_genres")
-            .remove("recommendation_signals")
-            .apply()
+        runBlocking(Dispatchers.IO) {
+            db.recentTrackDao().clearAll()
+            db.playbackEventDao().clearAll()
+        }
+        prefsStore.remove(AuraPreferencesStore.Keys.RECOMMENDATION_SIGNALS)
     }
 
-    fun loadAutoCheckUpdates(): Boolean = prefs.getBoolean("setting_auto_check_updates", true)
+    fun loadAutoCheckUpdates(): Boolean =
+        prefsStore.getBoolean(AuraPreferencesStore.Keys.AUTO_CHECK_UPDATES, true)
+
     fun saveAutoCheckUpdates(enabled: Boolean) {
-        prefs.edit().putBoolean("setting_auto_check_updates", enabled).apply()
+        prefsStore.putBoolean(AuraPreferencesStore.Keys.AUTO_CHECK_UPDATES, enabled)
     }
 
     fun exportBackupJson(): String {
+        val favoritesArr = serializeTrackArray(loadFavorites())
+        val playlistsArr = JSONArray().apply {
+            loadPlaylists().forEach { pl ->
+                put(JSONObject().apply {
+                    put("id", pl.id)
+                    put("name", pl.name)
+                    put("description", pl.description)
+                    put("coverUrl", pl.coverUrl)
+                    put("tracks", serializeTrackArray(pl.tracks))
+                    put("isPodcast", pl.isPodcast)
+                })
+            }
+        }
+        val recentlyPlayedArr = serializeTrackArray(loadRecentlyPlayed())
+
         val root = JSONObject().apply {
             put("version", 1)
             put("exportedAt", System.currentTimeMillis())
-            put("favorites", JSONArray(prefs.getString("favorites_json", "[]") ?: "[]"))
-            put("playlists", JSONArray(prefs.getString("playlists_json", "[]") ?: "[]"))
-            put("recentlyPlayed", JSONArray(prefs.getString("recently_played_tracks", "[]") ?: "[]"))
+            put("favorites", favoritesArr)
+            put("playlists", playlistsArr)
+            put("recentlyPlayed", recentlyPlayedArr)
             put("settings", JSONObject().apply {
                 put("appThemeStyle", loadAppThemeStyle().name)
                 put("chartCountry", loadChartCountry())
@@ -644,46 +1089,61 @@ class AuraStorageRepository(context: Context) {
     fun importBackupJson(rawJson: String): Boolean {
         return try {
             val root = JSONObject(rawJson)
-            val editor = prefs.edit()
-            root.optJSONArray("favorites")?.let { editor.putString("favorites_json", it.toString()) }
-            root.optJSONArray("playlists")?.let { editor.putString("playlists_json", it.toString()) }
-            root.optJSONArray("recentlyPlayed")?.let { editor.putString("recently_played_tracks", it.toString()) }
+            root.optJSONArray("favorites")?.let { arr ->
+                saveFavorites(parseTrackArray(arr.toString()))
+            }
+            root.optJSONArray("playlists")?.let { arr ->
+                savePlaylists(parsePlaylistsJson(arr.toString()))
+            }
+            root.optJSONArray("recentlyPlayed")?.let { arr ->
+                val tracks = parseTrackArray(arr.toString())
+                    .distinctBy { LocalRecommendationEngine.songIdentityKey(it) }
+                    .take(RECENT_LIMIT)
+                val now = System.currentTimeMillis()
+                runBlocking(Dispatchers.IO) {
+                    db.recentTrackDao().replaceAll(
+                        tracks.mapIndexed { idx, track ->
+                            track.toRecentEntity(
+                                identityKey = recentIdentityKey(track),
+                                playedAtMs = now - idx * 1_000L
+                            )
+                        }
+                    )
+                }
+            }
             root.optJSONObject("settings")?.let { s ->
+                val updates = mutableMapOf<Preferences.Key<*>, Any?>()
                 s.optString("appThemeStyle").takeIf { it.isNotBlank() }?.let { rawStyle ->
                     AppThemeStyle.entries.firstOrNull { it.name == rawStyle }?.let { style ->
-                        val isGlass = style == AppThemeStyle.LIQUID_GLASS
-                        editor.putString("setting_app_theme_style", style.name)
-                        editor.putBoolean("setting_liquid_glass_enabled", isGlass)
-                        editor.putString("now_playing_style", if (isGlass) NowPlayingStyle.LIQUID_GLASS.name else NowPlayingStyle.SPOTIFY.name)
-                        editor.putString("setting_lyrics_style", if (isGlass) LyricsStyle.APPLE_MUSIC.name else LyricsStyle.CLASSIC.name)
+                        updates.putAll(appThemeStyleUpdates(style))
                     }
                 }
-                if (s.has("chartCountry")) editor.putString("setting_chart_country", s.optString("chartCountry", "US"))
-                if (s.has("audioQuality")) editor.putString("setting_audio_quality", s.optString("audioQuality", "Auto"))
-                if (s.has("videoQuality")) editor.putString("setting_video_quality", s.optString("videoQuality", "Auto (1080p)"))
-                if (s.has("normalizeVolume")) editor.putBoolean("setting_normalize_volume", s.optBoolean("normalizeVolume", true))
-                if (s.has("skipSilence")) editor.putBoolean("setting_skip_silence", s.optBoolean("skipSilence", false))
-                if (s.has("crossfadeSec")) editor.putInt("setting_crossfade_sec", s.optInt("crossfadeSec", 0))
-                if (s.has("maxCacheMb")) editor.putInt("setting_max_cache_mb", s.optInt("maxCacheMb", 1024))
-                if (s.has("eqEnabled")) editor.putBoolean("setting_eq_enabled", s.optBoolean("eqEnabled", false))
-                if (s.has("eqPreset")) editor.putString("setting_eq_preset", s.optString("eqPreset", "Flat"))
-                if (s.has("eqPreamp")) editor.putFloat("setting_eq_preamp", s.optDouble("eqPreamp", 0.0).toFloat())
-                if (s.has("eqBands")) editor.putString("setting_eq_bands", s.optString("eqBands"))
-                if (s.has("audioReverbPreset")) editor.putInt("setting_audio_reverb_preset", s.optInt("audioReverbPreset", 0))
-                if (s.has("sponsorBlockEnabled")) editor.putBoolean("setting_sponsorblock_enabled", s.optBoolean("sponsorBlockEnabled", true))
-                if (s.has("sponsorBlockCategories")) editor.putString("setting_sponsorblock_categories", s.optString("sponsorBlockCategories"))
-                if (s.has("mainLyricsProvider")) editor.putString("setting_main_lyrics_provider", s.optString("mainLyricsProvider", "SimpMusic"))
-                if (s.has("defaultLyricsOffsetMs")) editor.putInt("setting_default_lyrics_offset_ms", s.optInt("defaultLyricsOffsetMs", 0))
-                if (s.has("romanizationLanguages")) editor.putString("setting_romanization_languages", s.optString("romanizationLanguages"))
-                if (s.has("autoDownloadLiked")) editor.putBoolean("setting_auto_download_liked", s.optBoolean("autoDownloadLiked", false))
-                if (s.has("playVideoForVideoTrack")) editor.putBoolean("setting_play_video_for_video_track", s.optBoolean("playVideoForVideoTrack", false))
-                if (s.has("radioAudioOnly")) editor.putBoolean("setting_radio_audio_only", s.optBoolean("radioAudioOnly", true))
-                if (s.has("savePlaybackState")) editor.putBoolean("setting_save_playback_state", s.optBoolean("savePlaybackState", true))
-                if (s.has("killServiceOnExit")) editor.putBoolean("setting_kill_service_on_exit", s.optBoolean("killServiceOnExit", false))
-                if (s.has("recordListeningHistory")) editor.putBoolean("setting_record_listening_history", s.optBoolean("recordListeningHistory", true))
-                if (s.has("autoCheckUpdates")) editor.putBoolean("setting_auto_check_updates", s.optBoolean("autoCheckUpdates", true))
+                if (s.has("chartCountry")) updates[AuraPreferencesStore.Keys.CHART_COUNTRY] = s.optString("chartCountry", "US")
+                if (s.has("audioQuality")) updates[AuraPreferencesStore.Keys.AUDIO_QUALITY] = s.optString("audioQuality", "Auto")
+                if (s.has("videoQuality")) updates[AuraPreferencesStore.Keys.VIDEO_QUALITY] = s.optString("videoQuality", "Auto (1080p)")
+                if (s.has("normalizeVolume")) updates[AuraPreferencesStore.Keys.NORMALIZE_VOLUME] = s.optBoolean("normalizeVolume", true)
+                if (s.has("skipSilence")) updates[AuraPreferencesStore.Keys.SKIP_SILENCE] = s.optBoolean("skipSilence", false)
+                if (s.has("crossfadeSec")) updates[AuraPreferencesStore.Keys.CROSSFADE_SEC] = s.optInt("crossfadeSec", 0)
+                if (s.has("maxCacheMb")) updates[AuraPreferencesStore.Keys.MAX_CACHE_MB] = s.optInt("maxCacheMb", 1024)
+                if (s.has("eqEnabled")) updates[AuraPreferencesStore.Keys.EQ_ENABLED] = s.optBoolean("eqEnabled", false)
+                if (s.has("eqPreset")) updates[AuraPreferencesStore.Keys.EQ_PRESET] = s.optString("eqPreset", "Flat")
+                if (s.has("eqPreamp")) updates[AuraPreferencesStore.Keys.EQ_PREAMP] = s.optDouble("eqPreamp", 0.0).toFloat()
+                if (s.has("eqBands")) updates[AuraPreferencesStore.Keys.EQ_BANDS] = s.optString("eqBands")
+                if (s.has("audioReverbPreset")) updates[AuraPreferencesStore.Keys.AUDIO_REVERB_PRESET] = s.optInt("audioReverbPreset", 0)
+                if (s.has("sponsorBlockEnabled")) updates[AuraPreferencesStore.Keys.SPONSORBLOCK_ENABLED] = s.optBoolean("sponsorBlockEnabled", true)
+                if (s.has("sponsorBlockCategories")) updates[AuraPreferencesStore.Keys.SPONSORBLOCK_CATEGORIES] = s.optString("sponsorBlockCategories")
+                if (s.has("mainLyricsProvider")) updates[AuraPreferencesStore.Keys.MAIN_LYRICS_PROVIDER] = s.optString("mainLyricsProvider", "SimpMusic")
+                if (s.has("defaultLyricsOffsetMs")) updates[AuraPreferencesStore.Keys.DEFAULT_LYRICS_OFFSET_MS] = s.optInt("defaultLyricsOffsetMs", 0)
+                if (s.has("romanizationLanguages")) updates[AuraPreferencesStore.Keys.ROMANIZATION_LANGUAGES] = s.optString("romanizationLanguages")
+                if (s.has("autoDownloadLiked")) updates[AuraPreferencesStore.Keys.AUTO_DOWNLOAD_LIKED] = s.optBoolean("autoDownloadLiked", false)
+                if (s.has("playVideoForVideoTrack")) updates[AuraPreferencesStore.Keys.PLAY_VIDEO_FOR_VIDEO_TRACK] = s.optBoolean("playVideoForVideoTrack", false)
+                if (s.has("radioAudioOnly")) updates[AuraPreferencesStore.Keys.RADIO_AUDIO_ONLY] = s.optBoolean("radioAudioOnly", true)
+                if (s.has("savePlaybackState")) updates[AuraPreferencesStore.Keys.SAVE_PLAYBACK_STATE] = s.optBoolean("savePlaybackState", true)
+                if (s.has("killServiceOnExit")) updates[AuraPreferencesStore.Keys.KILL_SERVICE_ON_EXIT] = s.optBoolean("killServiceOnExit", false)
+                if (s.has("recordListeningHistory")) updates[AuraPreferencesStore.Keys.RECORD_LISTENING_HISTORY] = s.optBoolean("recordListeningHistory", true)
+                if (s.has("autoCheckUpdates")) updates[AuraPreferencesStore.Keys.AUTO_CHECK_UPDATES] = s.optBoolean("autoCheckUpdates", true)
+                prefsStore.editBatch(updates)
             }
-            editor.apply()
             true
         } catch (_: Exception) {
             false
@@ -692,7 +1152,8 @@ class AuraStorageRepository(context: Context) {
 
     // --- Explore Category Fan-Out Covers Cache ---
     fun loadExploreCoverCache(): Map<String, List<String>> {
-        val raw = prefs.getString("explore_cover_cache_json", null) ?: return emptyMap()
+        val raw = prefsStore.getString(AuraPreferencesStore.Keys.EXPLORE_COVER_CACHE_JSON, null)
+            ?: return emptyMap()
         return try {
             val obj = JSONObject(raw)
             val map = mutableMapOf<String, List<String>>()
@@ -723,7 +1184,200 @@ class AuraStorageRepository(context: Context) {
                 urls.forEach { arr.put(it) }
                 obj.put(category, arr)
             }
-            prefs.edit().putString("explore_cover_cache_json", obj.toString()).apply()
-        } catch (_: Exception) {}
+            prefsStore.putString(AuraPreferencesStore.Keys.EXPLORE_COVER_CACHE_JSON, obj.toString())
+        } catch (_: Exception) {
+            // Non-critical
+        }
+    }
+
+    private fun appThemeStyleUpdates(style: AppThemeStyle): Map<Preferences.Key<*>, Any?> {
+        val isGlass = style == AppThemeStyle.LIQUID_GLASS
+        return mapOf(
+            Pair(AuraPreferencesStore.Keys.APP_THEME_STYLE, style.name),
+            Pair(AuraPreferencesStore.Keys.LIQUID_GLASS_ENABLED, isGlass),
+            Pair(
+                AuraPreferencesStore.Keys.NOW_PLAYING_STYLE,
+                if (isGlass) NowPlayingStyle.LIQUID_GLASS.name else NowPlayingStyle.SPOTIFY.name
+            ),
+            Pair(
+                AuraPreferencesStore.Keys.LYRICS_STYLE,
+                if (isGlass) LyricsStyle.APPLE_MUSIC.name else LyricsStyle.CLASSIC.name
+            )
+        )
+    }
+
+    private fun recentIdentityKey(track: AuraTrack): String =
+        LocalRecommendationEngine.songIdentityKey(track)
+            .ifBlank { track.videoId.ifBlank { track.id } }
+
+    private fun spotifyCacheKey(title: String, artist: String): String =
+        "spot_res_" + "${title.trim().lowercase()}_${artist.trim().lowercase()}".replace(Regex("[^a-z0-9_]"), "_")
+
+    private fun formatHourLabel(hour: Int): String {
+        val h = ((hour % 24) + 24) % 24
+        return when {
+            h == 0 -> "12:00 AM"
+            h < 12 -> "$h:00 AM"
+            h == 12 -> "12:00 PM"
+            else -> "${h - 12}:00 PM"
+        }
+    }
+
+    private fun serializeLyricsData(lyrics: LyricsData): JSONObject = JSONObject().apply {
+        put("videoId", lyrics.videoId)
+        put("plainLyrics", lyrics.plainLyrics)
+        put("source", lyrics.source)
+        put("hasRomanization", lyrics.hasRomanization)
+        val linesArr = JSONArray()
+        lyrics.syncedLines.forEach { line ->
+            linesArr.put(JSONObject().apply {
+                put("timeSec", line.timeSec.toDouble())
+                put("endTimeSec", line.endTimeSec.toDouble())
+                put("text", line.text)
+                if (line.romanizedText != null) {
+                    put("romanizedText", line.romanizedText)
+                }
+            })
+        }
+        put("syncedLines", linesArr)
+    }
+
+    private fun parseLyricsData(raw: String, fallbackVideoId: String): LyricsData? = try {
+        val obj = JSONObject(raw)
+        val linesArr = obj.optJSONArray("syncedLines") ?: JSONArray()
+        val lines = mutableListOf<LyricLine>()
+        for (i in 0 until linesArr.length()) {
+            val lObj = linesArr.optJSONObject(i) ?: continue
+            lines.add(
+                LyricLine(
+                    timeSec = lObj.optDouble("timeSec", 0.0).toFloat(),
+                    endTimeSec = lObj.optDouble("endTimeSec", 0.0).toFloat(),
+                    text = lObj.optString("text", ""),
+                    romanizedText = if (lObj.has("romanizedText")) lObj.getString("romanizedText") else null
+                )
+            )
+        }
+        LyricsData(
+            videoId = obj.optString("videoId", fallbackVideoId),
+            plainLyrics = obj.optString("plainLyrics", ""),
+            syncedLines = lines,
+            source = obj.optString("source", "SimpMusic Offline"),
+            hasRomanization = obj.optBoolean("hasRomanization", false)
+        )
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parsePaletteFromJson(raw: String): AuraPalette? = try {
+        val obj = JSONObject(raw)
+        val primaryColor = Color(obj.getInt("primary"))
+        AuraPalette(
+            primary = primaryColor,
+            secondary = Color(obj.getInt("secondary")),
+            backgroundTop = Color(obj.getInt("backgroundTop")),
+            backgroundBottom = Color(obj.getInt("backgroundBottom")),
+            surfaceGlass = Color(obj.getInt("surfaceGlass")),
+            appleMusicBackdrop = if (obj.has("appleMusicBackdrop")) {
+                Color(obj.getInt("appleMusicBackdrop"))
+            } else {
+                primaryColor
+            }
+        )
+    } catch (_: Exception) {
+        null
+    }
+
+    private fun parsePlaylistsJson(raw: String): List<AuraPlaylist> = try {
+        val arr = JSONArray(raw)
+        val list = mutableListOf<AuraPlaylist>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val tracksArr = obj.optJSONArray("tracks") ?: JSONArray()
+            val rawDesc = obj.optString("description")
+            val cleanDesc = if (rawDesc.startsWith("Imported from Spotify", ignoreCase = true)) "" else rawDesc
+            list.add(
+                AuraPlaylist(
+                    id = obj.optString("id"),
+                    name = obj.optString("name"),
+                    description = cleanDesc,
+                    coverUrl = obj.optString("coverUrl"),
+                    tracks = parseTrackArray(tracksArr.toString()),
+                    isPodcast = obj.optBoolean("isPodcast", false)
+                )
+            )
+        }
+        list
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun serializeTrackArray(tracks: List<AuraTrack>): JSONArray {
+        val arr = JSONArray()
+        tracks.forEach { t ->
+            arr.put(JSONObject().apply {
+                put("id", t.id)
+                put("videoId", t.videoId)
+                put("title", t.title)
+                put("artist", t.artist)
+                put("album", t.album)
+                put("durationSeconds", t.durationSeconds)
+                put("artworkUrl", t.artworkUrl)
+                put("genre", t.genre)
+                put("source", t.source)
+                put("isDownloaded", t.isDownloaded)
+                put("localFilePath", t.localFilePath ?: "")
+                put("isPodcast", t.isPodcast)
+                t.musicVideoType?.let { put("musicVideoType", it) }
+                t.viewCount?.let { put("viewCount", it) }
+            })
+        }
+        return arr
+    }
+
+    private fun parseTrackArray(rawJson: String): List<AuraTrack> {
+        return try {
+            val arr = JSONArray(rawJson)
+            val out = mutableListOf<AuraTrack>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val vid = o.optString("videoId")
+                val title = o.optString("title", "Unknown Track")
+                if (title.isBlank() && vid.isBlank()) continue
+                val trackId = o.optString(
+                    "id",
+                    if (vid.isNotBlank()) "yt_$vid" else "spot_${System.currentTimeMillis()}_$i"
+                )
+                out.add(
+                    AuraTrack(
+                        id = trackId,
+                        videoId = vid,
+                        title = title,
+                        artist = o.optString("artist", "Unknown Artist"),
+                        album = o.optString("album", "YouTube Music"),
+                        durationSeconds = o.optInt("durationSeconds", 210),
+                        artworkUrl = o.optString("artworkUrl"),
+                        source = o.optString("source", if (vid.startsWith("spotify_pending")) "spotify" else "youtube"),
+                        genre = o.optString("genre", "Pop"),
+                        isDownloaded = o.optBoolean("isDownloaded", false),
+                        localFilePath = o.optString("localFilePath").takeIf { it.isNotBlank() },
+                        isPodcast = o.optBoolean("isPodcast", false),
+                        musicVideoType = o.optString("musicVideoType").takeIf { it.isNotBlank() },
+                        viewCount = if (o.has("viewCount")) o.optLong("viewCount") else null
+                    )
+                )
+            }
+            out
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private companion object {
+        const val LEGACY_PREFS_NAME = "aura_music_storage"
+        const val RECENT_LIMIT = 30
+        val migrationLock = Any()
+
+        @Volatile
+        var processMigrated = false
     }
 }

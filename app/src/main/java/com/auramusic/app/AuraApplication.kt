@@ -8,6 +8,11 @@ import android.content.Context
 import android.os.Build
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.core.media.AuraPlayerManager
+import com.auramusic.app.data.AuraStorageRepository
+import com.auramusic.app.di.auraAppModule
+import org.koin.android.ext.koin.androidContext
+import org.koin.core.context.GlobalContext
+import org.koin.core.context.startKoin
 
 class AuraApplication : Application() {
     companion object {
@@ -16,12 +21,20 @@ class AuraApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (GlobalContext.getOrNull() == null) {
+            startKoin {
+                androidContext(this@AuraApplication)
+                modules(auraAppModule)
+            }
+        }
         // Enforce dark/night mode globally across all framework windows and dialogs
-        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES)
+        androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(
+            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+        )
         createNotificationChannel()
         com.auramusic.app.core.notifications.AuraNotificationManager.createChannels(this)
         SimpMusicExtractorEngine.initExtractors()
-        val storage = com.auramusic.app.data.AuraStorageRepository(this)
+        val storage: AuraStorageRepository = GlobalContext.get().get()
         SimpMusicExtractorEngine.setStorageRepository(storage)
         AuraPlayerManager.initialize(this)
     }

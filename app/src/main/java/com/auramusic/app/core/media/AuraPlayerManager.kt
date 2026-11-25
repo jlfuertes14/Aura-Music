@@ -2,12 +2,7 @@ package com.auramusic.app.core.media
 
 import android.content.Context
 import android.content.Intent
-import android.media.audiofx.Equalizer
-import android.media.audiofx.LoudnessEnhancer
-import android.media.audiofx.PresetReverb
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -29,6 +24,8 @@ import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -37,20 +34,12 @@ import com.auramusic.app.core.extractor.ResolvedStream
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.AuraTrack
-import com.auramusic.app.domain.model.isPendingResolution
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.PlaybackMode
 import com.auramusic.app.domain.model.ResolvedVideoStream
-import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
-import com.auramusic.app.domain.model.SIMPMUSIC_EQ_PRESETS
 import com.auramusic.app.domain.model.SponsorSegment
-import com.auramusic.app.domain.model.findMatchingPreset
-import kotlinx.coroutines.CancellationException
+import com.auramusic.app.domain.model.isPendingResolution
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -62,9 +51,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import okhttp3.Request
 import java.io.File
-import kotlin.math.pow
 
 @OptIn(UnstableApi::class)
 object AuraPlayerManager {
@@ -76,16 +63,15 @@ object AuraPlayerManager {
     private var sleepTimerJob: Job? = null
     private var radioFetchJob: Job? = null
     private var fadeJob: Job? = null
-    private var baseVolume: Float = 1.0f
 
     private var appContext: Context? = null
     private var simpleCache: SimpleCache? = null
-    private var hardwareEq: Equalizer? = null
-    private var loudnessEnhancer: LoudnessEnhancer? = null
-    private var presetReverb: PresetReverb? = null
-    private var boundAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
-    @Volatile
-    private var currentTrackLoudnessDb: Float = 0f
+
+    val dspManager = AuraAudioDspManager()
+    val offlineDownloader = AuraOfflineDownloader()
+
+    private val baseVolume: Float
+        get() = dspManager.baseVolume
 
     var exoPlayer: ExoPlayer? = null
         private set
@@ -122,23 +108,17 @@ object AuraPlayerManager {
     private val _lastSkippedSegment = MutableStateFlow<String?>(null)
     val lastSkippedSegment: StateFlow<String?> = _lastSkippedSegment.asStateFlow()
 
-    private val _activeEqPreset = MutableStateFlow(
-        SIMPMUSIC_ALL_EQ_PRESETS.find { it.id == "flat" } ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
-    )
-    val activeEqPreset: StateFlow<EqualizerPreset> = _activeEqPreset.asStateFlow()
+    // Delegated DSP StateFlows (100% API compatibility)
+    val activeEqPreset: StateFlow<EqualizerPreset> = dspManager.activeEqPreset
+    val equalizerBands: StateFlow<List<Float>> = dspManager.equalizerBands
+    val equalizerPreamp: StateFlow<Float> = dspManager.equalizerPreamp
+    val activeEqPresetName: StateFlow<String> = dspManager.activeEqPresetName
+    val eqEnabled: StateFlow<Boolean> = dspManager.eqEnabled
+    val loudnessNormalization: StateFlow<Boolean> = dspManager.loudnessNormalization
+    val audioReverbPreset: StateFlow<Int> = dspManager.audioReverbPreset
 
-    private val _equalizerBands = MutableStateFlow(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
-    val equalizerBands: StateFlow<List<Float>> = _equalizerBands.asStateFlow()
-
-    private val _equalizerPreamp = MutableStateFlow(0f)
-    val equalizerPreamp: StateFlow<Float> = _equalizerPreamp.asStateFlow()
-
-    private val _activeEqPresetName = MutableStateFlow("Flat")
-    val activeEqPresetName: StateFlow<String> = _activeEqPresetName.asStateFlow()
-
-    // Default EQ to false for bit-perfect, uncolored, distortion-free audio
-    private val _eqEnabled = MutableStateFlow(false)
-    val eqEnabled: StateFlow<Boolean> = _eqEnabled.asStateFlow()
+    // Delegated Offline Download StateFlows
+    val activeDownloads: StateFlow<Map<String, DownloadItemState>> = offlineDownloader.activeDownloads
 
     private val _audioQuality = MutableStateFlow("Auto")
     val audioQuality: StateFlow<String> = _audioQuality.asStateFlow()
@@ -152,9 +132,6 @@ object AuraPlayerManager {
     private val _maxCacheSizeMb = MutableStateFlow(1024)
     val maxCacheSizeMb: StateFlow<Int> = _maxCacheSizeMb.asStateFlow()
 
-    private val _loudnessNormalization = MutableStateFlow(true)
-    val loudnessNormalization: StateFlow<Boolean> = _loudnessNormalization.asStateFlow()
-
     private val _sponsorBlockEnabled = MutableStateFlow(true)
     val sponsorBlockEnabled: StateFlow<Boolean> = _sponsorBlockEnabled.asStateFlow()
 
@@ -162,9 +139,6 @@ object AuraPlayerManager {
         setOf("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
     )
     val sponsorBlockCategories: StateFlow<Set<String>> = _sponsorBlockCategories.asStateFlow()
-
-    private val _audioReverbPreset = MutableStateFlow(0)
-    val audioReverbPreset: StateFlow<Int> = _audioReverbPreset.asStateFlow()
 
     private val _savePlaybackState = MutableStateFlow(true)
     val savePlaybackState: StateFlow<Boolean> = _savePlaybackState.asStateFlow()
@@ -216,23 +190,15 @@ object AuraPlayerManager {
         val ctx = context.applicationContext
         appContext = ctx
 
+        dspManager.loadFromStorage(ctx)
         val storage = AuraStorageRepository(ctx)
-        _eqEnabled.value = storage.loadEqualizerEnabled()
-        _equalizerBands.value = storage.loadEqualizerBands()
-        _equalizerPreamp.value = storage.loadEqualizerPreamp()
-        val savedPreset = storage.loadEqualizerPreset()
-        _activeEqPresetName.value = savedPreset
-        _activeEqPreset.value = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.name == savedPreset }
-            ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
         _audioQuality.value = storage.loadAudioQuality()
         _videoQuality.value = storage.loadVideoQuality()
-        _loudnessNormalization.value = storage.loadNormalizeVolume()
         _skipSilence.value = storage.loadSkipSilence()
         _crossfadeSeconds.value = storage.loadCrossfadeDuration()
         _maxCacheSizeMb.value = storage.loadMaxCacheSize()
         _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
         _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
-        _audioReverbPreset.value = storage.loadAudioReverbPreset()
         _savePlaybackState.value = storage.loadSavePlaybackState()
         _killServiceOnExit.value = storage.loadKillServiceOnExit()
         _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
@@ -321,7 +287,7 @@ object AuraPlayerManager {
                 val offlineFile = getOfflineFile(ctx, videoId)
                 if (offlineFile.exists() && offlineFile.length() > 10_000L) {
                     if (_currentTrack.value?.videoId == videoId) {
-                        currentTrackLoudnessDb = 0f
+                        dspManager.setTrackLoudnessDb(0f)
                         _streamSourceTier.value = "Offline • Lossless"
                         scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
                     }
@@ -363,7 +329,7 @@ object AuraPlayerManager {
 
                 if (resolvedVideo != null) {
                     if (_currentTrack.value?.videoId == videoId) {
-                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoId) ?: 0f
+                        dspManager.setTrackLoudnessDb(SimpMusicExtractorEngine.getTrackLoudnessDb(videoId) ?: 0f)
                         _streamSourceTier.value = "Video • ${resolvedVideo.quality}"
                         scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
                     }
@@ -399,8 +365,27 @@ object AuraPlayerManager {
             .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
             .build()
 
-        val renderersFactory = DefaultRenderersFactory(ctx)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+        val renderersFactory = object : DefaultRenderersFactory(ctx) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                val processors = dspManager.getAudioProcessors()
+                if (processors.isEmpty()) {
+                    return super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams
+                    )
+                }
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(processors)
+                    .build()
+            }
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
 
         val player = ExoPlayer.Builder(ctx, renderersFactory)
             .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
@@ -428,7 +413,11 @@ object AuraPlayerManager {
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
                         _durationSec.value = (durMs / 1000f).coerceAtLeast(1f)
                     }
-                    bindHardwareEqualizer(player.audioSessionId)
+                    dspManager.attachAudioSession(
+                        audioSessionId = player.audioSessionId,
+                        player = player,
+                        isFadeActive = fadeJob?.isActive == true
+                    )
                 } else if (playbackState == Player.STATE_ENDED) {
                     _currentTrack.value?.let { finished ->
                         onTrackFinishedCallback?.invoke(finished)
@@ -448,8 +437,11 @@ object AuraPlayerManager {
                     if (cachedStream != null) {
                         applyResolvedAudioMetadata(matched.videoId, cachedStream)
                     } else {
-                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(matched.videoId) ?: 0f
-                        applyEqualizerCurve()
+                        dspManager.updateTrackLoudness(
+                            loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(matched.videoId) ?: 0f,
+                            player = player,
+                            isFadeActive = fadeJob?.isActive == true
+                        )
                     }
                     if (matched.isPendingResolution) {
                         scope.launch {
@@ -1074,9 +1066,12 @@ object AuraPlayerManager {
     }
 
     fun setAudioReverbPreset(preset: Int) {
-        _audioReverbPreset.value = preset.coerceIn(0, 6)
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveAudioReverbPreset(_audioReverbPreset.value) }
+        dspManager.setAudioReverbPreset(
+            context = appContext,
+            preset = preset,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun setSavePlaybackState(enabled: Boolean) {
@@ -1104,29 +1099,25 @@ object AuraPlayerManager {
     }
 
     fun getAudioSessionId(): Int {
-        return exoPlayer?.audioSessionId ?: boundAudioSessionId
+        return dspManager.getAudioSessionId(exoPlayer?.audioSessionId)
+    }
+
+    fun openSystemEqualizer(context: Context): Boolean {
+        return dspManager.openSystemEqualizer(context, exoPlayer?.audioSessionId)
     }
 
     fun reloadSettingsFromStorage() {
         val ctx = appContext ?: return
+        dspManager.loadFromStorage(ctx)
         val storage = AuraStorageRepository(ctx)
-        _eqEnabled.value = storage.loadEqualizerEnabled()
-        _equalizerBands.value = storage.loadEqualizerBands()
-        _equalizerPreamp.value = storage.loadEqualizerPreamp()
-        val savedPreset = storage.loadEqualizerPreset()
-        _activeEqPresetName.value = savedPreset
-        _activeEqPreset.value = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.name == savedPreset }
-            ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
         _audioQuality.value = storage.loadAudioQuality()
         _videoQuality.value = storage.loadVideoQuality()
-        _loudnessNormalization.value = storage.loadNormalizeVolume()
         _skipSilence.value = storage.loadSkipSilence()
         exoPlayer?.skipSilenceEnabled = _skipSilence.value
         _crossfadeSeconds.value = storage.loadCrossfadeDuration()
         _maxCacheSizeMb.value = storage.loadMaxCacheSize()
         _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
         _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
-        _audioReverbPreset.value = storage.loadAudioReverbPreset()
         _savePlaybackState.value = storage.loadSavePlaybackState()
         _killServiceOnExit.value = storage.loadKillServiceOnExit()
         _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
@@ -1135,44 +1126,38 @@ object AuraPlayerManager {
     }
 
     fun setEqualizerBands(bands: List<Float>) {
-        _equalizerBands.value = bands
-        val match = findMatchingPreset(bands)
-        _activeEqPresetName.value = match?.name ?: "Custom"
-        if (match != null) {
-            _activeEqPreset.value = match
-        }
-        applyEqualizerCurve()
-        appContext?.let {
-            val storage = AuraStorageRepository(it)
-            storage.saveEqualizerBands(bands)
-            storage.saveEqualizerPreset(_activeEqPresetName.value)
-        }
+        dspManager.setEqualizerBands(
+            context = appContext,
+            bands = bands,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun setEqualizerPreamp(preampDb: Float) {
-        _equalizerPreamp.value = preampDb
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveEqualizerPreamp(preampDb) }
+        dspManager.setEqualizerPreamp(
+            context = appContext,
+            preampDb = preampDb,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun applyEqualizerPreset(preset: EqualizerPreset) {
-        _activeEqPreset.value = preset
-        _activeEqPresetName.value = preset.name
-        _equalizerBands.value = preset.bandsDb
-        _equalizerPreamp.value = preset.preampDb
-        applyEqualizerCurve()
-        appContext?.let {
-            val storage = AuraStorageRepository(it)
-            storage.saveEqualizerBands(preset.bandsDb)
-            storage.saveEqualizerPreamp(preset.preampDb)
-            storage.saveEqualizerPreset(preset.name)
-        }
+        dspManager.applyEqualizerPreset(
+            context = appContext,
+            preset = preset,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun resetEqualizer() {
-        val flat = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.id == "flat" }
-            ?: EqualizerPreset("flat", "Flat", "Flat response", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
-        applyEqualizerPreset(flat)
+        dspManager.resetEqualizer(
+            context = appContext,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun selectEqualizerPreset(preset: EqualizerPreset) {
@@ -1180,15 +1165,21 @@ object AuraPlayerManager {
     }
 
     fun setEqualizerEnabled(enabled: Boolean) {
-        _eqEnabled.value = enabled
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveEqualizerEnabled(enabled) }
+        dspManager.setEqualizerEnabled(
+            context = appContext,
+            enabled = enabled,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun setLoudnessNormalization(enabled: Boolean) {
-        _loudnessNormalization.value = enabled
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveNormalizeVolume(enabled) }
+        dspManager.setLoudnessNormalization(
+            context = appContext,
+            enabled = enabled,
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     fun setAudioQuality(quality: String) {
@@ -1206,7 +1197,7 @@ object AuraPlayerManager {
     }
 
     private fun applyResolvedAudioMetadata(videoId: String, resolved: ResolvedStream) {
-        currentTrackLoudnessDb = resolved.loudnessDb
+        dspManager.setTrackLoudnessDb(resolved.loudnessDb)
         _streamSourceTier.value = when {
             resolved.bitrateKbps >= 180 -> "Ultra HD • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
             resolved.bitrateKbps >= 110 -> "High Quality • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
@@ -1301,284 +1292,36 @@ object AuraPlayerManager {
         }
     }
 
-    fun getDedicatedDownloadDir(context: Context): File {
-        try {
-            val publicMusic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-            val auraPublic = File(publicMusic, "AuraMusic")
-            if (auraPublic.exists() || auraPublic.mkdirs()) {
-                return auraPublic
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Cannot access public Music directory: ${e.message}")
-        }
-        val extDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
-        val auraExt = File(extDir, "AuraMusic")
-        if (auraExt.exists() || auraExt.mkdirs()) {
-            return auraExt
-        }
-        val internalDir = File(context.filesDir, "aura_offline_tracks")
-        if (!internalDir.exists()) internalDir.mkdirs()
-        return internalDir
-    }
+    fun getDedicatedDownloadDir(context: Context): File =
+        offlineDownloader.getDedicatedDownloadDir(context)
 
-    fun getOfflineArtworkFile(context: Context, videoId: String): File {
-        val dir = File(context.filesDir, "aura_offline_artwork").apply { if (!exists()) mkdirs() }
-        return File(dir, "$videoId.jpg")
-    }
+    fun getOfflineArtworkFile(context: Context, videoId: String): File =
+        offlineDownloader.getOfflineArtworkFile(context, videoId)
 
-    fun getOfflineArtworkUri(context: Context, videoId: String): String? {
-        val f = getOfflineArtworkFile(context, videoId)
-        return if (f.exists() && f.length() > 500L) "file://${f.absolutePath}" else null
-    }
+    fun getOfflineArtworkUri(context: Context, videoId: String): String? =
+        offlineDownloader.getOfflineArtworkUri(context, videoId)
 
-    private fun withOfflineArtwork(track: AuraTrack): AuraTrack {
-        val ctx = appContext ?: return track
-        val localUri = getOfflineArtworkUri(ctx, track.videoId) ?: return track
-        return track.copy(artworkUrl = localUri)
-    }
+    private fun withOfflineArtwork(track: AuraTrack): AuraTrack =
+        offlineDownloader.withOfflineArtwork(appContext, track)
 
-    @OptIn(coil.annotation.ExperimentalCoilApi::class)
-    suspend fun saveOfflineArtwork(context: Context, track: AuraTrack): String? = withContext(Dispatchers.IO) {
-        getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
-        val target = getOfflineArtworkFile(context, track.videoId)
-        val artUrl = track.highResArtworkUrl.ifBlank { track.artworkUrl }
-        if (artUrl.isBlank()) return@withContext null
-        if (artUrl.startsWith("file://") || artUrl.startsWith("/")) {
-            val src = File(artUrl.removePrefix("file://"))
-            if (src.exists() && src.length() > 500L) {
-                runCatching { src.copyTo(target, overwrite = true) }
-                return@withContext getOfflineArtworkUri(context, track.videoId)
-            }
-        }
-        try {
-            val diskCache = coil.Coil.imageLoader(context).diskCache
-            val snap = diskCache?.openSnapshot(track.highResArtworkUrl)
-                ?: diskCache?.openSnapshot(track.artworkUrl)
-            if (snap != null) {
-                snap.use { it.data.toFile().copyTo(target, overwrite = true) }
-                getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
-            }
-        } catch (_: Exception) {}
-        try {
-            SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(artUrl)).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val bytes = resp.body?.bytes() ?: return@withContext null
-                if (bytes.size > 500) {
-                    target.writeBytes(bytes)
-                    return@withContext "file://${target.absolutePath}"
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to save offline artwork for ${track.videoId}: ${e.message}")
-        }
-        null
-    }
+    suspend fun saveOfflineArtwork(context: Context, track: AuraTrack): String? =
+        offlineDownloader.saveOfflineArtwork(context, track)
 
-    fun getOfflineFile(context: Context, videoId: String): File {
-        val dedicated = File(getDedicatedDownloadDir(context), "$videoId.m4a")
-        if (dedicated.exists() && dedicated.length() > 10_000L) return dedicated
-        val fallback = File(context.filesDir, "aura_offline_tracks/$videoId.m4a")
-        if (fallback.exists() && fallback.length() > 10_000L) return fallback
-        return dedicated
-    }
-
-    private const val DOWNLOAD_USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    private const val DOWNLOAD_CHUNK_BYTES = 2L * 1024 * 1024
-    private const val DOWNLOAD_PARALLELISM = 4
-
-    private suspend fun checkActive() = currentCoroutineContext().ensureActive()
-
-    private fun downloadRequest(url: String, rangeStart: Long? = null, rangeEnd: Long? = null): Request {
-        val builder = Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT)
-        if (rangeStart != null && rangeEnd != null) builder.header("Range", "bytes=$rangeStart-$rangeEnd")
-        return builder.build()
-    }
-
-    /** Returns total size in bytes if the server honours HTTP range requests, else null. */
-    private fun probeRangeSupport(url: String): Long? = try {
-        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url, 0, 0)).execute().use { resp ->
-            if (resp.code != 206) return@use null
-            resp.header("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull()
-        }
-    } catch (e: java.io.IOException) {
-        null
-    }
-
-    /**
-     * Downloads the stream in ranged chunks over several parallel connections. YouTube throttles a
-     * single unbounded request, while small ranged requests run at full speed.
-     */
-    private suspend fun downloadChunked(
-        url: String,
-        part: File,
-        total: Long,
-        awaitResume: suspend () -> Unit,
-        onProgress: (Long, Long, Float) -> Unit
-    ) = coroutineScope {
-        java.io.RandomAccessFile(part, "rw").use { raf ->
-            raf.setLength(total)
-            val channel = raf.channel
-            val chunkCount = ((total + DOWNLOAD_CHUNK_BYTES - 1) / DOWNLOAD_CHUNK_BYTES).toInt()
-            val nextChunk = java.util.concurrent.atomic.AtomicInteger(0)
-            val downloaded = java.util.concurrent.atomic.AtomicLong(0)
-            val lastReport = java.util.concurrent.atomic.AtomicLong(0)
-
-            val workers = (1..minOf(DOWNLOAD_PARALLELISM, chunkCount)).map {
-                async {
-                    while (true) {
-                        awaitResume()
-                        checkActive()
-                        val idx = nextChunk.getAndIncrement()
-                        if (idx >= chunkCount) break
-                        val start = idx * DOWNLOAD_CHUNK_BYTES
-                        val end = minOf(start + DOWNLOAD_CHUNK_BYTES, total) - 1
-                        var attempt = 0
-                        while (true) {
-                            var written = 0L
-                            try {
-                                SimpMusicExtractorEngine.httpClient
-                                    .newCall(downloadRequest(url, start, end)).execute().use { resp ->
-                                        if (resp.code != 206) throw java.io.IOException("Range not honoured: ${resp.code}")
-                                        val input = resp.body?.byteStream() ?: throw java.io.IOException("Empty body")
-                                        val buffer = ByteArray(32 * 1024)
-                                        var pos = start
-                                        while (true) {
-                                            val read = input.read(buffer)
-                                            if (read == -1) break
-                                            val bb = java.nio.ByteBuffer.wrap(buffer, 0, read)
-                                            while (bb.hasRemaining()) pos += channel.write(bb, pos)
-                                            written += read
-                                            downloaded.addAndGet(read.toLong())
-                                            val now = System.currentTimeMillis()
-                                            val last = lastReport.get()
-                                            if (now - last > 32 && lastReport.compareAndSet(last, now)) {
-                                                val soFar = downloaded.get()
-                                                onProgress(soFar, total, (soFar.toFloat() / total).coerceIn(0f, 1f))
-                                            }
-                                            checkActive()
-                                        }
-                                    }
-                                if (written != end - start + 1) throw java.io.IOException("Short chunk")
-                                break
-                            } catch (e: java.io.IOException) {
-                                downloaded.addAndGet(-written)
-                                if (++attempt >= 3) throw e
-                            }
-                        }
-                    }
-                }
-            }
-            workers.forEach { it.await() }
-            onProgress(total, total, 1f)
-        }
-    }
-
-    private suspend fun downloadSingleStream(
-        url: String,
-        part: File,
-        fallbackTotal: Long,
-        awaitResume: suspend () -> Unit,
-        onProgress: (Long, Long, Float) -> Unit
-    ) {
-        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url)).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
-            val body = resp.body ?: throw java.io.IOException("Empty body")
-            val totalBytes = body.contentLength().takeIf { it > 0 } ?: fallbackTotal
-            var bytesReadTotal = 0L
-            part.outputStream().use { out ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(32 * 1024)
-                    var lastProgressUpdate = 0L
-                    while (true) {
-                        awaitResume()
-                        checkActive()
-                        val read = input.read(buffer)
-                        if (read == -1) break
-                        out.write(buffer, 0, read)
-                        bytesReadTotal += read
-                        val now = System.currentTimeMillis()
-                        if (now - lastProgressUpdate > 32) {
-                            lastProgressUpdate = now
-                            onProgress(bytesReadTotal, totalBytes, (bytesReadTotal.toFloat() / totalBytes.coerceAtLeast(1L)).coerceIn(0f, 1f))
-                        }
-                    }
-                    onProgress(bytesReadTotal, totalBytes, 1f)
-                }
-            }
-        }
-    }
+    fun getOfflineFile(context: Context, videoId: String): File =
+        offlineDownloader.getOfflineFile(context, videoId)
 
     suspend fun downloadTrackOffline(
         context: Context,
         track: AuraTrack,
         awaitResume: suspend () -> Unit = {},
         onProgress: (bytesRead: Long, totalBytes: Long, progress: Float) -> Unit = { _, _, _ -> }
-    ): File? = withContext(Dispatchers.IO) {
-        val activeTrack = if (track.isPendingResolution || track.videoId.startsWith("spotify_pending")) {
-            val resolvedPending = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(track)
-            if (resolvedPending.isPendingResolution || resolvedPending.videoId.startsWith("spotify_pending")) {
-                Log.e(TAG, "Offline download failed: could not resolve pending track ${track.title}")
-                return@withContext null
-            }
-            resolvedPending
-        } else {
-            track
-        }
-        val cacheTmpDir = File(context.cacheDir, "aura_dl_tmp").apply { mkdirs() }
-        // Download into app-private cache first; Scoped Storage blocks .part files in Music/ with EPERM.
-        val partFile = File(cacheTmpDir, "${activeTrack.videoId}.m4a.part")
-        try {
-            val resolved = SimpMusicExtractorEngine.resolveStream(activeTrack.videoId, _audioQuality.value)
-            val url = resolved.streamUrl
-            val rangeTotal = probeRangeSupport(url)
-            var done = false
-            if (rangeTotal != null && rangeTotal > DOWNLOAD_CHUNK_BYTES) {
-                try {
-                    downloadChunked(url, partFile, rangeTotal, awaitResume, onProgress)
-                    done = true
-                } catch (e: java.io.IOException) {
-                    Log.w(TAG, "Chunked download failed for ${activeTrack.videoId}, falling back: ${e.message}")
-                }
-            }
-            if (!done) {
-                downloadSingleStream(url, partFile, activeTrack.durationSeconds * 20_000L, awaitResume, onProgress)
-            }
-            if (partFile.length() > 10_000L) {
-                val primaryTarget = getOfflineFile(context, activeTrack.videoId)
-                val fallbackTarget = File(
-                    File(context.filesDir, "aura_offline_tracks").apply { mkdirs() },
-                    "${activeTrack.videoId}.m4a"
-                )
-                val saved = moveOrCopyToTarget(partFile, primaryTarget)
-                    ?: moveOrCopyToTarget(partFile, fallbackTarget)
-                partFile.delete()
-                saved
-            } else {
-                partFile.delete()
-                null
-            }
-        } catch (e: CancellationException) {
-            partFile.delete()
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "Offline download failed for ${activeTrack.videoId}: ${e.message}")
-            partFile.delete()
-            null
-        }
-    }
-
-    private fun moveOrCopyToTarget(partFile: File, targetFile: File): File? = try {
-        targetFile.parentFile?.mkdirs()
-        if (targetFile.exists()) targetFile.delete()
-        if (!partFile.renameTo(targetFile)) {
-            partFile.copyTo(targetFile, overwrite = true)
-        }
-        if (targetFile.exists() && targetFile.length() > 10_000L) targetFile else null
-    } catch (e: Exception) {
-        Log.w(TAG, "Cannot write offline track to ${targetFile.absolutePath}: ${e.message}")
-        null
-    }
+    ): File? = offlineDownloader.downloadTrackOffline(
+        context = context,
+        track = track,
+        audioQuality = _audioQuality.value,
+        awaitResume = awaitResume,
+        onProgress = onProgress
+    )
 
     fun setVideoLoading(loading: Boolean) {
         _isVideoLoading.value = loading
@@ -1672,8 +1415,11 @@ object AuraPlayerManager {
 
             val activePlayer = exoPlayer ?: return@launch
             if (resolved != null) {
-                currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
-                applyEqualizerCurve()
+                dspManager.updateTrackLoudness(
+                    loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f,
+                    player = activePlayer,
+                    isFadeActive = fadeJob?.isActive == true
+                )
                 _streamSourceTier.value = "Video • ${resolved.quality}"
                 val cFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
                 val mediaSource = buildVideoMediaSource(resolved, cFactory)
@@ -1787,8 +1533,11 @@ object AuraPlayerManager {
                 return@launch
             }
 
-            currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
-            applyEqualizerCurve()
+            dspManager.updateTrackLoudness(
+                loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f,
+                player = player,
+                isFadeActive = fadeJob?.isActive == true
+            )
             _streamSourceTier.value = "Video • ${resolved.quality}"
             val dataSourceFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
             val mediaSource = buildVideoMediaSource(resolved, dataSourceFactory)
@@ -1815,7 +1564,6 @@ object AuraPlayerManager {
 
         val origTrack = originalAudioTrack
         val origQueue = originalAudioQueue
-        val origIndex = originalAudioIndex
 
         originalAudioTrack = null
         originalAudioQueue = null
@@ -1965,109 +1713,11 @@ object AuraPlayerManager {
         }
     }
 
-    private fun bindHardwareEqualizer(audioSessionId: Int) {
-        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) return
-        if (boundAudioSessionId == audioSessionId && hardwareEq != null && loudnessEnhancer != null) {
-            applyEqualizerCurve()
-            return
-        }
-        boundAudioSessionId = audioSessionId
-        try {
-            hardwareEq?.release()
-            hardwareEq = Equalizer(0, audioSessionId).apply {
-                enabled = _eqEnabled.value
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Hardware Equalizer binding notice: ${e.message}")
-        }
-        try {
-            loudnessEnhancer?.release()
-            loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
-                enabled = _loudnessNormalization.value
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "LoudnessEnhancer binding notice: ${e.message}")
-        }
-        try {
-            presetReverb?.release()
-            presetReverb = PresetReverb(0, audioSessionId).apply {
-                val presetShort = _audioReverbPreset.value.coerceIn(0, 6).toShort()
-                preset = presetShort
-                enabled = presetShort != PresetReverb.PRESET_NONE
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "PresetReverb binding notice: ${e.message}")
-        }
-        applyEqualizerCurve()
-    }
-
     private fun applyEqualizerCurve() {
-        val player = exoPlayer ?: return
-        val enabled = _eqEnabled.value
-        val bands = _equalizerBands.value
-        val preampDb = _equalizerPreamp.value
-        val normEnabled = _loudnessNormalization.value
-
-        try {
-            val eq = hardwareEq
-            if (eq != null) {
-                eq.enabled = enabled
-                val numBands = eq.numberOfBands.toInt()
-                val range = eq.bandLevelRange // millibels, e.g. [-1500, 1500]
-                val minMb = range[0].toInt()
-                val maxMb = range[1].toInt()
-
-                for (b in 0 until numBands) {
-                    val mappedIdx = ((b.toFloat() / numBands.coerceAtLeast(1)) * bands.size)
-                        .toInt()
-                        .coerceIn(0, bands.lastIndex)
-                    val targetMb = if (enabled) (bands[mappedIdx] * 100f).toInt() else 0
-                    eq.setBandLevel(b.toShort(), targetMb.coerceIn(minMb, maxMb).toShort())
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Equalizer curve apply notice: ${e.message}")
-        }
-
-        // Loudness Normalization (ReplayGain via YouTube loudnessDb + hardware LoudnessEnhancer)
-        val normDb = if (normEnabled) (-currentTrackLoudnessDb).coerceIn(-10f, 8f) else 0f
-        try {
-            loudnessEnhancer?.let { enhancer ->
-                enhancer.enabled = normEnabled
-                if (normEnabled) {
-                    val targetMb = when {
-                        currentTrackLoudnessDb == 0f -> 250 // Gentle +2.5 dB dynamic leveling when metadata is absent
-                        normDb > 0f -> (normDb * 100f).toInt().coerceIn(0, 800)
-                        else -> 0
-                    }
-                    enhancer.setTargetGain(targetMb)
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "LoudnessEnhancer apply notice: ${e.message}")
-        }
-
-        try {
-            presetReverb?.let { reverb ->
-                val presetShort = _audioReverbPreset.value.coerceIn(0, 6).toShort()
-                reverb.preset = presetShort
-                reverb.enabled = presetShort != PresetReverb.PRESET_NONE
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "PresetReverb apply notice: ${e.message}")
-        }
-
-        // Anti-Clipping Headroom + loudness attenuation for tracks louder than -14 LUFS
-        val maxBoost = if (enabled) bands.maxOrNull()?.coerceAtLeast(0f) ?: 0f else 0f
-        val safeHeadroom = if (maxBoost > 0f) 10.0.pow(-maxBoost.toDouble() / 20.0).toFloat() else 1.0f
-        val preampFactor = if (enabled) 10.0.pow(preampDb.toDouble() / 20.0).toFloat() else 1.0f
-        val eqGain = if (enabled) (preampFactor * safeHeadroom) else 1.0f
-        val normAttenuation = if (normEnabled && normDb < 0f) 10.0.pow(normDb.toDouble() / 20.0).toFloat() else 1.0f
-
-        baseVolume = (eqGain * normAttenuation).coerceIn(0.15f, 1.0f)
-        if (fadeJob?.isActive != true) {
-            player.volume = baseVolume
-        }
+        dspManager.applyCurve(
+            player = exoPlayer,
+            isFadeActive = fadeJob?.isActive == true
+        )
     }
 
     private fun startProgressTicker() {
