@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -46,6 +47,8 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Headphones
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.OpenInFull
@@ -55,10 +58,13 @@ import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Repeat
 import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Timer
+import androidx.compose.material.icons.rounded.Translate
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -155,6 +161,15 @@ internal fun SpotifyEncorePlayerView(
     sleepTimerRemainingMin: Int? = null,
     sleepTimerEndOfTrack: Boolean = false,
     onOpenSleepTimer: () -> Unit = {},
+    playbackSpeed: Float = 1.0f,
+    playbackPitchSemitones: Int = 0,
+    translatedLyricsMap: Map<Int, String> = emptyMap(),
+    isTranslatingLyrics: Boolean = false,
+    onOpenSpeedPitch: () -> Unit = {},
+    onOpenTrackInfo: () -> Unit = {},
+    onOpenOutputRouter: () -> Unit = {},
+    onTranslateLyrics: () -> Unit = {},
+    onShareLyricsCard: () -> Unit = {},
     onOpenLyrics: () -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onOpenComments: () -> Unit,
@@ -591,7 +606,92 @@ internal fun SpotifyEncorePlayerView(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(20.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // 5b. Tier 2 Utility Bar: Audio Output, Speed/Pitch, Track Stats
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        val isSpeedOrPitchModified = playbackSpeed != 1.0f || playbackPitchSemitones != 0
+                        val speedLabel = buildString {
+                            append(String.format(java.util.Locale.US, "%.2gx", playbackSpeed))
+                            if (playbackPitchSemitones != 0) {
+                                append(" · ")
+                                append(if (playbackPitchSemitones > 0) "+$playbackPitchSemitones" else "$playbackPitchSemitones")
+                                append("st")
+                            }
+                        }
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(Color.White.copy(alpha = 0.08f))
+                                    .clickable(onClick = onOpenOutputRouter)
+                                    .padding(horizontal = 11.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Headphones,
+                                    contentDescription = "Audio Output Device",
+                                    tint = Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = "Output",
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .background(
+                                        if (isSpeedOrPitchModified) AuraNeonLime.copy(alpha = 0.16f)
+                                        else Color.White.copy(alpha = 0.08f)
+                                    )
+                                    .clickable(onClick = onOpenSpeedPitch)
+                                    .padding(horizontal = 11.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Speed,
+                                    contentDescription = "Playback Speed & Pitch",
+                                    tint = if (isSpeedOrPitchModified) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                                Text(
+                                    text = if (isSpeedOrPitchModified) speedLabel else "1x",
+                                    color = if (isSpeedOrPitchModified) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.5.sp,
+                                    fontWeight = if (isSpeedOrPitchModified) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = onOpenTrackInfo,
+                            modifier = Modifier.size(34.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Info,
+                                contentDescription = "Track Info & Stats for Nerds",
+                                tint = Color.White.copy(alpha = 0.78f),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Signature Spotify Synced Lyrics Card (Automatically uses scanned cover art color, no borders, covers 5 lines)
                     val coverColor = palette.primary
@@ -728,6 +828,40 @@ internal fun SpotifyEncorePlayerView(
                                         }
                                     }
 
+                                    // AI Translate Lyrics Button
+                                    IconButton(
+                                        onClick = onTranslateLyrics,
+                                        modifier = Modifier.size(34.dp)
+                                    ) {
+                                        if (isTranslatingLyrics) {
+                                            CircularProgressIndicator(
+                                                color = AuraNeonLime,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        } else {
+                                            Icon(
+                                                imageVector = Icons.Rounded.Translate,
+                                                contentDescription = "AI Translate Lyrics",
+                                                tint = if (translatedLyricsMap.isNotEmpty()) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+
+                                    // Share Lyric Card Button
+                                    IconButton(
+                                        onClick = onShareLyricsCard,
+                                        modifier = Modifier.size(34.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.Share,
+                                            contentDescription = "Share Lyric Card",
+                                            tint = Color.White.copy(alpha = 0.85f),
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+
                                     // Lyrics Delayer / Time Setter Toggle Button (SimpMusic)
                                     IconButton(
                                         onClick = { showLyricsOffsetControl = !showLyricsOffsetControl },
@@ -849,6 +983,17 @@ internal fun SpotifyEncorePlayerView(
                                                     fontSize = 13.sp,
                                                     fontWeight = FontWeight.Medium,
                                                     color = Color.White.copy(alpha = 0.75f),
+                                                    lineHeight = 18.sp
+                                                )
+                                            }
+                                            val translatedCurrent = translatedLyricsMap[activeIdx]
+                                            if (!translatedCurrent.isNullOrBlank()) {
+                                                Spacer(modifier = Modifier.height(3.dp))
+                                                Text(
+                                                    text = translatedCurrent,
+                                                    fontSize = 13.5.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = AuraNeonLime.copy(alpha = 0.92f),
                                                     lineHeight = 18.sp
                                                 )
                                             }

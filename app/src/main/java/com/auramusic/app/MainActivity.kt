@@ -1,10 +1,12 @@
 package com.auramusic.app
 
 import android.Manifest
+import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -26,7 +28,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.auramusic.app.core.integrations.DeepLinkParser
 import com.auramusic.app.core.media.AuraMediaService
+import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.core.notifications.AuraNotificationManager
 import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.components.AuraLaunchSplash
@@ -73,8 +77,8 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Check if opened from an update notification
-        handleUpdateIntent(intent)
+        // Check if opened from an update notification or deep link / share intent
+        handleIncomingIntent(intent)
 
         try {
             val serviceIntent = Intent(this, AuraMediaService::class.java)
@@ -123,7 +127,23 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleUpdateIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            AuraPlayerManager.isVideoMode.value &&
+            AuraPlayerManager.isPlaying.value
+        ) {
+            runCatching {
+                enterPictureInPictureMode(
+                    PictureInPictureParams.Builder()
+                        .setAspectRatio(Rational(16, 9))
+                        .build()
+                )
+            }
+        }
     }
 
     private fun isUpdateNotificationIntent(intent: Intent?): Boolean {
@@ -135,11 +155,26 @@ class MainActivity : ComponentActivity() {
             intent.hasExtra("update_version")
     }
 
-    private fun handleUpdateIntent(intent: Intent?) {
+    private fun handleIncomingIntent(intent: Intent?) {
         if (intent?.getBooleanExtra("test_update", false) == true) {
             auraViewModel.triggerTestUpdateModal()
         } else if (isUpdateNotificationIntent(intent)) {
             auraViewModel.checkForUpdates(force = true)
+        }
+
+        val rawLink: String? = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.dataString
+            Intent.ACTION_SEND -> if (intent.type?.startsWith("text/") == true) {
+                intent.getStringExtra(Intent.EXTRA_TEXT)
+            } else {
+                null
+            }
+            else -> null
+        }
+        if (!rawLink.isNullOrBlank()) {
+            DeepLinkParser.parse(rawLink)?.let { deepLink ->
+                auraViewModel.handleDeepLink(deepLink)
+            }
         }
     }
 }

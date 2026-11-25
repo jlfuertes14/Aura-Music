@@ -391,6 +391,34 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val isLoadingLivePerformances by viewModel.isLoadingLivePerformances.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
 
+    val playbackSpeed by viewModel.playbackSpeed.collectAsState()
+    val playbackPitchSemitones by viewModel.playbackPitchSemitones.collectAsState()
+    val audioOutputDevices by viewModel.audioOutputDevices.collectAsState()
+    val selectedAudioOutputId by viewModel.selectedAudioOutputId.collectAsState()
+    val translatedLyricsMap by viewModel.translatedLyricsMap.collectAsState()
+    val isTranslatingLyrics by viewModel.isTranslatingLyrics.collectAsState()
+    val analyticsRange by viewModel.analyticsRange.collectAsState()
+    val analyticsSnapshot by viewModel.analyticsSnapshot.collectAsState()
+    val cachedTracks by viewModel.cachedTracks.collectAsState()
+    val pendingDeepLinkTab by viewModel.pendingDeepLinkTab.collectAsState()
+    val deepLinkExpandPlayer by viewModel.deepLinkExpandPlayer.collectAsState()
+
+    var isAnalyticsVisible by remember { mutableStateOf(false) }
+
+    LaunchedEffect(pendingDeepLinkTab) {
+        val targetTab = pendingDeepLinkTab ?: return@LaunchedEffect
+        isAnalyticsVisible = false
+        selectedTab = targetTab
+        viewModel.consumePendingDeepLinkTab()
+    }
+
+    LaunchedEffect(deepLinkExpandPlayer) {
+        if (deepLinkExpandPlayer) {
+            expandFullPlayer()
+            viewModel.consumeDeepLinkExpandPlayer()
+        }
+    }
+
     val collapseFullPlayer: () -> Unit = {
         if (isPlayerExpanded && !isPlayerCollapseTransition && !isPlayerExpandTransition) {
             collapseStartDragY = playerSheetDragOffsetY
@@ -606,6 +634,12 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             playlists = playlists,
                             stats = listeningStats,
                             recentlyPlayed = recentlyPlayed,
+                            cachedTracks = cachedTracks,
+                            onRefreshCachedTracks = { viewModel.refreshCachedTracks() },
+                            onOpenAnalytics = {
+                                viewModel.refreshAnalytics()
+                                isAnalyticsVisible = true
+                            },
                             downloadingIds = downloadingIds,
                             downloadProgressMap = downloadProgress,
                             currentPlayingId = currentTrack?.videoId,
@@ -1184,7 +1218,20 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     onLoadMoreComments = { viewModel.loadMorePlayerComments() },
                     onSelectCommentSort = { viewModel.selectCommentSort(it) },
                     onToggleCommentReplies = { viewModel.toggleCommentReplies(it) },
-                    onLoadMoreCommentReplies = { viewModel.loadMoreCommentReplies(it) }
+                    onLoadMoreCommentReplies = { viewModel.loadMoreCommentReplies(it) },
+                    rydData = rydData,
+                    playbackSpeed = playbackSpeed,
+                    playbackPitchSemitones = playbackPitchSemitones,
+                    onPlaybackSpeedChange = { viewModel.setPlaybackSpeed(it) },
+                    onPlaybackPitchChange = { viewModel.setPlaybackPitchSemitones(it) },
+                    onResetSpeedPitch = { viewModel.resetSpeedAndPitch() },
+                    audioOutputDevices = audioOutputDevices,
+                    selectedAudioOutputId = selectedAudioOutputId,
+                    onRefreshOutputDevices = { viewModel.refreshAudioOutputDevices() },
+                    onSelectAudioOutputDevice = { viewModel.selectAudioOutputDevice(it) },
+                    translatedLyricsMap = translatedLyricsMap,
+                    isTranslatingLyrics = isTranslatingLyrics,
+                    onTranslateLyrics = { viewModel.translateCurrentLyrics() }
                 )
             }
         }
@@ -1241,6 +1288,33 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         }
                     )
                     .zIndex(20f)
+            )
+        }
+
+        // Analytics & Aura Wrapped Full-Screen Overlay
+        BackHandler(enabled = isAnalyticsVisible && !isPlayerExpanded) {
+            isAnalyticsVisible = false
+        }
+        AnimatedVisibility(
+            visible = isAnalyticsVisible,
+            enter = slideInHorizontally(
+                initialOffsetX = { it },
+                animationSpec = tween(durationMillis = 280, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+            ) + fadeIn(animationSpec = tween(200)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { it },
+                animationSpec = tween(durationMillis = 250, easing = CubicBezierEasing(0.23f, 1f, 0.32f, 1f))
+            ) + fadeOut(animationSpec = tween(180)),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(15f)
+        ) {
+            AnalyticsScreen(
+                snapshot = analyticsSnapshot,
+                selectedRange = analyticsRange,
+                onSelectRange = { viewModel.refreshAnalytics(it) },
+                onPlayTrack = { track -> viewModel.playTrack(track) },
+                onBack = { isAnalyticsVisible = false }
             )
         }
 

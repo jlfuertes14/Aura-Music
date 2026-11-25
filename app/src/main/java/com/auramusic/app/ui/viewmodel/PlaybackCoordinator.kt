@@ -5,7 +5,11 @@ import android.widget.Toast
 import androidx.compose.ui.graphics.Color
 import com.auramusic.app.core.comments.YouTubeCommentsRepository
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
+import com.auramusic.app.core.integrations.DiscordRpcManager
+import com.auramusic.app.core.integrations.LastfmScrobbler
 import com.auramusic.app.core.lyrics.SimpMusicLyricsRepository
+import com.auramusic.app.core.media.AudioOutputDevice
+import com.auramusic.app.core.media.AudioOutputRouter
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.core.sponsorblock.SponsorBlockRepository
 import com.auramusic.app.data.AuraStorageRepository
@@ -19,6 +23,7 @@ import com.auramusic.app.domain.model.AuraYouTubeComment
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.ReturnYouTubeDislikeData
 import com.auramusic.app.ui.theme.extractAuraPaletteFromUrl
+import com.auramusic.app.ui.widget.AuraWidgetUpdater
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -85,7 +90,90 @@ internal class PlaybackCoordinator(
     private val _isLoadingLivePerformances = MutableStateFlow(false)
     val isLoadingLivePerformances: StateFlow<Boolean> = _isLoadingLivePerformances.asStateFlow()
 
+    // Tier 2: Speed/Pitch, Audio Output Devices, AI Lyrics Translation
+    val playbackSpeed: StateFlow<Float> = AuraPlayerManager.playbackSpeed
+    val playbackPitchSemitones: StateFlow<Int> = AuraPlayerManager.playbackPitchSemitones
+    val selectedAudioOutputId: StateFlow<Int?> = AuraPlayerManager.selectedAudioOutputId
+
+    private val _audioOutputDevices = MutableStateFlow<List<AudioOutputDevice>>(emptyList())
+    val audioOutputDevices: StateFlow<List<AudioOutputDevice>> = _audioOutputDevices.asStateFlow()
+
+    private val _translatedLyricsMap = MutableStateFlow<Map<Int, String>>(emptyMap())
+    val translatedLyricsMap: StateFlow<Map<Int, String>> = _translatedLyricsMap.asStateFlow()
+
+    private val _isTranslatingLyrics = MutableStateFlow(false)
+    val isTranslatingLyrics: StateFlow<Boolean> = _isTranslatingLyrics.asStateFlow()
+
+    private var lastWidgetStateKey: String? = null
+    private var lastLastfmNowPlayingVideoId: String? = null
+
     fun bindPlayerCallbacksAndObserveTrack() {
+        val savedSpeed = storage.loadPlaybackSpeed()
+        val savedPitch = storage.loadPlaybackPitchSemitones()
+        if (savedSpeed != 1.0f) AuraPlayerManager.setPlaybackSpeed(savedSpeed)
+        if (savedPitch != 0) AuraPlayerManager.setPlaybackPitchSemitones(savedPitch)
+        refreshAudioOutputDevices()
+
+        AuraPlayerManager.onTrackStateChangedHook = { track, isPlaying, positionMs, durationMs ->
+            val widgetKey = "${track?.videoId}|$isPlaying"
+            if (widgetKey != lastWidgetStateKey) {
+                lastWidgetStateKey = widgetKey
+                scope.launch(Dispatchers.IO) {
+                    runCatching { AuraWidgetUpdater.updateAll(application) }
+                }
+            }
+            if (settings.discordRpcEnabled.value && settings.discordToken.value.isNotBlank()) {
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        if (track != null) {
+                            DiscordRpcManager.updatePresence(track, isPlaying, positionMs, durationMs)
+                        } else {
+                            DiscordRpcManager.clearPresence()
+                        }
+                    }
+                }
+            }
+            if (track != null && isPlaying && track.videoId != lastLastfmNowPlayingVideoId &&
+                settings.lastfmEnabled.value &&
+                settings.lastfmSessionKey.value.isNotBlank() &&
+                settings.lastfmApiKey.value.isNotBlank() &&
+                settings.lastfmApiSecret.value.isNotBlank()
+            ) {
+                lastLastfmNowPlayingVideoId = track.videoId
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        LastfmScrobbler.updateNowPlaying(
+                            track = track,
+                            sessionKey = settings.lastfmSessionKey.value,
+                            apiKey = settings.lastfmApiKey.value,
+                            apiSecret = settings.lastfmApiSecret.value
+                        )
+                    }
+                }
+            }
+        }
+
+        AuraPlayerManager.onTrackScrobbleEligibleHook = { track, playedMs ->
+            if (settings.lastfmEnabled.value &&
+                settings.lastfmSessionKey.value.isNotBlank() &&
+                settings.lastfmApiKey.value.isNotBlank() &&
+                settings.lastfmApiSecret.value.isNotBlank()
+            ) {
+                val timestampSec = (System.currentTimeMillis() / 1000L) - (playedMs / 1000L).coerceAtLeast(0L)
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        LastfmScrobbler.scrobble(
+                            track = track,
+                            timestampSec = timestampSec,
+                            sessionKey = settings.lastfmSessionKey.value,
+                            apiKey = settings.lastfmApiKey.value,
+                            apiSecret = settings.lastfmApiSecret.value
+                        )
+                    }
+                }
+            }
+        }
+
         AuraPlayerManager.onTrackFinishedCallback = { finishedTrack ->
             storage.recordRecommendationSignal(finishedTrack, "complete")
             discovery.applyLocalRecommendations()
@@ -124,6 +212,7 @@ internal class PlaybackCoordinator(
                     ?: settings.defaultLyricsOffsetMs.value
                 _lyricsOffsetMs.value = savedOffset
                 _nowPlayingVideoInfo.value = null
+                _translatedLyricsMap.value = emptyMap()
 
                 val cachedOfflinePalette = storage.loadOfflinePalette(canonicalVid)
                     ?: storage.loadOfflinePalette(track.videoId)
@@ -183,7 +272,23 @@ internal class PlaybackCoordinator(
 
                 _palette.value = paletteDef.await()
                 if (lyricsDef != null) {
-                    _lyrics.value = lyricsDef.await()
+                    val loadedLyrics = lyricsDef.await()
+                    _lyrics.value = loadedLyrics
+                    if (loadedLyrics != null && settings.aiTranslationEnabled.value &&
+                        settings.aiApiKey.value.isNotBlank() && loadedLyrics.syncedLines.isNotEmpty()
+                    ) {
+                        val config = settings.currentAiTranslationConfig()
+                        launch(Dispatchers.IO) {
+                            SimpMusicLyricsRepository.translateLyrics(loadedLyrics, config, storage)
+                                .onSuccess { map ->
+                                    if (AuraPlayerManager.currentTrack.value?.videoId == track.videoId ||
+                                        AuraPlayerManager.originalAudioTrack?.videoId == canonicalVid
+                                    ) {
+                                        _translatedLyricsMap.value = map
+                                    }
+                                }
+                        }
+                    }
                 }
                 AuraPlayerManager.setSponsorSegments(sponsorDef.await())
                 val videoInfo = videoInfoDef.await()
@@ -613,5 +718,64 @@ internal class PlaybackCoordinator(
         AuraPlayerManager.playTrack(track, listOf(track))
         AuraPlayerManager.exoPlayer?.seekTo(currentPos)
         Toast.makeText(application, "Playing: ${track.title}", Toast.LENGTH_SHORT).show()
+    }
+
+    // --- Tier 2: Speed/Pitch, Output Routing, AI Lyrics Translation ---
+    fun setPlaybackSpeed(speed: Float) {
+        val clamped = speed.coerceIn(0.25f, 2.0f)
+        AuraPlayerManager.setPlaybackSpeed(clamped)
+        storage.savePlaybackSpeed(clamped)
+    }
+
+    fun setPlaybackPitchSemitones(semitones: Int) {
+        val clamped = semitones.coerceIn(-12, 12)
+        AuraPlayerManager.setPlaybackPitchSemitones(clamped)
+        storage.savePlaybackPitchSemitones(clamped)
+    }
+
+    fun resetSpeedAndPitch() {
+        AuraPlayerManager.resetSpeedAndPitch()
+        storage.savePlaybackSpeed(1.0f)
+        storage.savePlaybackPitchSemitones(0)
+    }
+
+    fun refreshAudioOutputDevices() {
+        _audioOutputDevices.value = AudioOutputRouter.listOutputDevices(application)
+    }
+
+    fun selectAudioOutputDevice(device: AudioOutputDevice?) {
+        AuraPlayerManager.selectAudioOutputDevice(device)
+        refreshAudioOutputDevices()
+    }
+
+    fun translateCurrentLyrics() {
+        val currentLyrics = _lyrics.value
+        if (currentLyrics == null || currentLyrics.syncedLines.isEmpty()) {
+            Toast.makeText(application, "No synced lyrics available to translate", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (_translatedLyricsMap.value.isNotEmpty()) {
+            _translatedLyricsMap.value = emptyMap()
+            return
+        }
+        val config = settings.currentAiTranslationConfig()
+        if (config.apiKey.isBlank() && config.customBaseUrl.isBlank()) {
+            Toast.makeText(application, "Set an AI API key in Settings > Lyrics & Romanization", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (_isTranslatingLyrics.value) return
+        _isTranslatingLyrics.value = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                SimpMusicLyricsRepository.translateLyrics(currentLyrics, config, storage)
+            }
+            _isTranslatingLyrics.value = false
+            result.onSuccess { map ->
+                _translatedLyricsMap.value = map
+                Toast.makeText(application, "Translated ${map.size} lyric lines", Toast.LENGTH_SHORT).show()
+            }.onFailure { err ->
+                Toast.makeText(application, err.message ?: "Lyrics translation failed", Toast.LENGTH_SHORT).show()
+            }
+        }
     }
 }

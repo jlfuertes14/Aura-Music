@@ -13,12 +13,47 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.QueueMusic
+import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Download
+import androidx.compose.material.icons.rounded.Favorite
+import androidx.compose.material.icons.rounded.FavoriteBorder
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.LiveTv
+import androidx.compose.material.icons.rounded.Lyrics
+import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.PlaylistAdd
+import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.SpeakerGroup
+import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -26,6 +61,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -33,10 +69,18 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import com.auramusic.app.core.media.AudioOutputDevice
+import com.auramusic.app.core.media.AudioOutputRouter
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.ArtistDetail
 import com.auramusic.app.domain.model.AuraCommentSort
@@ -47,10 +91,16 @@ import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.AuraVideoInfo
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.NowPlayingStyle
+import com.auramusic.app.domain.model.ReturnYouTubeDislikeData
 import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCommentsBottomSheet
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
+import com.auramusic.app.ui.components.AuraOutputSheet
+import com.auramusic.app.ui.components.AuraShareLyricsSheet
 import com.auramusic.app.ui.components.AuraSleepTimerSheet
+import com.auramusic.app.ui.components.AuraSpeedPitchSheet
+import com.auramusic.app.ui.components.AuraTrackInfoSheet
+import com.auramusic.app.ui.components.ForceWhiteSystemBarsEffect
 import com.auramusic.app.ui.components.formatSleepTimerStatus
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricStrip
@@ -58,13 +108,15 @@ import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsTabView
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicNowPlayingView
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicView
 import com.auramusic.app.ui.screens.player.spotify.LivePerformancesModal
-import com.auramusic.app.ui.screens.player.spotify.NowPlayingOptionsModal
 import com.auramusic.app.ui.screens.player.spotify.SpotifyEncorePlayerView
 import com.auramusic.app.ui.screens.player.spotify.SpotifyLyricsOverlay
 import com.auramusic.app.ui.screens.player.spotify.SpotifyQueueSheet
 import com.auramusic.app.ui.screens.player.spotify.SpotifyVideoPlayerSurface
+import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraViolet
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
+import com.auramusic.app.ui.theme.TextSecondary
+import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -127,7 +179,20 @@ fun AuraNowPlayingSheet(
     onLoadMoreComments: () -> Unit = {},
     onSelectCommentSort: (AuraCommentSort) -> Unit = {},
     onToggleCommentReplies: (String) -> Unit = {},
-    onLoadMoreCommentReplies: (String) -> Unit = {}
+    onLoadMoreCommentReplies: (String) -> Unit = {},
+    rydData: ReturnYouTubeDislikeData? = null,
+    playbackSpeed: Float = 1.0f,
+    playbackPitchSemitones: Int = 0,
+    onPlaybackSpeedChange: (Float) -> Unit = { AuraPlayerManager.setPlaybackSpeed(it) },
+    onPlaybackPitchChange: (Int) -> Unit = { AuraPlayerManager.setPlaybackPitchSemitones(it) },
+    onResetSpeedPitch: () -> Unit = { AuraPlayerManager.resetSpeedAndPitch() },
+    audioOutputDevices: List<AudioOutputDevice> = emptyList(),
+    selectedAudioOutputId: Int? = null,
+    onRefreshOutputDevices: () -> Unit = {},
+    onSelectAudioOutputDevice: (AudioOutputDevice?) -> Unit = { AuraPlayerManager.selectAudioOutputDevice(it) },
+    translatedLyricsMap: Map<Int, String> = emptyMap(),
+    isTranslatingLyrics: Boolean = false,
+    onTranslateLyrics: () -> Unit = {}
 ) {
     var isLyricsExpanded by remember { mutableStateOf(false) }
     var lyricsCardBounds by remember { mutableStateOf<Rect?>(null) }
@@ -141,6 +206,10 @@ fun AuraNowPlayingSheet(
     var isCreatePlaylistModalVisible by remember { mutableStateOf(false) }
     var isCommentsVisible by remember { mutableStateOf(false) }
     var isSleepTimerSheetVisible by remember { mutableStateOf(false) }
+    var isSpeedPitchSheetVisible by remember { mutableStateOf(false) }
+    var isTrackInfoSheetVisible by remember { mutableStateOf(false) }
+    var isOutputSheetVisible by remember { mutableStateOf(false) }
+    var isShareLyricsSheetVisible by remember { mutableStateOf(false) }
     var appleMusicActiveView by remember { mutableStateOf(AppleMusicView.MAIN) }
     val playbackMode by AuraPlayerManager.playbackMode.collectAsState()
     val sleepTimerRemainingMin by AuraPlayerManager.sleepTimerRemainingMin.collectAsState()
@@ -196,14 +265,28 @@ fun AuraNowPlayingSheet(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // Always dismiss any lingering search input focus / soft keyboard when opening player or its modals
-    LaunchedEffect(Unit, isQueueSheetVisible, isOptionsModalVisible, isLyricsExpanded, isLivePerformancesModalVisible, isAddToPlaylistModalVisible, isCreatePlaylistModalVisible, isCommentsVisible, isSleepTimerSheetVisible) {
+    LaunchedEffect(
+        Unit, isQueueSheetVisible, isOptionsModalVisible, isLyricsExpanded,
+        isLivePerformancesModalVisible, isAddToPlaylistModalVisible, isCreatePlaylistModalVisible,
+        isCommentsVisible, isSleepTimerSheetVisible, isSpeedPitchSheetVisible,
+        isTrackInfoSheetVisible, isOutputSheetVisible, isShareLyricsSheetVisible
+    ) {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
     }
 
     // Intercept back gesture / button to smoothly close open sheets / modals
-    BackHandler(enabled = isLyricsExpanded || isLivePerformancesModalVisible || isOptionsModalVisible || isQueueSheetVisible || isAddToPlaylistModalVisible || isCreatePlaylistModalVisible || isCommentsVisible || isSleepTimerSheetVisible) {
+    BackHandler(
+        enabled = isLyricsExpanded || isLivePerformancesModalVisible || isOptionsModalVisible ||
+            isQueueSheetVisible || isAddToPlaylistModalVisible || isCreatePlaylistModalVisible ||
+            isCommentsVisible || isSleepTimerSheetVisible || isSpeedPitchSheetVisible ||
+            isTrackInfoSheetVisible || isOutputSheetVisible || isShareLyricsSheetVisible
+    ) {
         when {
+            isShareLyricsSheetVisible -> isShareLyricsSheetVisible = false
+            isOutputSheetVisible -> isOutputSheetVisible = false
+            isTrackInfoSheetVisible -> isTrackInfoSheetVisible = false
+            isSpeedPitchSheetVisible -> isSpeedPitchSheetVisible = false
             isSleepTimerSheetVisible -> isSleepTimerSheetVisible = false
             isCommentsVisible -> isCommentsVisible = false
             isCreatePlaylistModalVisible -> isCreatePlaylistModalVisible = false
@@ -342,6 +425,24 @@ fun AuraNowPlayingSheet(
                             sleepTimerRemainingMin = sleepTimerRemainingMin,
                             sleepTimerEndOfTrack = sleepTimerEndOfTrack,
                             onOpenSleepTimer = { isSleepTimerSheetVisible = true },
+                            playbackSpeed = playbackSpeed,
+                            playbackPitchSemitones = playbackPitchSemitones,
+                            translatedLyricsMap = translatedLyricsMap,
+                            isTranslatingLyrics = isTranslatingLyrics,
+                            onOpenSpeedPitch = { isSpeedPitchSheetVisible = true },
+                            onOpenTrackInfo = { isTrackInfoSheetVisible = true },
+                            onOpenOutputRouter = {
+                                onRefreshOutputDevices()
+                                isOutputSheetVisible = true
+                            },
+                            onTranslateLyrics = onTranslateLyrics,
+                            onShareLyricsCard = {
+                                if (lyricsAvailable) {
+                                    isShareLyricsSheetVisible = true
+                                } else {
+                                    Toast.makeText(context, "No lyrics loaded to share", Toast.LENGTH_SHORT).show()
+                                }
+                            },
                             onOpenLyrics = openLyrics,
                             onAdjustLyricsOffset = onAdjustLyricsOffset,
                             onOpenComments = { isCommentsVisible = true; onLoadComments(track.videoId) },
@@ -505,7 +606,7 @@ fun AuraNowPlayingSheet(
 
         // 3-Dot Options Bottom Sheet Modal
         if (isOptionsModalVisible) {
-            NowPlayingOptionsModal(
+            AuraNowPlayingOptionsSheet(
                 track = track,
                 currentStyle = currentStyle,
                 isFavorite = isFavorite,
@@ -552,14 +653,6 @@ fun AuraNowPlayingSheet(
                     AuraPlayerManager.enqueueTrack(track)
                     isOptionsModalVisible = false
                 },
-                onOpenQueue = {
-                    isOptionsModalVisible = false
-                    isQueueSheetVisible = true
-                },
-                onOpenLyrics = {
-                    isOptionsModalVisible = false
-                    isLyricsExpanded = true
-                },
                 isDownloaded = isDownloaded,
                 isDownloading = isDownloading,
                 onDownloadTrack = onDownloadTrack?.let { callback -> { isOptionsModalVisible = false; callback(track) } },
@@ -568,6 +661,36 @@ fun AuraNowPlayingSheet(
                 onOpenSleepTimer = {
                     isOptionsModalVisible = false
                     isSleepTimerSheetVisible = true
+                },
+                playbackSpeed = playbackSpeed,
+                playbackPitchSemitones = playbackPitchSemitones,
+                onOpenSpeedPitch = {
+                    isOptionsModalVisible = false
+                    isSpeedPitchSheetVisible = true
+                },
+                onOpenOutputRouter = {
+                    isOptionsModalVisible = false
+                    onRefreshOutputDevices()
+                    isOutputSheetVisible = true
+                },
+                onOpenTrackInfo = {
+                    isOptionsModalVisible = false
+                    isTrackInfoSheetVisible = true
+                },
+                lyricsAvailable = lyricsAvailable,
+                hasTranslatedLyrics = translatedLyricsMap.isNotEmpty(),
+                isTranslatingLyrics = isTranslatingLyrics,
+                onTranslateLyrics = {
+                    isOptionsModalVisible = false
+                    onTranslateLyrics()
+                },
+                onShareLyricsCard = {
+                    isOptionsModalVisible = false
+                    if (lyricsAvailable) {
+                        isShareLyricsSheetVisible = true
+                    } else {
+                        Toast.makeText(context, "No lyrics loaded to share", Toast.LENGTH_SHORT).show()
+                    }
                 }
             )
         }
@@ -657,6 +780,305 @@ fun AuraNowPlayingSheet(
                 containerColor = modalContainerColor
             )
         }
+
+        if (isSpeedPitchSheetVisible) {
+            AuraSpeedPitchSheet(
+                speed = playbackSpeed,
+                pitchSemitones = playbackPitchSemitones,
+                onSpeedChange = onPlaybackSpeedChange,
+                onPitchChange = onPlaybackPitchChange,
+                onReset = onResetSpeedPitch,
+                onDismiss = { isSpeedPitchSheetVisible = false }
+            )
+        }
+
+        if (isTrackInfoSheetVisible) {
+            AuraTrackInfoSheet(
+                track = track,
+                rydData = rydData,
+                description = videoInfo?.description.orEmpty(),
+                onSeekToSec = { sec ->
+                    onSeekTo(sec.toFloat())
+                    isTrackInfoSheetVisible = false
+                },
+                onDismiss = { isTrackInfoSheetVisible = false }
+            )
+        }
+
+        if (isOutputSheetVisible) {
+            val devices = audioOutputDevices.ifEmpty { AudioOutputRouter.listOutputDevices(context) }
+            AuraOutputSheet(
+                devices = devices,
+                selectedDeviceId = selectedAudioOutputId,
+                onSelectDevice = { dev ->
+                    onSelectAudioOutputDevice(dev)
+                    isOutputSheetVisible = false
+                },
+                onDismiss = { isOutputSheetVisible = false }
+            )
+        }
+
+        if (isShareLyricsSheetVisible && displayLyrics != null) {
+            AuraShareLyricsSheet(
+                track = track,
+                lyrics = displayLyrics,
+                palette = palette,
+                onDismiss = { isShareLyricsSheetVisible = false }
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AuraNowPlayingOptionsSheet(
+    track: AuraTrack,
+    currentStyle: NowPlayingStyle,
+    isFavorite: Boolean,
+    isVideoMode: Boolean,
+    modalContainerColor: Color,
+    onDismiss: () -> Unit,
+    onToggleVideoMode: () -> Unit,
+    onOpenLivePerformances: () -> Unit,
+    onToggleTheme: () -> Unit,
+    mainLyricsProvider: String,
+    onSwitchLyricsProvider: (String) -> Unit,
+    onGoToArtist: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onAddToPlaylist: () -> Unit,
+    onPlayNext: () -> Unit,
+    onAddToQueue: () -> Unit,
+    isDownloaded: Boolean,
+    isDownloading: Boolean,
+    onDownloadTrack: (() -> Unit)?,
+    onRemoveDownload: (() -> Unit)?,
+    sleepTimerStatus: String?,
+    onOpenSleepTimer: () -> Unit,
+    playbackSpeed: Float,
+    playbackPitchSemitones: Int,
+    onOpenSpeedPitch: () -> Unit,
+    onOpenOutputRouter: () -> Unit,
+    onOpenTrackInfo: () -> Unit,
+    lyricsAvailable: Boolean,
+    hasTranslatedLyrics: Boolean,
+    isTranslatingLyrics: Boolean,
+    onTranslateLyrics: () -> Unit,
+    onShareLyricsCard: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = modalContainerColor,
+        dragHandle = {
+            Surface(
+                modifier = Modifier.padding(vertical = 10.dp),
+                color = Color.White.copy(alpha = 0.20f),
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Spacer(modifier = Modifier.size(width = 36.dp, height = 4.dp))
+            }
+        }
+    ) {
+        ForceWhiteSystemBarsEffect()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 22.dp, vertical = 6.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp)
+            ) {
+                AsyncImage(
+                    model = track.highResArtworkUrl,
+                    contentDescription = track.title,
+                    modifier = Modifier
+                        .size(50.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                    contentScale = ContentScale.Crop
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = track.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = track.artist,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(8.dp))
+
+            val speedPitchLabel = if (playbackSpeed != 1.0f || playbackPitchSemitones != 0) {
+                val speedTxt = String.format(Locale.US, "%.2fx", playbackSpeed)
+                val pitchTxt = if (playbackPitchSemitones == 0) "" else " · ${if (playbackPitchSemitones > 0) "+$playbackPitchSemitones" else "$playbackPitchSemitones"}st"
+                "Speed & Pitch ($speedTxt$pitchTxt)"
+            } else {
+                "Speed & Pitch"
+            }
+            OptionsSheetRow(
+                icon = Icons.Rounded.Speed,
+                label = speedPitchLabel,
+                accentTint = playbackSpeed != 1.0f || playbackPitchSemitones != 0,
+                onClick = onOpenSpeedPitch
+            )
+            OptionsSheetRow(
+                icon = Icons.Rounded.SpeakerGroup,
+                label = "Audio Output Device",
+                onClick = onOpenOutputRouter
+            )
+            OptionsSheetRow(
+                icon = Icons.Rounded.Info,
+                label = "Track Info & Stats for Nerds",
+                onClick = onOpenTrackInfo
+            )
+            if (lyricsAvailable) {
+                OptionsSheetRow(
+                    icon = Icons.Rounded.Translate,
+                    label = when {
+                        isTranslatingLyrics -> "Translating Lyrics…"
+                        hasTranslatedLyrics -> "Hide AI Translation"
+                        else -> "AI Translate Lyrics"
+                    },
+                    accentTint = hasTranslatedLyrics,
+                    onClick = onTranslateLyrics
+                )
+                OptionsSheetRow(
+                    icon = Icons.Rounded.Share,
+                    label = "Share Lyric Card",
+                    onClick = onShareLyricsCard
+                )
+            }
+
+            HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 0.5.dp)
+            Spacer(modifier = Modifier.height(4.dp))
+
+            OptionsSheetRow(
+                icon = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
+                label = if (isVideoMode) "Switch to Audio Mode" else "Watch Official Video",
+                onClick = onToggleVideoMode
+            )
+
+            if (isDownloaded && onRemoveDownload != null) {
+                OptionsSheetRow(
+                    icon = Icons.Rounded.DeleteOutline,
+                    label = "Remove from Downloads",
+                    onClick = onRemoveDownload
+                )
+            } else if (onDownloadTrack != null) {
+                OptionsSheetRow(
+                    icon = if (isDownloaded) Icons.Rounded.DeleteOutline else Icons.Rounded.Download,
+                    label = if (isDownloading) "Downloading…" else if (isDownloaded) "Remove from Downloads" else "Download Song",
+                    onClick = {
+                        if (isDownloaded && onRemoveDownload != null) onRemoveDownload() else onDownloadTrack()
+                    }
+                )
+            }
+
+            OptionsSheetRow(
+                icon = Icons.Rounded.LiveTv,
+                label = "More Videos",
+                onClick = onOpenLivePerformances
+            )
+
+            val nextThemeLabel = if (currentStyle == NowPlayingStyle.SPOTIFY) "Liquid Glass" else "Default"
+            OptionsSheetRow(
+                icon = Icons.Rounded.Palette,
+                label = "Switch Theme to $nextThemeLabel",
+                onClick = onToggleTheme
+            )
+
+            val providers = listOf("SimpMusic", "BetterLyrics", "LRCLIB", "YouTube")
+            val curIdx = providers.indexOfFirst { it.equals(mainLyricsProvider, ignoreCase = true) }
+            val nextLyricsProvider = providers[(curIdx + 1).mod(providers.size)]
+            OptionsSheetRow(
+                icon = Icons.Rounded.Lyrics,
+                label = "Switch Lyrics Provider ($mainLyricsProvider → $nextLyricsProvider)",
+                onClick = { onSwitchLyricsProvider(nextLyricsProvider) }
+            )
+
+            OptionsSheetRow(
+                icon = Icons.Rounded.Bedtime,
+                label = if (sleepTimerStatus != null) "Sleep Timer ($sleepTimerStatus)" else "Sleep Timer",
+                accentTint = sleepTimerStatus != null,
+                onClick = onOpenSleepTimer
+            )
+
+            OptionsSheetRow(
+                icon = Icons.Rounded.Person,
+                label = "View Artist",
+                onClick = onGoToArtist
+            )
+            OptionsSheetRow(
+                icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
+                label = if (isFavorite) "Remove from Liked Songs" else "Add to Liked Songs",
+                onClick = onToggleFavorite
+            )
+            OptionsSheetRow(
+                icon = Icons.Rounded.PlaylistAdd,
+                label = "Add to Playlist",
+                onClick = onAddToPlaylist
+            )
+            OptionsSheetRow(
+                icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                label = "Play Next",
+                onClick = onPlayNext
+            )
+            OptionsSheetRow(
+                icon = Icons.Rounded.PlaylistAdd,
+                label = "Add to Queue",
+                onClick = onAddToQueue
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun OptionsSheetRow(
+    icon: ImageVector,
+    label: String,
+    accentTint: Boolean = false,
+    onClick: () -> Unit
+) {
+    val tint = if (accentTint) AuraNeonLime else Color.White
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(modifier = Modifier.width(16.dp))
+        Text(
+            text = label,
+            color = tint,
+            fontWeight = FontWeight.Medium,
+            fontSize = 15.sp
+        )
     }
 }
 

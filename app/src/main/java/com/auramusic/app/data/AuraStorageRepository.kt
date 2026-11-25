@@ -6,6 +6,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import com.auramusic.app.core.recommendations.LocalRecommendationEngine
@@ -1097,6 +1098,140 @@ class AuraStorageRepository @JvmOverloads constructor(
         prefsStore.putBoolean(KEY_RELEASE_NOTIFICATIONS_ENABLED, enabled)
     }
 
+    // --- Tier 2 Preferences (Speed/Pitch, AI Lyrics, Smart Downloads, Auto-Backup, Integrations) ---
+    fun loadPlaybackSpeed(): Float =
+        prefsStore.getFloat(KEY_PLAYBACK_SPEED, 1.0f).coerceIn(0.25f, 2.0f)
+
+    fun savePlaybackSpeed(speed: Float) {
+        prefsStore.putFloat(KEY_PLAYBACK_SPEED, speed.coerceIn(0.25f, 2.0f))
+    }
+
+    fun loadPlaybackPitchSemitones(): Int =
+        prefsStore.getInt(KEY_PLAYBACK_PITCH_SEMITONES, 0).coerceIn(-12, 12)
+
+    fun savePlaybackPitchSemitones(semitones: Int) {
+        prefsStore.putInt(KEY_PLAYBACK_PITCH_SEMITONES, semitones.coerceIn(-12, 12))
+    }
+
+    fun loadAiProvider(): String =
+        prefsStore.getString(KEY_AI_PROVIDER, "GEMINI") ?: "GEMINI"
+
+    fun saveAiProvider(provider: String) {
+        prefsStore.putString(KEY_AI_PROVIDER, provider)
+    }
+
+    fun loadAiApiKey(): String =
+        prefsStore.getString(KEY_AI_API_KEY, "") ?: ""
+
+    fun saveAiApiKey(apiKey: String) {
+        prefsStore.putString(KEY_AI_API_KEY, apiKey)
+    }
+
+    fun loadAiModelId(): String =
+        prefsStore.getString(KEY_AI_MODEL_ID, "") ?: ""
+
+    fun saveAiModelId(modelId: String) {
+        prefsStore.putString(KEY_AI_MODEL_ID, modelId)
+    }
+
+    fun loadAiBaseUrl(): String =
+        prefsStore.getString(KEY_AI_BASE_URL, "") ?: ""
+
+    fun saveAiBaseUrl(baseUrl: String) {
+        prefsStore.putString(KEY_AI_BASE_URL, baseUrl)
+    }
+
+    fun loadAiTargetLanguage(): String =
+        prefsStore.getString(KEY_AI_TARGET_LANGUAGE, "English") ?: "English"
+
+    fun saveAiTargetLanguage(language: String) {
+        prefsStore.putString(KEY_AI_TARGET_LANGUAGE, language)
+    }
+
+    fun loadAiTranslationEnabled(): Boolean =
+        prefsStore.getBoolean(KEY_AI_TRANSLATION_ENABLED, false)
+
+    fun saveAiTranslationEnabled(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_AI_TRANSLATION_ENABLED, enabled)
+    }
+
+    fun loadSmartDownloadsEnabled(): Boolean =
+        prefsStore.getBoolean(KEY_SMART_DOWNLOADS_ENABLED, false)
+
+    fun saveSmartDownloadsEnabled(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_SMART_DOWNLOADS_ENABLED, enabled)
+    }
+
+    fun loadSmartDownloadsLimit(): Int =
+        prefsStore.getInt(KEY_SMART_DOWNLOADS_LIMIT, 25).coerceIn(10, 500)
+
+    fun saveSmartDownloadsLimit(limit: Int) {
+        prefsStore.putInt(KEY_SMART_DOWNLOADS_LIMIT, limit.coerceIn(10, 500))
+    }
+
+    fun loadAutoBackupFrequency(): String =
+        prefsStore.getString(KEY_AUTO_BACKUP_FREQUENCY, "OFF") ?: "OFF"
+
+    fun saveAutoBackupFrequency(frequency: String) {
+        prefsStore.putString(KEY_AUTO_BACKUP_FREQUENCY, frequency)
+    }
+
+    fun loadAutoBackupKeepCount(): Int =
+        prefsStore.getInt(KEY_AUTO_BACKUP_KEEP_COUNT, 5).coerceIn(1, 50)
+
+    fun saveAutoBackupKeepCount(keepCount: Int) {
+        prefsStore.putInt(KEY_AUTO_BACKUP_KEEP_COUNT, keepCount.coerceIn(1, 50))
+    }
+
+    fun loadLastfmSessionKey(): String =
+        prefsStore.getString(KEY_LASTFM_SESSION_KEY, "") ?: ""
+
+    fun saveLastfmSessionKey(sessionKey: String) {
+        prefsStore.putString(KEY_LASTFM_SESSION_KEY, sessionKey)
+    }
+
+    fun loadLastfmApiKey(): String =
+        prefsStore.getString(KEY_LASTFM_API_KEY, "") ?: ""
+
+    fun saveLastfmApiKey(apiKey: String) {
+        prefsStore.putString(KEY_LASTFM_API_KEY, apiKey)
+    }
+
+    fun loadLastfmApiSecret(): String =
+        prefsStore.getString(KEY_LASTFM_API_SECRET, "") ?: ""
+
+    fun saveLastfmApiSecret(apiSecret: String) {
+        prefsStore.putString(KEY_LASTFM_API_SECRET, apiSecret)
+    }
+
+    fun loadLastfmEnabled(): Boolean =
+        prefsStore.getBoolean(KEY_LASTFM_ENABLED, false)
+
+    fun saveLastfmEnabled(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_LASTFM_ENABLED, enabled)
+    }
+
+    fun loadDiscordToken(): String =
+        prefsStore.getString(KEY_DISCORD_TOKEN, "") ?: ""
+
+    fun saveDiscordToken(token: String) {
+        prefsStore.putString(KEY_DISCORD_TOKEN, token)
+    }
+
+    fun loadDiscordRpcEnabled(): Boolean =
+        prefsStore.getBoolean(KEY_DISCORD_RPC_ENABLED, false)
+
+    fun saveDiscordRpcEnabled(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_DISCORD_RPC_ENABLED, enabled)
+    }
+
+    fun loadYtmCookie(): String =
+        prefsStore.getString(KEY_YTM_COOKIE, "") ?: ""
+
+    fun saveYtmCookie(cookie: String) {
+        prefsStore.putString(KEY_YTM_COOKIE, cookie)
+    }
+
     fun exportBackupJson(): String {
         val favoritesArr = serializeTrackArray(loadFavorites())
         val playlistsArr = JSONArray().apply {
@@ -1447,6 +1582,27 @@ class AuraStorageRepository @JvmOverloads constructor(
         val KEY_SKIP_CROSSFADE_WITHIN_ALBUM = booleanPreferencesKey("setting_skip_crossfade_within_album")
         val KEY_ACTIVE_AUTO_EQ_PROFILE_ID = stringPreferencesKey("setting_active_auto_eq_profile_id")
         val KEY_RELEASE_NOTIFICATIONS_ENABLED = booleanPreferencesKey("setting_release_notifications_enabled")
+
+        // Tier 2 Preferences
+        val KEY_PLAYBACK_SPEED = floatPreferencesKey("setting_playback_speed")
+        val KEY_PLAYBACK_PITCH_SEMITONES = intPreferencesKey("setting_playback_pitch_semitones")
+        val KEY_AI_PROVIDER = stringPreferencesKey("setting_ai_provider")
+        val KEY_AI_API_KEY = stringPreferencesKey("setting_ai_api_key")
+        val KEY_AI_MODEL_ID = stringPreferencesKey("setting_ai_model_id")
+        val KEY_AI_BASE_URL = stringPreferencesKey("setting_ai_base_url")
+        val KEY_AI_TARGET_LANGUAGE = stringPreferencesKey("setting_ai_target_language")
+        val KEY_AI_TRANSLATION_ENABLED = booleanPreferencesKey("setting_ai_translation_enabled")
+        val KEY_SMART_DOWNLOADS_ENABLED = booleanPreferencesKey("setting_smart_downloads_enabled")
+        val KEY_SMART_DOWNLOADS_LIMIT = intPreferencesKey("setting_smart_downloads_limit")
+        val KEY_AUTO_BACKUP_FREQUENCY = stringPreferencesKey("setting_auto_backup_frequency")
+        val KEY_AUTO_BACKUP_KEEP_COUNT = intPreferencesKey("setting_auto_backup_keep_count")
+        val KEY_LASTFM_SESSION_KEY = stringPreferencesKey("setting_lastfm_session_key")
+        val KEY_LASTFM_API_KEY = stringPreferencesKey("setting_lastfm_api_key")
+        val KEY_LASTFM_API_SECRET = stringPreferencesKey("setting_lastfm_api_secret")
+        val KEY_LASTFM_ENABLED = booleanPreferencesKey("setting_lastfm_enabled")
+        val KEY_DISCORD_TOKEN = stringPreferencesKey("setting_discord_token")
+        val KEY_DISCORD_RPC_ENABLED = booleanPreferencesKey("setting_discord_rpc_enabled")
+        val KEY_YTM_COOKIE = stringPreferencesKey("setting_ytm_cookie")
 
         @Volatile
         var processMigrated = false

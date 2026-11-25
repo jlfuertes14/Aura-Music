@@ -6,10 +6,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.auramusic.app.AuraApplication
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
+import com.auramusic.app.core.integrations.AuraDeepLink
+import com.auramusic.app.core.lyrics.AiLyricsTranslator
+import com.auramusic.app.core.media.AudioOutputDevice
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.core.update.AuraReleaseInfo
 import com.auramusic.app.core.update.UpdateDownloadProgress
 import com.auramusic.app.core.update.UpdateState
+import com.auramusic.app.core.workers.AutoBackupScheduler
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
@@ -36,11 +40,18 @@ import com.auramusic.app.domain.model.YtmChartSection
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
 import com.auramusic.app.domain.model.YtmMoodShelf
 import com.auramusic.app.domain.model.YtmTopArtist
+import com.auramusic.app.ui.screens.AnalyticsRange
+import com.auramusic.app.ui.screens.AnalyticsSnapshot
 import com.auramusic.app.ui.viewmodel.DiscoveryCoordinator
 import com.auramusic.app.ui.viewmodel.LibraryCoordinator
 import com.auramusic.app.ui.viewmodel.PlaybackCoordinator
 import com.auramusic.app.ui.viewmodel.SettingsCoordinator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 sealed interface DetailScreenEntry {
     val stackKey: String
@@ -113,6 +124,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         AuraPlayerManager.initialize(application)
+        AuraPlayerManager.restoreSavedPlaybackState()
+        settings.restoreIntegrationsOnStartup()
         AuraApplication.applyThemeMode(settings.themeMode.value)
         AuraPlayerManager.setSkipCrossfadeWithinAlbum(storage.loadSkipCrossfadeWithinAlbum())
         storage.loadActiveAutoEqProfileId()?.let { savedProfileId ->
@@ -136,6 +149,8 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
 
         playback.bindPlayerCallbacksAndObserveTrack()
         discovery.refreshHome()
+        refreshAnalytics()
+        refreshCachedTracks()
         // Pre-warm the default seed track so first tap is instant
         SimpMusicExtractorEngine.prefetchStream(SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS.first().videoId)
     }
@@ -231,6 +246,61 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     val isVideoLoading: StateFlow<Boolean> = playback.isVideoLoading
     val livePerformances: StateFlow<List<AuraTrack>> = playback.livePerformances
     val isLoadingLivePerformances: StateFlow<Boolean> = playback.isLoadingLivePerformances
+
+    // Tier 2: Speed/Pitch, Audio Output, AI Lyrics Translation, Workers, Integrations, Analytics
+    val playbackSpeed: StateFlow<Float> = playback.playbackSpeed
+    val playbackPitchSemitones: StateFlow<Int> = playback.playbackPitchSemitones
+    val audioOutputDevices: StateFlow<List<AudioOutputDevice>> = playback.audioOutputDevices
+    val selectedAudioOutputId: StateFlow<Int?> = playback.selectedAudioOutputId
+    val translatedLyricsMap: StateFlow<Map<Int, String>> = playback.translatedLyricsMap
+    val isTranslatingLyrics: StateFlow<Boolean> = playback.isTranslatingLyrics
+
+    val aiProvider: StateFlow<AiLyricsTranslator.AiProvider> = settings.aiProvider
+    val aiApiKey: StateFlow<String> = settings.aiApiKey
+    val aiModelId: StateFlow<String> = settings.aiModelId
+    val aiBaseUrl: StateFlow<String> = settings.aiBaseUrl
+    val aiTargetLanguage: StateFlow<String> = settings.aiTargetLanguage
+    val aiTranslationEnabled: StateFlow<Boolean> = settings.aiTranslationEnabled
+
+    val smartDownloadsEnabled: StateFlow<Boolean> = settings.smartDownloadsEnabled
+    val smartDownloadsLimit: StateFlow<Int> = settings.smartDownloadsLimit
+    val autoBackupFrequency: StateFlow<AutoBackupScheduler.BackupFrequency> = settings.autoBackupFrequency
+    val autoBackupKeepCount: StateFlow<Int> = settings.autoBackupKeepCount
+
+    val lastfmSessionKey: StateFlow<String> = settings.lastfmSessionKey
+    val lastfmApiKey: StateFlow<String> = settings.lastfmApiKey
+    val lastfmApiSecret: StateFlow<String> = settings.lastfmApiSecret
+    val lastfmEnabled: StateFlow<Boolean> = settings.lastfmEnabled
+    val discordToken: StateFlow<String> = settings.discordToken
+    val discordRpcEnabled: StateFlow<Boolean> = settings.discordRpcEnabled
+    val ytmCookie: StateFlow<String> = settings.ytmCookie
+
+    private val _analyticsRange = MutableStateFlow(AnalyticsRange.DAYS_30)
+    val analyticsRange: StateFlow<AnalyticsRange> = _analyticsRange.asStateFlow()
+
+    private val _analyticsSnapshot = MutableStateFlow(
+        AnalyticsSnapshot(
+            range = AnalyticsRange.DAYS_30,
+            totalMinutes = 0,
+            totalPlays = 0,
+            uniqueArtists = 0,
+            peakHourLabel = "Not enough data",
+            hourlyCounts = List(24) { 0 },
+            topTracks = emptyList(),
+            topArtists = emptyList(),
+            topGenres = emptyList()
+        )
+    )
+    val analyticsSnapshot: StateFlow<AnalyticsSnapshot> = _analyticsSnapshot.asStateFlow()
+
+    private val _cachedTracks = MutableStateFlow<List<AuraTrack>>(emptyList())
+    val cachedTracks: StateFlow<List<AuraTrack>> = _cachedTracks.asStateFlow()
+
+    private val _pendingDeepLinkTab = MutableStateFlow<Int?>(null)
+    val pendingDeepLinkTab: StateFlow<Int?> = _pendingDeepLinkTab.asStateFlow()
+
+    private val _deepLinkExpandPlayer = MutableStateFlow(false)
+    val deepLinkExpandPlayer: StateFlow<Boolean> = _deepLinkExpandPlayer.asStateFlow()
 
     // In-App Updates & Releases
     val currentUpdateRelease: StateFlow<AuraReleaseInfo?> = settings.currentUpdateRelease
@@ -369,4 +439,215 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun snoozeUpdate(version: String) = settings.snoozeUpdate(version)
     fun downloadAndInstallUpdate(release: AuraReleaseInfo) = settings.downloadAndInstallUpdate(release)
     fun installDownloadedApk(release: AuraReleaseInfo) = settings.installDownloadedApk(release)
+
+    // --- Tier 2 Actions ---
+    fun setPlaybackSpeed(speed: Float) = playback.setPlaybackSpeed(speed)
+    fun setPlaybackPitchSemitones(semitones: Int) = playback.setPlaybackPitchSemitones(semitones)
+    fun resetSpeedAndPitch() = playback.resetSpeedAndPitch()
+    fun refreshAudioOutputDevices() = playback.refreshAudioOutputDevices()
+    fun selectAudioOutputDevice(device: AudioOutputDevice?) = playback.selectAudioOutputDevice(device)
+    fun translateCurrentLyrics() = playback.translateCurrentLyrics()
+
+    fun setAiProvider(provider: AiLyricsTranslator.AiProvider) = settings.setAiProvider(provider)
+    fun setAiApiKey(apiKey: String) = settings.setAiApiKey(apiKey)
+    fun setAiModelId(modelId: String) = settings.setAiModelId(modelId)
+    fun setAiBaseUrl(baseUrl: String) = settings.setAiBaseUrl(baseUrl)
+    fun setAiTargetLanguage(language: String) = settings.setAiTargetLanguage(language)
+    fun setAiTranslationEnabled(enabled: Boolean) = settings.setAiTranslationEnabled(enabled)
+
+    fun setSmartDownloadsEnabled(enabled: Boolean) = settings.setSmartDownloadsEnabled(enabled)
+    fun setSmartDownloadsLimit(limit: Int) = settings.setSmartDownloadsLimit(limit)
+    fun runSmartDownloadsNow() = settings.runSmartDownloadsNow()
+
+    fun setAutoBackupFrequency(frequency: AutoBackupScheduler.BackupFrequency) = settings.setAutoBackupFrequency(frequency)
+    fun setAutoBackupKeepCount(keepCount: Int) = settings.setAutoBackupKeepCount(keepCount)
+
+    fun setLastfmSessionKey(sessionKey: String) = settings.setLastfmSessionKey(sessionKey)
+    fun setLastfmApiKey(apiKey: String) = settings.setLastfmApiKey(apiKey)
+    fun setLastfmApiSecret(apiSecret: String) = settings.setLastfmApiSecret(apiSecret)
+    fun setLastfmEnabled(enabled: Boolean) = settings.setLastfmEnabled(enabled)
+    fun setDiscordToken(token: String) = settings.setDiscordToken(token)
+    fun setDiscordRpcEnabled(enabled: Boolean) = settings.setDiscordRpcEnabled(enabled)
+    fun setYtmCookie(cookie: String) = settings.setYtmCookie(cookie)
+
+    fun refreshAnalytics(range: AnalyticsRange = _analyticsRange.value) {
+        _analyticsRange.value = range
+        viewModelScope.launch {
+            val snapshot = withContext(Dispatchers.IO) {
+                val sinceMs = range.days?.let { days ->
+                    System.currentTimeMillis() - days.toLong() * 86_400_000L
+                } ?: 0L
+                val events = storage.queryPlaybackEventsSince(sinceMs)
+                val totalMinutes = (events.sumOf { it.durationPlayedMs } / 60_000L).toInt()
+                val totalPlays = events.size
+
+                val hourly = IntArray(24)
+                val artistCounts = LinkedHashMap<String, Int>()
+                val genreCounts = LinkedHashMap<String, Int>()
+                val trackGroups = LinkedHashMap<String, MutableList<com.auramusic.app.data.db.PlaybackEventEntity>>()
+
+                events.forEach { ev ->
+                    if (ev.hourOfDay in 0..23) {
+                        hourly[ev.hourOfDay]++
+                    }
+                    val primaryArtist = ev.artist
+                        .split(",", "ft.", "feat.")
+                        .firstOrNull()
+                        ?.trim()
+                        .orEmpty()
+                    if (primaryArtist.isNotBlank()) {
+                        artistCounts[primaryArtist] = (artistCounts[primaryArtist] ?: 0) + 1
+                    }
+                    val genre = ev.genre.trim()
+                    if (genre.isNotBlank()) {
+                        genreCounts[genre] = (genreCounts[genre] ?: 0) + 1
+                    }
+                    if (ev.videoId.isNotBlank()) {
+                        trackGroups.getOrPut(ev.videoId) { mutableListOf() }.add(ev)
+                    }
+                }
+
+                val maxHourCount = hourly.maxOrNull() ?: 0
+                val peakHourLabel = if (maxHourCount > 0) {
+                    val peak = hourly.indices.maxByOrNull { hourly[it] } ?: 0
+                    "${formatAnalyticsHour(peak)} – ${formatAnalyticsHour((peak + 1) % 24)}"
+                } else {
+                    "Not enough data"
+                }
+
+                val topTracks = trackGroups.entries
+                    .sortedByDescending { it.value.size }
+                    .take(10)
+                    .map { (vid, rows) ->
+                        val sample = rows.first()
+                        AuraTrack(
+                            id = "yt_$vid",
+                            videoId = vid,
+                            title = sample.title.ifBlank { "Unknown Track" },
+                            artist = sample.artist.ifBlank { "Unknown Artist" },
+                            album = sample.album,
+                            durationSeconds = sample.durationSeconds,
+                            artworkUrl = sample.artworkUrl,
+                            genre = sample.genre
+                        ) to rows.size
+                    }
+
+                val topArtists = artistCounts.entries
+                    .sortedByDescending { it.value }
+                    .take(10)
+                    .map { it.key to it.value }
+
+                val topGenres = genreCounts.entries
+                    .sortedByDescending { it.value }
+                    .take(8)
+                    .map { it.key to it.value }
+
+                AnalyticsSnapshot(
+                    range = range,
+                    totalMinutes = totalMinutes,
+                    totalPlays = totalPlays,
+                    uniqueArtists = artistCounts.keys.map { it.lowercase() }.distinct().size,
+                    peakHourLabel = peakHourLabel,
+                    hourlyCounts = hourly.toList(),
+                    topTracks = topTracks,
+                    topArtists = topArtists,
+                    topGenres = topGenres
+                )
+            }
+            _analyticsSnapshot.value = snapshot
+        }
+    }
+
+    fun refreshCachedTracks() {
+        viewModelScope.launch {
+            val resolved = withContext(Dispatchers.IO) {
+                val cachedIds = AuraPlayerManager.getCachedVideoIds()
+                if (cachedIds.isEmpty()) return@withContext emptyList()
+                val knownTracks = (
+                    library.recentlyPlayed.value +
+                        library.favorites.value +
+                        library.downloads.value +
+                        library.playlists.value.flatMap { it.tracks } +
+                        discovery.homeRecommendations.value +
+                        discovery.searchResults.value
+                    ).associateBy { it.videoId }
+
+                cachedIds.map { vid ->
+                    knownTracks[vid] ?: AuraTrack(
+                        id = "yt_$vid",
+                        videoId = vid,
+                        title = "Cached Track ($vid)",
+                        artist = "Stream Cache",
+                        artworkUrl = "https://i.ytimg.com/vi/$vid/hqdefault.jpg"
+                    )
+                }
+            }
+            _cachedTracks.value = resolved
+        }
+    }
+
+    fun consumePendingDeepLinkTab() {
+        _pendingDeepLinkTab.value = null
+    }
+
+    fun consumeDeepLinkExpandPlayer() {
+        _deepLinkExpandPlayer.value = false
+    }
+
+    fun handleDeepLink(deepLink: AuraDeepLink) {
+        when (deepLink) {
+            is AuraDeepLink.Track -> {
+                viewModelScope.launch {
+                    val track = withContext(Dispatchers.IO) {
+                        val matched = runCatching {
+                            SimpMusicExtractorEngine.searchYouTubeMusic(
+                                query = deepLink.videoId,
+                                filter = "songs",
+                                prefetchTopResult = false
+                            ).firstOrNull { it.videoId == deepLink.videoId }
+                        }.getOrNull()
+                        if (matched != null) {
+                            matched
+                        } else {
+                            val info = runCatching {
+                                SimpMusicExtractorEngine.fetchVideoInfo(deepLink.videoId)
+                            }.getOrNull()
+                            AuraTrack(
+                                id = "yt_${deepLink.videoId}",
+                                videoId = deepLink.videoId,
+                                title = "Shared Track",
+                                artist = info?.author?.takeIf(String::isNotBlank) ?: "YouTube Music",
+                                artworkUrl = "https://i.ytimg.com/vi/${deepLink.videoId}/hqdefault.jpg"
+                            )
+                        }
+                    }
+                    playback.playTrack(track, listOf(track))
+                    _deepLinkExpandPlayer.value = true
+                }
+            }
+            is AuraDeepLink.Playlist -> {
+                discovery.openAlbumOrPlaylist(
+                    id = deepLink.playlistId,
+                    title = "Playlist",
+                    author = "YouTube Music",
+                    artworkUrl = ""
+                )
+            }
+            is AuraDeepLink.Search -> {
+                discovery.clearDetailStack()
+                discovery.updateSearchQuery(deepLink.query)
+                _pendingDeepLinkTab.value = 1
+            }
+        }
+    }
+
+    private fun formatAnalyticsHour(hour: Int): String {
+        val h = ((hour % 24) + 24) % 24
+        return when {
+            h == 0 -> "12:00 AM"
+            h < 12 -> "$h:00 AM"
+            h == 12 -> "12:00 PM"
+            else -> "${h - 12}:00 PM"
+        }
+    }
 }

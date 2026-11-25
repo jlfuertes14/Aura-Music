@@ -42,8 +42,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
@@ -127,6 +129,9 @@ fun LibraryScreen(
     playlists: List<AuraPlaylist>,
     stats: ListeningStats,
     recentlyPlayed: List<AuraTrack> = emptyList(),
+    cachedTracks: List<AuraTrack> = emptyList(),
+    onRefreshCachedTracks: () -> Unit = {},
+    onOpenAnalytics: () -> Unit = {},
     downloadingIds: Set<String>,
     downloadProgressMap: Map<String, Float> = emptyMap(),
     currentPlayingId: String? = null,
@@ -236,7 +241,13 @@ fun LibraryScreen(
     }
     val playlistSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
 
-    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Podcasts", "Downloaded")
+    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Podcasts", "Downloaded", "Cached")
+
+    LaunchedEffect(activeTab) {
+        if (activeTab == 0 || activeTab == 5) {
+            onRefreshCachedTracks()
+        }
+    }
 
     Box(
         modifier = Modifier
@@ -551,6 +562,75 @@ fun LibraryScreen(
                                         modifier = Modifier.weight(1f).height(124.dp), onClick = { activeTab = 1 }
                                     )
                                 }
+                                Spacer(Modifier.height(10.dp))
+                                LibraryOverviewTile(
+                                    title = "Cached",
+                                    subtitle = "${cachedTracks.size} cached stream tracks",
+                                    tracks = cachedTracks.take(3),
+                                    modifier = Modifier.fillMaxWidth().height(104.dp),
+                                    onClick = {
+                                        onRefreshCachedTracks()
+                                        activeTab = 5
+                                    }
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                // Listening Insights & Wrapped Card
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .auraGlassSurface(
+                                            shape = RoundedCornerShape(20.dp),
+                                            selected = false,
+                                            fallbackColor = Color(0xFF1B1E28)
+                                        )
+                                        .clickable(onClick = onOpenAnalytics)
+                                        .padding(horizontal = 16.dp, vertical = 14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.weight(1f)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(40.dp)
+                                                .clip(CircleShape)
+                                                .background(AuraNeonLime.copy(alpha = 0.16f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.AutoAwesome,
+                                                contentDescription = null,
+                                                tint = AuraNeonLime,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column {
+                                            Text(
+                                                text = "Listening Insights & Wrapped",
+                                                color = Color.White,
+                                                fontSize = 14.5.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays · Receipt & Story",
+                                                color = TextSecondary,
+                                                fontSize = 12.sp,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                        contentDescription = "Open Listening Insights & Wrapped",
+                                        tint = AuraNeonLime,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                }
                                 Spacer(Modifier.height(18.dp))
                                 Text("Recently added", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(6.dp))
@@ -698,6 +778,31 @@ fun LibraryScreen(
                                 downloadProgress = downloadProgressMap[track.videoId],
                                 isPlaying = isPlaying,
                                 onClick = { onPlayTrack(track, downloads) },
+                                onToggleFavorite = { onToggleFavorite(track) },
+                                onDownload = { onDownloadTrack(track) },
+                                onOptionsClick = { selectedModalTrack = track }
+                            )
+                        }
+                    }
+                }
+            }
+            5 -> {
+                if (cachedTracks.isEmpty()) {
+                    EmptyVaultMessage("No cached stream tracks yet. Stream songs to cache them for instant playback.")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
+                        items(cachedTracks, key = { "cached_${it.videoId}" }) { track ->
+                            val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
+                            val isDownProgress = downloadingIds.contains(track.videoId)
+                            SpotifyTrackRowItem(
+                                track = track,
+                                isCurrent = currentPlayingId == track.videoId,
+                                isFavorite = favorites.any { it.videoId == track.videoId },
+                                isDownloaded = isDown,
+                                isDownloading = isDownProgress,
+                                downloadProgress = downloadProgressMap[track.videoId],
+                                isPlaying = isPlaying,
+                                onClick = { onPlayTrack(track, cachedTracks) },
                                 onToggleFavorite = { onToggleFavorite(track) },
                                 onDownload = { onDownloadTrack(track) },
                                 onOptionsClick = { selectedModalTrack = track }

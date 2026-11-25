@@ -35,11 +35,13 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Backup
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.BookmarkAdded
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.ColorLens
 import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
@@ -48,15 +50,18 @@ import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.Palette
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.Public
 import androidx.compose.material.icons.rounded.Radio
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.Restore
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Storage
@@ -74,10 +79,13 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -102,8 +110,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.Coil
 import com.auramusic.app.R
+import com.auramusic.app.core.lyrics.AiLyricsTranslator
 import com.auramusic.app.core.media.AutoEqProfiles
 import com.auramusic.app.core.media.AuraPlayerManager
+import com.auramusic.app.core.workers.AutoBackupScheduler
 import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.ChartSupportedCountries
@@ -113,6 +123,8 @@ import com.auramusic.app.ui.components.AuraLiquidGlassSwitch
 import com.auramusic.app.ui.components.AuraSleepTimerSheet
 import com.auramusic.app.ui.components.AutoEqProfilePickerSheet
 import com.auramusic.app.ui.components.EqualizerWaveSection
+import com.auramusic.app.ui.components.StorageBreakdownBar
+import com.auramusic.app.ui.components.StorageSegment
 import com.auramusic.app.ui.components.formatSleepTimerStatus
 import com.auramusic.app.ui.theme.AURA_CUSTOM_ACCENT_SWATCHES
 import com.auramusic.app.ui.theme.AuraNeonLime
@@ -161,9 +173,15 @@ private val AUDIO_REVERB_OPTIONS = listOf(
 )
 
 private val LYRICS_PROVIDER_OPTIONS = listOf(
-    "SimpMusic" to "SimpMusic Lyrics (Word-by-Word RichSync + LRCLIB fallback)",
-    "LRCLIB" to "LRCLIB (Open-source synced LRC + SimpMusic fallback)"
+    "SimpMusic" to "SimpMusic Lyrics (Word-by-Word RichSync + fallback)",
+    "BetterLyrics" to "BetterLyrics (TTML Word-Synced + fallback)",
+    "LRCLIB" to "LRCLIB (Open-source synced LRC + fallback)",
+    "YouTube" to "YouTube Captions (TimedText + fallback)"
 )
+
+private val SMART_DOWNLOAD_LIMIT_OPTIONS = listOf(25, 50, 100)
+private val AUTO_BACKUP_KEEP_OPTIONS = listOf(3, 5, 10, 15)
+private val AI_TARGET_LANGUAGES = listOf("English", "Spanish", "Japanese", "Korean", "Chinese", "French", "German")
 
 private val SPONSORBLOCK_CATEGORY_OPTIONS = listOf(
     "sponsor" to "Sponsor segments",
@@ -250,6 +268,25 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     val releaseNotificationsEnabled by viewModel.releaseNotificationsEnabled.collectAsState()
     val downloads by viewModel.downloads.collectAsState()
 
+    // Tier 2 State
+    val aiProvider by viewModel.aiProvider.collectAsState()
+    val aiApiKey by viewModel.aiApiKey.collectAsState()
+    val aiModelId by viewModel.aiModelId.collectAsState()
+    val aiBaseUrl by viewModel.aiBaseUrl.collectAsState()
+    val aiTargetLanguage by viewModel.aiTargetLanguage.collectAsState()
+    val aiTranslationEnabled by viewModel.aiTranslationEnabled.collectAsState()
+    val smartDownloadsEnabled by viewModel.smartDownloadsEnabled.collectAsState()
+    val smartDownloadsLimit by viewModel.smartDownloadsLimit.collectAsState()
+    val autoBackupFrequency by viewModel.autoBackupFrequency.collectAsState()
+    val autoBackupKeepCount by viewModel.autoBackupKeepCount.collectAsState()
+    val lastfmSessionKey by viewModel.lastfmSessionKey.collectAsState()
+    val lastfmApiKey by viewModel.lastfmApiKey.collectAsState()
+    val lastfmApiSecret by viewModel.lastfmApiSecret.collectAsState()
+    val lastfmEnabled by viewModel.lastfmEnabled.collectAsState()
+    val discordToken by viewModel.discordToken.collectAsState()
+    val discordRpcEnabled by viewModel.discordRpcEnabled.collectAsState()
+    val ytmCookie by viewModel.ytmCookie.collectAsState()
+
     // AuraPlayerManager Settings State
     val eqEnabled by AuraPlayerManager.eqEnabled.collectAsState()
     val eqBands by AuraPlayerManager.equalizerBands.collectAsState()
@@ -323,6 +360,11 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     var showClearDownloadsConfirm by remember { mutableStateOf(false) }
     var showAutoEqSheet by remember { mutableStateOf(false) }
     var showSleepTimerSheet by remember { mutableStateOf(false) }
+    var showAiTranslationDialog by remember { mutableStateOf(false) }
+    var showAutoBackupDialog by remember { mutableStateOf(false) }
+    var showYtmCookieDialog by remember { mutableStateOf(false) }
+    var showLastfmDialog by remember { mutableStateOf(false) }
+    var showDiscordDialog by remember { mutableStateOf(false) }
 
     val dialogContainerColor = auraGlassSheetColor(
         if (isDarkTheme) Color(0xFF181A22) else MaterialTheme.colorScheme.surface
@@ -846,6 +888,37 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 }
             }
 
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.AutoAwesome,
+                title = "AI Lyrics Translation",
+                subtitle = "Auto-translate synced lyrics to $aiTargetLanguage using ${aiProvider.label}",
+                checked = aiTranslationEnabled,
+                onCheckedChange = { viewModel.setAiTranslationEnabled(it) }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Key,
+                title = "AI Translation Config",
+                subtitle = if (aiApiKey.isNotBlank() || aiBaseUrl.isNotBlank()) {
+                    "${aiProvider.label} · ${aiModelId.ifBlank { "Default model" }} · $aiTargetLanguage"
+                } else {
+                    "Configure ${aiProvider.label} API key, model & language"
+                },
+                onClick = { showAiTranslationDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure AI Lyrics Translation",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
             Spacer(modifier = Modifier.height(30.dp))
         }
 
@@ -1040,6 +1113,70 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             SettingsCategoryHeader(title = "Storage & cache")
             Spacer(modifier = Modifier.height(10.dp))
 
+            StorageBreakdownBar(
+                segments = listOf(
+                    StorageSegment("Downloads", downloadsBytes, AuraNeonLime),
+                    StorageSegment("Stream Cache", streamCacheBytes, Color(0xFF38BDF8)),
+                    StorageSegment("Artwork", imageCacheBytes, Color(0xFFA78BFA))
+                ),
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.CloudDownload,
+                title = "Smart Downloads",
+                subtitle = "Auto-download top $smartDownloadsLimit played & liked songs on Wi-Fi",
+                checked = smartDownloadsEnabled,
+                onCheckedChange = { viewModel.setSmartDownloadsEnabled(it) }
+            )
+
+            AnimatedVisibility(visible = smartDownloadsEnabled) {
+                Column(modifier = Modifier.padding(start = 48.dp, top = 4.dp, bottom = 8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        SMART_DOWNLOAD_LIMIT_OPTIONS.forEach { limit ->
+                            val selected = smartDownloadsLimit == limit
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(
+                                        if (selected) primaryAccent
+                                        else if (isDarkTheme) Color.White.copy(alpha = 0.06f)
+                                        else Color.Black.copy(alpha = 0.06f)
+                                    )
+                                    .clickable { viewModel.setSmartDownloadsLimit(limit) }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$limit songs",
+                                    color = if (selected) MaterialTheme.colorScheme.onPrimary else secondaryTextColor,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    TextButton(
+                        onClick = { viewModel.runSmartDownloadsNow() },
+                        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "Run Smart Downloads Now",
+                            color = primaryAccent,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            SettingsDivider()
+
             ModernSettingsRow(
                 icon = Icons.Rounded.Storage,
                 title = "Offline Downloads",
@@ -1158,6 +1295,112 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = "Restore Backup",
                         tint = TextSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Schedule,
+                title = "Scheduled Auto-Backup",
+                subtitle = if (autoBackupFrequency == AutoBackupScheduler.BackupFrequency.OFF) {
+                    "Off — tap to schedule automatic local backups"
+                } else {
+                    "${autoBackupFrequency.label} · Keep last $autoBackupKeepCount backups"
+                },
+                onClick = { showAutoBackupDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure Auto-Backup",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            Spacer(modifier = Modifier.height(30.dp))
+        }
+
+        // 9b. Accounts & Integrations
+        item {
+            SettingsCategoryHeader(title = "Accounts & integrations")
+            Spacer(modifier = Modifier.height(10.dp))
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Person,
+                title = "YouTube Music Account",
+                subtitle = if (ytmCookie.isNotBlank()) {
+                    "Signed in via browser cookie (authenticated InnerTube)"
+                } else {
+                    "Anonymous mode (tap to add YTM browser cookie)"
+                },
+                onClick = { showYtmCookieDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure YouTube Music Cookie",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = "Last.fm Scrobbling",
+                subtitle = if (lastfmEnabled) "Scrobbling & Now Playing active" else "Disabled",
+                checked = lastfmEnabled,
+                onCheckedChange = { viewModel.setLastfmEnabled(it) }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Key,
+                title = "Last.fm Credentials",
+                subtitle = if (lastfmSessionKey.isNotBlank() && lastfmApiKey.isNotBlank()) {
+                    "Session & API credentials configured"
+                } else {
+                    "Set Session Key, API Key & API Secret"
+                },
+                onClick = { showLastfmDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure Last.fm",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
+                icon = Icons.Rounded.Headphones,
+                title = "Discord Rich Presence",
+                subtitle = if (discordRpcEnabled) "Broadcasting active track to Discord" else "Disabled",
+                checked = discordRpcEnabled,
+                onCheckedChange = { viewModel.setDiscordRpcEnabled(it) }
+            )
+
+            SettingsDivider()
+
+            ModernClickableRow(
+                icon = Icons.Rounded.Key,
+                title = "Discord Gateway Token",
+                subtitle = if (discordToken.isNotBlank()) "Token configured" else "Set Discord token for Rich Presence",
+                onClick = { showDiscordDialog = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure Discord Token",
+                        tint = secondaryTextColor,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -1906,6 +2149,399 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             onToggleEndOfTrack = { viewModel.setSleepTimerEndOfTrack(it) },
             onDismiss = { showSleepTimerSheet = false },
             containerColor = dialogContainerColor
+        )
+    }
+
+    if (showAiTranslationDialog) {
+        var draftProvider by remember { mutableStateOf(aiProvider) }
+        var draftApiKey by remember { mutableStateOf(aiApiKey) }
+        var draftModel by remember { mutableStateOf(aiModelId) }
+        var draftBaseUrl by remember { mutableStateOf(aiBaseUrl) }
+        var draftLang by remember { mutableStateOf(aiTargetLanguage) }
+
+        AlertDialog(
+            onDismissRequest = { showAiTranslationDialog = false },
+            title = {
+                Text("AI Lyrics Translation", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AiLyricsTranslator.AiProvider.entries.forEach { p ->
+                            val selected = draftProvider == p
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) AuraNeonLime else Color.White.copy(alpha = 0.08f))
+                                    .clickable { draftProvider = p }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (p == AiLyricsTranslator.AiProvider.CUSTOM) "Custom" else p.label,
+                                    color = if (selected) Color.Black else Color.White,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    OutlinedTextField(
+                        value = draftApiKey,
+                        onValueChange = { draftApiKey = it },
+                        label = { Text("API Key") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                    OutlinedTextField(
+                        value = draftModel,
+                        onValueChange = { draftModel = it },
+                        label = { Text("Model ID (optional)") },
+                        placeholder = {
+                            Text(
+                                when (draftProvider) {
+                                    AiLyricsTranslator.AiProvider.GEMINI -> "gemini-2.0-flash"
+                                    AiLyricsTranslator.AiProvider.OPENAI -> "gpt-4o-mini"
+                                    AiLyricsTranslator.AiProvider.CUSTOM -> "llama-3.3-70b"
+                                }
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                    if (draftProvider == AiLyricsTranslator.AiProvider.CUSTOM) {
+                        OutlinedTextField(
+                            value = draftBaseUrl,
+                            onValueChange = { draftBaseUrl = it },
+                            label = { Text("Custom OpenAI-Compatible Base URL") },
+                            placeholder = { Text("https://api.example.com/v1") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = AuraNeonLime,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+                    OutlinedTextField(
+                        value = draftLang,
+                        onValueChange = { draftLang = it },
+                        label = { Text("Target Language") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        AI_TARGET_LANGUAGES.forEach { lang ->
+                            val selected = draftLang.equals(lang, ignoreCase = true)
+                            Surface(
+                                onClick = { draftLang = lang },
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) AuraNeonLime else Color.White.copy(alpha = 0.08f)
+                            ) {
+                                Text(
+                                    text = lang,
+                                    color = if (selected) Color.Black else Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAiTranslationDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setAiProvider(draftProvider)
+                        viewModel.setAiApiKey(draftApiKey.trim())
+                        viewModel.setAiModelId(draftModel.trim())
+                        viewModel.setAiBaseUrl(draftBaseUrl.trim())
+                        viewModel.setAiTargetLanguage(draftLang.trim().ifBlank { "English" })
+                        showAiTranslationDialog = false
+                    }
+                ) {
+                    Text("Save", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showAutoBackupDialog) {
+        AlertDialog(
+            onDismissRequest = { showAutoBackupDialog = false },
+            title = {
+                Text("Scheduled Auto-Backup", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AutoBackupScheduler.BackupFrequency.entries.forEach { freq ->
+                        val isSelected = autoBackupFrequency == freq
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { viewModel.setAutoBackupFrequency(freq) }
+                                .padding(vertical = 6.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { viewModel.setAutoBackupFrequency(freq) },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = AuraNeonLime,
+                                    unselectedColor = TextSecondary
+                                )
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(
+                                text = freq.label,
+                                color = if (isSelected) AuraNeonLime else Color.White,
+                                fontSize = 13.5.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Backups to keep",
+                        color = TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        AUTO_BACKUP_KEEP_OPTIONS.forEach { keep ->
+                            val selected = autoBackupKeepCount == keep
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) AuraNeonLime else Color.White.copy(alpha = 0.08f))
+                                    .clickable { viewModel.setAutoBackupKeepCount(keep) }
+                                    .padding(vertical = 8.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "$keep",
+                                    color = if (selected) Color.Black else Color.White,
+                                    fontSize = 12.5.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showAutoBackupDialog = false }) {
+                    Text("Done", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showYtmCookieDialog) {
+        var draftCookie by remember { mutableStateOf(ytmCookie) }
+        AlertDialog(
+            onDismissRequest = { showYtmCookieDialog = false },
+            title = {
+                Text("YouTube Music Cookie", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "Paste your music.youtube.com browser Cookie header for personalized authenticated InnerTube requests, or leave blank for anonymous mode.",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                    OutlinedTextField(
+                        value = draftCookie,
+                        onValueChange = { draftCookie = it },
+                        label = { Text("Cookie Header") },
+                        maxLines = 4,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setYtmCookie("")
+                        showYtmCookieDialog = false
+                    }
+                ) {
+                    Text("Sign Out", color = Color(0xFFFF7A7A))
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setYtmCookie(draftCookie.trim())
+                        showYtmCookieDialog = false
+                    }
+                ) {
+                    Text("Save", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showLastfmDialog) {
+        var draftSession by remember { mutableStateOf(lastfmSessionKey) }
+        var draftKey by remember { mutableStateOf(lastfmApiKey) }
+        var draftSecret by remember { mutableStateOf(lastfmApiSecret) }
+        AlertDialog(
+            onDismissRequest = { showLastfmDialog = false },
+            title = {
+                Text("Last.fm Credentials", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = draftSession,
+                        onValueChange = { draftSession = it },
+                        label = { Text("Session Key") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                    OutlinedTextField(
+                        value = draftKey,
+                        onValueChange = { draftKey = it },
+                        label = { Text("API Key") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                    OutlinedTextField(
+                        value = draftSecret,
+                        onValueChange = { draftSecret = it },
+                        label = { Text("API Secret") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = AuraNeonLime,
+                            unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLastfmDialog = false }) {
+                    Text("Cancel", color = TextSecondary)
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setLastfmSessionKey(draftSession.trim())
+                        viewModel.setLastfmApiKey(draftKey.trim())
+                        viewModel.setLastfmApiSecret(draftSecret.trim())
+                        showLastfmDialog = false
+                    }
+                ) {
+                    Text("Save", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
+
+    if (showDiscordDialog) {
+        var draftToken by remember { mutableStateOf(discordToken) }
+        AlertDialog(
+            onDismissRequest = { showDiscordDialog = false },
+            title = {
+                Text("Discord Rich Presence Token", color = Color.White, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                OutlinedTextField(
+                    value = draftToken,
+                    onValueChange = { draftToken = it },
+                    label = { Text("Discord Token") },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = AuraNeonLime,
+                        unfocusedBorderColor = Color.White.copy(alpha = 0.22f),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setDiscordToken("")
+                        showDiscordDialog = false
+                    }
+                ) {
+                    Text("Clear", color = Color(0xFFFF7A7A))
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        viewModel.setDiscordToken(draftToken.trim())
+                        showDiscordDialog = false
+                    }
+                ) {
+                    Text("Save", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                }
+            },
+            containerColor = dialogContainerColor,
+            shape = RoundedCornerShape(16.dp)
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.auramusic.app.core.lyrics
 
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
+import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricWord
 import com.auramusic.app.domain.model.LyricsData
@@ -66,27 +67,37 @@ object SimpMusicLyricsRepository {
                 return@withContext updated
             }
 
-            if (preferredProvider.equals("LRCLIB", ignoreCase = true)) {
-                // 1. Primary when user selects LRCLIB: Direct LRCLIB API
-                fetchFromLrcLib(videoId, title, artist, durationSeconds, activeLanguages)?.let { data ->
-                    lyricsCache[cacheKey] = CachedLyricsEntry(data, activeLanguages)
-                    return@withContext data
+            val cleanTitle = normalizeLyricsTitle(title, artist).ifBlank { title }
+            val cleanArtist = normalizeLyricsArtist(artist).ifBlank { artist }
+
+            val providerOrder = when {
+                preferredProvider.equals("BetterLyrics", ignoreCase = true) ->
+                    listOf("BetterLyrics", "SimpMusic", "LRCLIB", "YouTube")
+                preferredProvider.equals("LRCLIB", ignoreCase = true) ->
+                    listOf("LRCLIB", "SimpMusic", "BetterLyrics", "YouTube")
+                preferredProvider.equals("YouTube", ignoreCase = true) ->
+                    listOf("YouTube", "SimpMusic", "BetterLyrics", "LRCLIB")
+                else ->
+                    listOf("SimpMusic", "LRCLIB", "BetterLyrics", "YouTube")
+            }
+
+            for (provider in providerOrder) {
+                val resolved = when (provider) {
+                    "SimpMusic" -> fetchFromSimpMusicApi(videoId, activeLanguages)
+                    "LRCLIB" -> fetchFromLrcLib(videoId, title, artist, durationSeconds, activeLanguages)
+                    "BetterLyrics" -> BetterLyricsProvider.fetchBetterLyrics(
+                        videoId = videoId,
+                        title = cleanTitle,
+                        artist = cleanArtist,
+                        durationSeconds = durationSeconds
+                    )?.let { applyRomanization(it, activeLanguages) }
+                    "YouTube" -> BetterLyricsProvider.fetchYouTubeCaptions(videoId)
+                        ?.let { applyRomanization(it, activeLanguages) }
+                    else -> null
                 }
-                // 2. Fallback: Official SimpMusic Lyrics API
-                fetchFromSimpMusicApi(videoId, activeLanguages)?.let { data ->
-                    lyricsCache[cacheKey] = CachedLyricsEntry(data, activeLanguages)
-                    return@withContext data
-                }
-            } else {
-                // 1. Primary: Official SimpMusic Lyrics API (https://api-lyrics.simpmusic.org/v1/{videoId})
-                fetchFromSimpMusicApi(videoId, activeLanguages)?.let { data ->
-                    lyricsCache[cacheKey] = CachedLyricsEntry(data, activeLanguages)
-                    return@withContext data
-                }
-                // 2. Fallback: Direct LRCLIB API (https://lrclib.net/api/search)
-                fetchFromLrcLib(videoId, title, artist, durationSeconds, activeLanguages)?.let { data ->
-                    lyricsCache[cacheKey] = CachedLyricsEntry(data, activeLanguages)
-                    return@withContext data
+                if (resolved != null) {
+                    lyricsCache[cacheKey] = CachedLyricsEntry(resolved, activeLanguages)
+                    return@withContext resolved
                 }
             }
 
@@ -97,6 +108,55 @@ object SimpMusicLyricsRepository {
                 source = "None"
             )
         }
+
+    /**
+     * Translates [lyrics] using [AiLyricsTranslator], checking Room-cached translations in [storage]
+     * first and persisting successful results for offline reuse.
+     */
+    suspend fun translateLyrics(
+        lyrics: LyricsData,
+        config: AiLyricsTranslator.AiTranslationConfig,
+        storage: AuraStorageRepository? = null
+    ): Result<Map<Int, String>> = withContext(Dispatchers.IO) {
+        val targetLang = config.targetLanguage.trim().ifBlank { "English" }
+        val expectedSource = "AI:$targetLang"
+
+        if (storage != null && lyrics.videoId.isNotBlank()) {
+            val cached = runCatching { storage.loadTranslatedLyrics(lyrics.videoId) }.getOrNull()
+            if (cached != null && (cached.source.equals(expectedSource, ignoreCase = true) || !cached.source.startsWith("AI:"))) {
+                val fromJson = AiLyricsTranslator.deserializeTranslations(cached.plainLyrics)
+                if (fromJson.isNotEmpty()) {
+                    return@withContext Result.success(fromJson)
+                }
+                if (cached.syncedLines.isNotEmpty()) {
+                    val fromLines = cached.syncedLines.mapIndexedNotNull { idx, line ->
+                        line.text.trim().takeIf { it.isNotEmpty() }?.let { idx to it }
+                    }.toMap()
+                    if (fromLines.isNotEmpty()) {
+                        return@withContext Result.success(fromLines)
+                    }
+                }
+            }
+        }
+
+        val result = AiLyricsTranslator.translateLyrics(lyrics, config)
+        result.onSuccess { translatedMap ->
+            if (storage != null && lyrics.videoId.isNotBlank() && translatedMap.isNotEmpty()) {
+                val translatedLines = lyrics.syncedLines.mapIndexed { idx, line ->
+                    line.copy(text = translatedMap[idx] ?: line.text)
+                }
+                val persisted = LyricsData(
+                    videoId = lyrics.videoId,
+                    plainLyrics = AiLyricsTranslator.serializeTranslations(translatedMap),
+                    syncedLines = translatedLines,
+                    source = expectedSource,
+                    hasRomanization = false
+                )
+                runCatching { storage.saveTranslatedLyrics(lyrics.videoId, persisted) }
+            }
+        }
+        result
+    }
 
     private fun fetchFromSimpMusicApi(
         videoId: String,
@@ -136,6 +196,7 @@ object SimpMusicLyricsRepository {
                 } else {
                     emptyList()
                 }
+                if (lines.isEmpty() && plain.isBlank()) return null
                 val hasRomanized = lines.any { !it.romanizedText.isNullOrBlank() }
 
                 LyricsData(

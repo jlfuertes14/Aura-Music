@@ -1,6 +1,7 @@
 package com.auramusic.app.core.extractor
 
 import android.util.Log
+import com.auramusic.app.core.integrations.YtmAccountManager
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -78,6 +79,16 @@ internal object InnerTubeClient {
             .header("Origin", YTM_ORIGIN)
         if (includeReferer) {
             reqBuilder.header("Referer", YTM_REFERER)
+        }
+        if (YtmAccountManager.isSignedIn()) {
+            val cookie = YtmAccountManager.getCookie()
+            if (cookie.isNotBlank()) {
+                reqBuilder.header("Cookie", cookie)
+            }
+            YtmAccountManager.buildAuthHeader(YTM_ORIGIN)?.let { auth ->
+                reqBuilder.header("Authorization", auth)
+                reqBuilder.header("X-Origin", YTM_ORIGIN)
+            }
         }
         val req = reqBuilder
             .post(payload.toString().toRequestBody(JSON_MEDIA_TYPE))

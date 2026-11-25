@@ -4,6 +4,9 @@ import android.app.Application
 import android.net.Uri
 import android.widget.Toast
 import com.auramusic.app.AuraApplication
+import com.auramusic.app.core.integrations.DiscordRpcManager
+import com.auramusic.app.core.integrations.YtmAccountManager
+import com.auramusic.app.core.lyrics.AiLyricsTranslator
 import com.auramusic.app.core.lyrics.SimpMusicLyricsRepository
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.core.notifications.AuraNotificationManager
@@ -12,6 +15,8 @@ import com.auramusic.app.core.update.AuraReleaseInfo
 import com.auramusic.app.core.update.AuraUpdateManager
 import com.auramusic.app.core.update.UpdateDownloadProgress
 import com.auramusic.app.core.update.UpdateState
+import com.auramusic.app.core.workers.AutoBackupScheduler
+import com.auramusic.app.core.workers.SmartDownloadScheduler
 import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
@@ -84,6 +89,66 @@ internal class SettingsCoordinator(
 
     private val _lyricsStyle = MutableStateFlow(storage.loadLyricsStyle())
     val lyricsStyle: StateFlow<LyricsStyle> = _lyricsStyle.asStateFlow()
+
+    // Tier 2: AI Lyrics Translation Config
+    private val _aiProvider = MutableStateFlow(
+        AiLyricsTranslator.AiProvider.entries.firstOrNull { it.name == storage.loadAiProvider() }
+            ?: AiLyricsTranslator.AiProvider.GEMINI
+    )
+    val aiProvider: StateFlow<AiLyricsTranslator.AiProvider> = _aiProvider.asStateFlow()
+
+    private val _aiApiKey = MutableStateFlow(storage.loadAiApiKey())
+    val aiApiKey: StateFlow<String> = _aiApiKey.asStateFlow()
+
+    private val _aiModelId = MutableStateFlow(storage.loadAiModelId())
+    val aiModelId: StateFlow<String> = _aiModelId.asStateFlow()
+
+    private val _aiBaseUrl = MutableStateFlow(storage.loadAiBaseUrl())
+    val aiBaseUrl: StateFlow<String> = _aiBaseUrl.asStateFlow()
+
+    private val _aiTargetLanguage = MutableStateFlow(storage.loadAiTargetLanguage())
+    val aiTargetLanguage: StateFlow<String> = _aiTargetLanguage.asStateFlow()
+
+    private val _aiTranslationEnabled = MutableStateFlow(storage.loadAiTranslationEnabled())
+    val aiTranslationEnabled: StateFlow<Boolean> = _aiTranslationEnabled.asStateFlow()
+
+    // Tier 2: Smart Downloads & Auto-Backup Workers
+    private val _smartDownloadsEnabled = MutableStateFlow(storage.loadSmartDownloadsEnabled())
+    val smartDownloadsEnabled: StateFlow<Boolean> = _smartDownloadsEnabled.asStateFlow()
+
+    private val _smartDownloadsLimit = MutableStateFlow(storage.loadSmartDownloadsLimit())
+    val smartDownloadsLimit: StateFlow<Int> = _smartDownloadsLimit.asStateFlow()
+
+    private val _autoBackupFrequency = MutableStateFlow(
+        AutoBackupScheduler.BackupFrequency.entries.firstOrNull { it.name == storage.loadAutoBackupFrequency() }
+            ?: AutoBackupScheduler.BackupFrequency.OFF
+    )
+    val autoBackupFrequency: StateFlow<AutoBackupScheduler.BackupFrequency> = _autoBackupFrequency.asStateFlow()
+
+    private val _autoBackupKeepCount = MutableStateFlow(storage.loadAutoBackupKeepCount())
+    val autoBackupKeepCount: StateFlow<Int> = _autoBackupKeepCount.asStateFlow()
+
+    // Tier 2: Ecosystem Integrations (Last.fm, Discord RPC, YTM Account)
+    private val _lastfmSessionKey = MutableStateFlow(storage.loadLastfmSessionKey())
+    val lastfmSessionKey: StateFlow<String> = _lastfmSessionKey.asStateFlow()
+
+    private val _lastfmApiKey = MutableStateFlow(storage.loadLastfmApiKey())
+    val lastfmApiKey: StateFlow<String> = _lastfmApiKey.asStateFlow()
+
+    private val _lastfmApiSecret = MutableStateFlow(storage.loadLastfmApiSecret())
+    val lastfmApiSecret: StateFlow<String> = _lastfmApiSecret.asStateFlow()
+
+    private val _lastfmEnabled = MutableStateFlow(storage.loadLastfmEnabled())
+    val lastfmEnabled: StateFlow<Boolean> = _lastfmEnabled.asStateFlow()
+
+    private val _discordToken = MutableStateFlow(storage.loadDiscordToken())
+    val discordToken: StateFlow<String> = _discordToken.asStateFlow()
+
+    private val _discordRpcEnabled = MutableStateFlow(storage.loadDiscordRpcEnabled())
+    val discordRpcEnabled: StateFlow<Boolean> = _discordRpcEnabled.asStateFlow()
+
+    private val _ytmCookie = MutableStateFlow(storage.loadYtmCookie())
+    val ytmCookie: StateFlow<String> = _ytmCookie.asStateFlow()
 
     // In-App Updates & Releases
     private val _currentUpdateRelease = MutableStateFlow<AuraReleaseInfo?>(null)
@@ -370,5 +435,140 @@ internal class SettingsCoordinator(
         downloadedApkFile?.let { apkFile ->
             AuraUpdateManager.installApk(application, apkFile)
         } ?: downloadAndInstallUpdate(release)
+    }
+
+    // --- Tier 2 Settings Actions ---
+    fun restoreIntegrationsOnStartup() {
+        YtmAccountManager.setCookie(_ytmCookie.value)
+        if (_discordRpcEnabled.value && _discordToken.value.isNotBlank()) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { DiscordRpcManager.connect(_discordToken.value) }
+            }
+        }
+    }
+
+    fun currentAiTranslationConfig(): AiLyricsTranslator.AiTranslationConfig =
+        AiLyricsTranslator.AiTranslationConfig(
+            provider = _aiProvider.value,
+            apiKey = _aiApiKey.value,
+            modelId = _aiModelId.value,
+            customBaseUrl = _aiBaseUrl.value,
+            targetLanguage = _aiTargetLanguage.value.ifBlank { "English" }
+        )
+
+    fun setAiProvider(provider: AiLyricsTranslator.AiProvider) {
+        _aiProvider.value = provider
+        storage.saveAiProvider(provider.name)
+    }
+
+    fun setAiApiKey(apiKey: String) {
+        _aiApiKey.value = apiKey
+        storage.saveAiApiKey(apiKey)
+    }
+
+    fun setAiModelId(modelId: String) {
+        _aiModelId.value = modelId
+        storage.saveAiModelId(modelId)
+    }
+
+    fun setAiBaseUrl(baseUrl: String) {
+        _aiBaseUrl.value = baseUrl
+        storage.saveAiBaseUrl(baseUrl)
+    }
+
+    fun setAiTargetLanguage(language: String) {
+        _aiTargetLanguage.value = language
+        storage.saveAiTargetLanguage(language)
+    }
+
+    fun setAiTranslationEnabled(enabled: Boolean) {
+        _aiTranslationEnabled.value = enabled
+        storage.saveAiTranslationEnabled(enabled)
+    }
+
+    fun setSmartDownloadsEnabled(enabled: Boolean) {
+        _smartDownloadsEnabled.value = enabled
+        storage.saveSmartDownloadsEnabled(enabled)
+        SmartDownloadScheduler.schedule(application, enabled, _smartDownloadsLimit.value)
+    }
+
+    fun setSmartDownloadsLimit(limit: Int) {
+        _smartDownloadsLimit.value = limit
+        storage.saveSmartDownloadsLimit(limit)
+        if (_smartDownloadsEnabled.value) {
+            SmartDownloadScheduler.schedule(application, true, limit)
+        }
+    }
+
+    fun runSmartDownloadsNow() {
+        SmartDownloadScheduler.runNow(application, _smartDownloadsLimit.value)
+        Toast.makeText(application, "Smart Downloads queued in background", Toast.LENGTH_SHORT).show()
+    }
+
+    fun setAutoBackupFrequency(frequency: AutoBackupScheduler.BackupFrequency) {
+        _autoBackupFrequency.value = frequency
+        storage.saveAutoBackupFrequency(frequency.name)
+        AutoBackupScheduler.schedule(application, frequency, _autoBackupKeepCount.value)
+    }
+
+    fun setAutoBackupKeepCount(keepCount: Int) {
+        _autoBackupKeepCount.value = keepCount
+        storage.saveAutoBackupKeepCount(keepCount)
+        AutoBackupScheduler.schedule(application, _autoBackupFrequency.value, keepCount)
+    }
+
+    fun setLastfmSessionKey(sessionKey: String) {
+        _lastfmSessionKey.value = sessionKey
+        storage.saveLastfmSessionKey(sessionKey)
+    }
+
+    fun setLastfmApiKey(apiKey: String) {
+        _lastfmApiKey.value = apiKey
+        storage.saveLastfmApiKey(apiKey)
+    }
+
+    fun setLastfmApiSecret(apiSecret: String) {
+        _lastfmApiSecret.value = apiSecret
+        storage.saveLastfmApiSecret(apiSecret)
+    }
+
+    fun setLastfmEnabled(enabled: Boolean) {
+        _lastfmEnabled.value = enabled
+        storage.saveLastfmEnabled(enabled)
+    }
+
+    fun setDiscordToken(token: String) {
+        _discordToken.value = token
+        storage.saveDiscordToken(token)
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                if (_discordRpcEnabled.value && token.isNotBlank()) {
+                    DiscordRpcManager.connect(token)
+                } else {
+                    DiscordRpcManager.disconnect()
+                }
+            }
+        }
+    }
+
+    fun setDiscordRpcEnabled(enabled: Boolean) {
+        _discordRpcEnabled.value = enabled
+        storage.saveDiscordRpcEnabled(enabled)
+        scope.launch(Dispatchers.IO) {
+            runCatching {
+                if (enabled && _discordToken.value.isNotBlank()) {
+                    DiscordRpcManager.connect(_discordToken.value)
+                } else {
+                    DiscordRpcManager.clearPresence()
+                    DiscordRpcManager.disconnect()
+                }
+            }
+        }
+    }
+
+    fun setYtmCookie(cookie: String) {
+        _ytmCookie.value = cookie
+        storage.saveYtmCookie(cookie)
+        YtmAccountManager.setCookie(cookie)
     }
 }

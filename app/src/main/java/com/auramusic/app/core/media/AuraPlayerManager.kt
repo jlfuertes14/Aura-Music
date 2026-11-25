@@ -2,6 +2,7 @@ package com.auramusic.app.core.media
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioDeviceInfo
 import android.net.Uri
 import android.util.Log
 import androidx.annotation.OptIn
@@ -10,6 +11,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -34,6 +36,7 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.auramusic.app.core.extractor.ResolvedStream
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.data.AuraStorageRepository
+import com.auramusic.app.data.prefs.AuraPreferencesStore
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.PlaybackMode
@@ -56,13 +59,47 @@ import java.io.File
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.pow
 import kotlin.math.sin
+
+internal const val MIN_PLAYBACK_SPEED = 0.25f
+internal const val MAX_PLAYBACK_SPEED = 2.0f
+internal const val MIN_PITCH_SEMITONES = -12
+internal const val MAX_PITCH_SEMITONES = 12
+
+internal fun clampPlaybackSpeed(speed: Float): Float =
+    if (speed.isFinite()) speed.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED) else 1.0f
+
+internal fun clampPitchSemitones(semitones: Int): Int =
+    semitones.coerceIn(MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES)
+
+internal fun semitonesToPitchFactor(semitones: Int): Float =
+    2.0.pow(clampPitchSemitones(semitones) / 12.0).toFloat()
+
+internal fun extractVideoIdFromCacheKey(key: String): String? = when {
+    key.startsWith("offline_") -> key.removePrefix("offline_").takeIf { it.isNotBlank() }
+    key.startsWith("audio_") -> {
+        val body = key.removePrefix("audio_")
+        (if ('_' in body) body.substringBeforeLast('_') else body).takeIf { it.isNotBlank() }
+    }
+    key.startsWith("video_audio_") -> {
+        val body = key.removePrefix("video_audio_")
+        (if ('_' in body) body.substringBeforeLast('_') else body).takeIf { it.isNotBlank() }
+    }
+    key.startsWith("video_") -> {
+        Regex("^video_([A-Za-z0-9_-]{11})_").find(key)?.groupValues?.getOrNull(1)
+    }
+    else -> null
+}
 
 @OptIn(UnstableApi::class)
 object AuraPlayerManager {
     private const val TAG = "AuraPlayerManager"
+    private const val PLAYBACK_EVENT_THRESHOLD_MS = 15_000L
+    private const val PERIODIC_PERSIST_INTERVAL_MS = 5_000L
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var radioFetchJob: Job? = null
@@ -76,6 +113,15 @@ object AuraPlayerManager {
     private var crossfadeSecondaryProcessors: Array<androidx.media3.common.audio.AudioProcessor>? = null
     private var crossfadePreparedTrackKey: String? = null
     private var crossfadeSourceTrackKey: String? = null
+
+    private var sessionTrack: AuraTrack? = null
+    private var sessionAccumulatedMs: Long = 0L
+    private var sessionEventRecorded: Boolean = false
+    private var sessionScrobbleNotified: Boolean = false
+    private var lastTickerWallMs: Long = 0L
+    private var lastPeriodicSaveWallMs: Long = 0L
+    private var lastPersistedQueueIds: List<String>? = null
+    private var selectedAudioDeviceInfo: AudioDeviceInfo? = null
 
     @Volatile
     private var isSleepTimerFading: Boolean = false
@@ -213,9 +259,20 @@ object AuraPlayerManager {
     private val _playbackMode = MutableStateFlow(PlaybackMode.NORMAL)
     val playbackMode: StateFlow<PlaybackMode> = _playbackMode.asStateFlow()
 
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
+    private val _playbackPitchSemitones = MutableStateFlow(0)
+    val playbackPitchSemitones: StateFlow<Int> = _playbackPitchSemitones.asStateFlow()
+
+    private val _selectedAudioOutputId = MutableStateFlow<Int?>(null)
+    val selectedAudioOutputId: StateFlow<Int?> = _selectedAudioOutputId.asStateFlow()
+
     var onTrackFinishedCallback: ((AuraTrack) -> Unit)? = null
     var onTrackSkippedCallback: ((AuraTrack) -> Unit)? = null
     var onVideoUnavailableCallback: ((AuraTrack) -> Unit)? = null
+    var onTrackStateChangedHook: ((track: AuraTrack?, isPlaying: Boolean, positionMs: Long, durationMs: Long) -> Unit)? = null
+    var onTrackScrobbleEligibleHook: ((track: AuraTrack, playedMs: Long) -> Unit)? = null
 
     fun initialize(context: Context) {
         if (exoPlayer != null) return
@@ -403,6 +460,11 @@ object AuraPlayerManager {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
+                lastTickerWallMs = System.currentTimeMillis()
+                if (!isPlaying && _currentTrack.value != null) {
+                    persistPlaybackState()
+                }
+                notifyTrackStateChanged()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -418,6 +480,7 @@ object AuraPlayerManager {
                         isFadeActive = isAnyFadeActive
                     )
                 } else if (playbackState == Player.STATE_ENDED) {
+                    recordCurrentSessionPlaybackEvent(completed = true)
                     _currentTrack.value?.let { finished ->
                         onTrackFinishedCallback?.invoke(finished)
                     }
@@ -431,6 +494,7 @@ object AuraPlayerManager {
                     } else {
                         skipToNext(recordSkip = false)
                     }
+                    notifyTrackStateChanged()
                 }
             }
 
@@ -438,6 +502,11 @@ object AuraPlayerManager {
                 fadeJob?.cancel()
                 if (!_isCrossfading.value) {
                     cancelCrossfade()
+                }
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                ) {
+                    recordCurrentSessionPlaybackEvent(completed = true)
                 }
                 if (_sleepTimerEndOfTrack.value &&
                     (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
@@ -453,6 +522,14 @@ object AuraPlayerManager {
                 val mediaId = mediaItem?.mediaId ?: return
                 val matched = _queue.value.firstOrNull { it.videoId == mediaId || it.id == mediaId }
                 if (matched != null) {
+                    val isDifferentTrack = sessionTrack == null ||
+                        (sessionTrack?.videoId != matched.videoId && sessionTrack?.id != matched.id)
+                    if (isDifferentTrack ||
+                        reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                        reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                    ) {
+                        resetPlaySessionTracker(matched)
+                    }
                     _currentTrack.value = matched
                     _durationSec.value = matched.durationSeconds.toFloat().coerceAtLeast(1f)
                     val cachedStream = SimpMusicExtractorEngine.getCachedStream(matched.videoId, _audioQuality.value)
@@ -465,6 +542,8 @@ object AuraPlayerManager {
                             isFadeActive = isAnyFadeActive
                         )
                     }
+                    persistPlaybackState()
+                    notifyTrackStateChanged()
                     if (matched.isPendingResolution) {
                         scope.launch {
                             val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(matched)
@@ -529,6 +608,8 @@ object AuraPlayerManager {
         })
 
         exoPlayer = player
+        applyPlaybackParameters()
+        selectedAudioDeviceInfo?.let { player.setPreferredAudioDevice(it) }
         startProgressTicker()
     }
 
@@ -600,6 +681,7 @@ object AuraPlayerManager {
         _bufferedSec.value = 0f
         _durationSec.value = track.durationSeconds.toFloat().coerceAtLeast(1f)
         _isBuffering.value = true
+        resetPlaySessionTracker(track)
 
         val mediaItems = updatedQueue.map { item -> buildMediaItem(item) }
         val startIndex = updatedQueue.indexOfFirst { it.id == track.id || it.videoId == track.videoId }.coerceAtLeast(0)
@@ -609,9 +691,12 @@ object AuraPlayerManager {
         isSleepTimerFading = false
         player.volume = baseVolume
         player.shuffleModeEnabled = false // Transparent explicit order
+        applyPlaybackParameters()
         player.setMediaItems(mediaItems, startIndex, 0L)
         player.prepare()
         player.play()
+        persistPlaybackState(forceQueueSave = true)
+        notifyTrackStateChanged()
 
         // Start MediaSessionService to keep media session active and system notification connected
         appContext?.let { ctx ->
@@ -634,6 +719,7 @@ object AuraPlayerManager {
                     if (fresh.isNotEmpty()) {
                         _queue.value = _queue.value + fresh
                         player.addMediaItems(fresh.map { buildMediaItem(it) })
+                        persistPlaybackState(forceQueueSave = true)
                         fresh.firstOrNull()?.let { SimpMusicExtractorEngine.prefetchStream(it.videoId) }
                     }
                 }
@@ -646,6 +732,7 @@ object AuraPlayerManager {
             _queue.value = _queue.value + track
             originalQueue = originalQueue + track
             exoPlayer?.addMediaItem(buildMediaItem(track))
+            persistPlaybackState(forceQueueSave = true)
         }
     }
 
@@ -665,6 +752,7 @@ object AuraPlayerManager {
                     if (player != null && player.playbackState != Player.STATE_IDLE) {
                         syncUpcomingItemsInPlayer(currentList.drop(curIdx + 1))
                     }
+                    persistPlaybackState(forceQueueSave = true)
                 }
             } else {
                 val removeIdx = currentList.indexOfFirst { it.videoId == track.videoId }
@@ -676,6 +764,7 @@ object AuraPlayerManager {
                     if (player != null && player.playbackState != Player.STATE_IDLE) {
                         syncUpcomingItemsInPlayer(currentList.drop(curIdx + 1))
                     }
+                    persistPlaybackState(forceQueueSave = true)
                 }
             }
         }
@@ -689,6 +778,7 @@ object AuraPlayerManager {
         current.add(insertIndex, track)
         _queue.value = current
         exoPlayer?.addMediaItem(insertIndex, buildMediaItem(track))
+        persistPlaybackState(forceQueueSave = true)
     }
 
     fun pauseWithFadeOut(onComplete: (() -> Unit)? = null) {
@@ -814,6 +904,7 @@ object AuraPlayerManager {
         val after = if (curIdx >= 0) list.drop(curIdx + 1).shuffled() else list.filterNot { it.id == cur.id || it.videoId == cur.videoId }.shuffled()
         _queue.value = before + after
         syncUpcomingItemsInPlayer(after)
+        persistPlaybackState(forceQueueSave = true)
     }
 
     fun restoreOriginalQueue() {
@@ -825,6 +916,7 @@ object AuraPlayerManager {
             val after = originalQueue.drop(origIdx + 1)
             _queue.value = before + after
             syncUpcomingItemsInPlayer(after)
+            persistPlaybackState(forceQueueSave = true)
         }
     }
 
@@ -836,6 +928,7 @@ object AuraPlayerManager {
         val updated = before + newUpcomingList
         _queue.value = updated
         syncUpcomingItemsInPlayer(newUpcomingList)
+        persistPlaybackState(forceQueueSave = true)
     }
 
     /**
@@ -856,6 +949,7 @@ object AuraPlayerManager {
         val removed = mutable.removeAt(index)
         _queue.value = mutable
         originalQueue = originalQueue.filterNot { it.id == removed.id && it.videoId == removed.videoId }
+        persistPlaybackState(forceQueueSave = true)
 
         if (!_isVideoMode.value) {
             val player = exoPlayer ?: return
@@ -884,6 +978,7 @@ object AuraPlayerManager {
         if (!_isShuffleEnabled.value && originalQueue.size == list.size) {
             originalQueue = mutable
         }
+        persistPlaybackState(forceQueueSave = true)
 
         if (!_isVideoMode.value) {
             val player = exoPlayer ?: return
@@ -943,6 +1038,8 @@ object AuraPlayerManager {
         val targetMs = (seconds.coerceAtLeast(0f) * 1000f).toLong()
         player.seekTo(targetMs)
         _positionSec.value = seconds.coerceAtLeast(0f)
+        persistPlaybackState()
+        notifyTrackStateChanged()
     }
 
     fun skipToNext(recordSkip: Boolean = true) {
@@ -1076,12 +1173,295 @@ object AuraPlayerManager {
             _bufferedSec.value = 0f
             _durationSec.value = target.durationSeconds.toFloat().coerceAtLeast(1f)
             _isBuffering.value = true
+            resetPlaySessionTracker(target)
             player.seekToDefaultPosition(mediaIndex)
             player.play()
+            persistPlaybackState()
+            notifyTrackStateChanged()
             prefetchUpcomingTracks(target.videoId)
         } else {
             playTrack(target, list, allowRadioQueue = false)
         }
+    }
+
+    // --- Playback Speed & Pitch ---
+
+    fun setPlaybackSpeed(speed: Float) {
+        _playbackSpeed.value = clampPlaybackSpeed(speed)
+        applyPlaybackParameters()
+    }
+
+    fun setPlaybackPitchSemitones(semitones: Int) {
+        _playbackPitchSemitones.value = clampPitchSemitones(semitones)
+        applyPlaybackParameters()
+    }
+
+    fun resetSpeedAndPitch() {
+        _playbackSpeed.value = 1.0f
+        _playbackPitchSemitones.value = 0
+        applyPlaybackParameters()
+    }
+
+    fun semitonesToPitchFactor(semitones: Int): Float =
+        com.auramusic.app.core.media.semitonesToPitchFactor(semitones)
+
+    private fun applyPlaybackParameters() {
+        val player = exoPlayer ?: return
+        if (_isCrossfading.value) {
+            player.playbackParameters = PlaybackParameters.DEFAULT
+            crossfadePlayer?.playbackParameters = PlaybackParameters.DEFAULT
+            return
+        }
+        val speed = _playbackSpeed.value
+        val pitchFactor = com.auramusic.app.core.media.semitonesToPitchFactor(_playbackPitchSemitones.value)
+        player.playbackParameters = PlaybackParameters(speed, pitchFactor)
+    }
+
+    // --- Per-App Audio Output Routing ---
+
+    fun selectAudioOutputDevice(device: AudioOutputDevice?) {
+        selectedAudioDeviceInfo = device?.deviceInfo
+        _selectedAudioOutputId.value = device?.id
+        exoPlayer?.setPreferredAudioDevice(device?.deviceInfo)
+        crossfadePlayer?.setPreferredAudioDevice(device?.deviceInfo)
+    }
+
+    // --- Cached Media Inspection ---
+
+    fun getCachedVideoIds(): Set<String> {
+        val cache = simpleCache ?: return emptySet()
+        return runCatching {
+            val ids = LinkedHashSet<String>()
+            for (key in cache.keys) {
+                val cachedBytes = runCatching { cache.getCachedBytes(key, 0L, Long.MAX_VALUE) }.getOrDefault(0L)
+                if (cachedBytes <= 0L) continue
+                val extracted = extractVideoIdFromCacheKey(key)
+                if (!extracted.isNullOrBlank()) {
+                    ids.add(extracted)
+                }
+            }
+            ids
+        }.getOrDefault(emptySet())
+    }
+
+    // --- Queue + Position Persistence & Resumption ---
+
+    @JvmOverloads
+    fun restoreSavedPlaybackState(autoPlay: Boolean = false) {
+        val ctx = appContext ?: return
+        val player = exoPlayer ?: return
+        if (!_savePlaybackState.value) return
+        if (_currentTrack.value != null || _queue.value.isNotEmpty()) return
+
+        scope.launch {
+            val restored = withContext(Dispatchers.IO) { loadSavedPlaybackBundle(ctx) } ?: return@launch
+            if (_currentTrack.value != null || _queue.value.isNotEmpty()) return@launch
+            val (savedQueue, savedIndex, savedPosMs) = restored
+            applyRestoredQueueToPlayer(
+                player = player,
+                savedQueue = savedQueue,
+                savedIndex = savedIndex,
+                savedPosMs = savedPosMs,
+                autoPlay = autoPlay
+            )
+        }
+    }
+
+    fun resumeSavedPlayback() {
+        val player = exoPlayer ?: return
+        if (_queue.value.isNotEmpty() && player.mediaItemCount > 0) {
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+            player.play()
+            return
+        }
+        restoreSavedPlaybackState(autoPlay = true)
+    }
+
+    internal suspend fun prepareMediaItemsForResumption(ctx: Context): Triple<List<MediaItem>, Int, Long>? {
+        val currentQ = _queue.value
+        if (currentQ.isNotEmpty()) {
+            val cur = _currentTrack.value
+            val curIdx = cur?.let { t ->
+                currentQ.indexOfFirst { it.id == t.id || it.videoId == t.videoId }
+            }?.takeIf { it >= 0 } ?: (exoPlayer?.currentMediaItemIndex ?: 0).coerceIn(0, currentQ.lastIndex)
+            val posMs = exoPlayer?.currentPosition?.coerceAtLeast(0L)
+                ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+            return Triple(currentQ.map { buildMediaItem(it) }, curIdx, posMs)
+        }
+
+        val bundle = withContext(Dispatchers.IO) {
+            loadSavedPlaybackBundle(ctx) ?: run {
+                val storage = AuraStorageRepository(ctx)
+                val fallback = storage.loadRecentlyPlayed().ifEmpty { storage.loadFavorites() }
+                    .map { offlineDownloader.withOfflineArtwork(ctx, it) }
+                if (fallback.isNotEmpty()) Triple(fallback, 0, 0L) else null
+            }
+        } ?: return null
+
+        val (tracks, startIdx, startPosMs) = bundle
+        val targetTrack = tracks[startIdx]
+        withContext(Dispatchers.Main) {
+            if (_queue.value.isEmpty()) {
+                originalQueue = tracks
+                lastPersistedQueueIds = tracks.map { if (it.id.isNotBlank()) it.id else it.videoId }
+                _queue.value = tracks
+                _currentTrack.value = targetTrack
+                _durationSec.value = targetTrack.durationSeconds.toFloat().coerceAtLeast(1f)
+                _positionSec.value = (startPosMs / 1000f).coerceAtLeast(0f)
+                _bufferedSec.value = 0f
+                resetPlaySessionTracker(targetTrack)
+                applyPlaybackParameters()
+                notifyTrackStateChanged()
+            }
+        }
+        return Triple(tracks.map { buildMediaItem(it) }, startIdx, startPosMs)
+    }
+
+    internal fun syncExternalQueueSelection(tracks: List<AuraTrack>, startIndex: Int) {
+        if (tracks.isEmpty()) return
+        val normalized = tracks.map(::withOfflineArtwork)
+        val safeIdx = startIndex.coerceIn(0, normalized.lastIndex)
+        val target = normalized[safeIdx]
+        originalAudioTrack = null
+        originalAudioQueue = null
+        originalAudioIndex = -1
+        _isVideoMode.value = false
+        originalQueue = normalized
+        _queue.value = normalized
+        _currentTrack.value = target
+        _positionSec.value = 0f
+        _bufferedSec.value = 0f
+        _durationSec.value = target.durationSeconds.toFloat().coerceAtLeast(1f)
+        _isBuffering.value = true
+        resetPlaySessionTracker(target)
+        applyPlaybackParameters()
+        persistPlaybackState(forceQueueSave = true)
+        notifyTrackStateChanged()
+        prefetchUpcomingTracks(target.videoId)
+    }
+
+    fun buildMediaItemForTrack(track: AuraTrack): MediaItem = buildMediaItem(withOfflineArtwork(track))
+
+    private fun loadSavedPlaybackBundle(ctx: Context): Triple<List<AuraTrack>, Int, Long>? {
+        val storage = AuraStorageRepository(ctx)
+        val savedQueue = storage.loadPlaybackQueue().map { offlineDownloader.withOfflineArtwork(ctx, it) }
+        if (savedQueue.isEmpty()) return null
+        val prefs = AuraPreferencesStore.getInstance(ctx)
+        val savedIndex = prefs.getInt(AuraPreferencesStore.Keys.SAVED_QUEUE_INDEX, 0)
+            .coerceIn(0, savedQueue.lastIndex)
+        val savedPosMs = prefs.getLong(AuraPreferencesStore.Keys.SAVED_QUEUE_POSITION_MS, 0L)
+            .coerceAtLeast(0L)
+        return Triple(savedQueue, savedIndex, savedPosMs)
+    }
+
+    private fun applyRestoredQueueToPlayer(
+        player: ExoPlayer,
+        savedQueue: List<AuraTrack>,
+        savedIndex: Int,
+        savedPosMs: Long,
+        autoPlay: Boolean
+    ) {
+        val targetTrack = savedQueue[savedIndex]
+        originalQueue = savedQueue
+        lastPersistedQueueIds = savedQueue.map { if (it.id.isNotBlank()) it.id else it.videoId }
+        _queue.value = savedQueue
+        _currentTrack.value = targetTrack
+        _durationSec.value = targetTrack.durationSeconds.toFloat().coerceAtLeast(1f)
+        _positionSec.value = (savedPosMs / 1000f).coerceAtLeast(0f)
+        _bufferedSec.value = 0f
+        _isBuffering.value = autoPlay
+        resetPlaySessionTracker(targetTrack)
+        player.volume = baseVolume
+        player.shuffleModeEnabled = false
+        applyPlaybackParameters()
+        player.setMediaItems(savedQueue.map { buildMediaItem(it) }, savedIndex, savedPosMs)
+        player.playWhenReady = autoPlay
+        player.prepare()
+        notifyTrackStateChanged()
+    }
+
+    private fun persistPlaybackState(forceQueueSave: Boolean = false) {
+        val ctx = appContext ?: return
+        if (!_savePlaybackState.value) return
+        val activeQueue = if (_isVideoMode.value && !originalAudioQueue.isNullOrEmpty()) {
+            originalAudioQueue!!
+        } else {
+            _queue.value
+        }
+        if (activeQueue.isEmpty()) return
+        val activeTrack = if (_isVideoMode.value && originalAudioTrack != null) {
+            originalAudioTrack
+        } else {
+            _currentTrack.value
+        }
+        val idx = activeTrack?.let { t ->
+            activeQueue.indexOfFirst { it.id == t.id || it.videoId == t.videoId }
+        }?.takeIf { it >= 0 } ?: (exoPlayer?.currentMediaItemIndex ?: 0).coerceIn(0, activeQueue.lastIndex)
+        val posMs = exoPlayer?.currentPosition?.coerceAtLeast(0L)
+            ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+
+        AuraPreferencesStore.getInstance(ctx).editBatch(
+            mapOf(
+                kotlin.Pair(AuraPreferencesStore.Keys.SAVED_QUEUE_INDEX, idx),
+                kotlin.Pair(AuraPreferencesStore.Keys.SAVED_QUEUE_POSITION_MS, posMs)
+            )
+        )
+
+        val queueIds = activeQueue.map { if (it.id.isNotBlank()) it.id else it.videoId }
+        if (forceQueueSave || queueIds != lastPersistedQueueIds) {
+            lastPersistedQueueIds = queueIds
+            val snapshot = activeQueue.toList()
+            ioScope.launch {
+                runCatching { AuraStorageRepository(ctx).savePlaybackQueue(snapshot) }
+            }
+        }
+    }
+
+    private fun resetPlaySessionTracker(track: AuraTrack?) {
+        sessionTrack = track
+        sessionAccumulatedMs = 0L
+        sessionEventRecorded = false
+        sessionScrobbleNotified = false
+        lastTickerWallMs = System.currentTimeMillis()
+    }
+
+    private fun recordCurrentSessionPlaybackEvent(completed: Boolean) {
+        val ctx = appContext ?: return
+        val track = (if (_isVideoMode.value) originalAudioTrack else null)
+            ?: sessionTrack
+            ?: _currentTrack.value
+            ?: return
+        if (sessionEventRecorded) return
+        if (!completed && sessionAccumulatedMs < PLAYBACK_EVENT_THRESHOLD_MS) return
+        if (completed && sessionAccumulatedMs < 1_000L && !track.isPendingResolution) return
+
+        sessionEventRecorded = true
+        val playedMs = sessionAccumulatedMs.coerceAtLeast(if (completed) 1_000L else PLAYBACK_EVENT_THRESHOLD_MS)
+        ioScope.launch {
+            runCatching {
+                val storage = AuraStorageRepository(ctx)
+                if (storage.loadRecordListeningHistory()) {
+                    storage.recordPlaybackEvent(
+                        track = track,
+                        durationPlayedMs = playedMs,
+                        completed = completed
+                    )
+                }
+            }
+        }
+    }
+
+    private fun notifyTrackStateChanged() {
+        val player = exoPlayer
+        val track = _currentTrack.value
+        val playing = _isPlaying.value
+        val posMs = player?.currentPosition?.coerceAtLeast(0L)
+            ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+        val durMs = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
+            ?: ((track?.durationSeconds ?: 0).coerceAtLeast(0) * 1000L)
+        onTrackStateChangedHook?.invoke(track, playing, posMs, durMs)
     }
 
     fun setSponsorSegments(segments: List<SponsorSegment>) {
@@ -1663,6 +2043,8 @@ object AuraPlayerManager {
             artworkUrl = "https://i.ytimg.com/vi/${videoTrack.videoId}/hqdefault.jpg",
             musicVideoType = videoTrack.musicVideoType ?: "MUSIC_VIDEO_TYPE_OMV"
         )
+        resetPlaySessionTracker(videoTrack)
+        notifyTrackStateChanged()
 
         scope.launch(Dispatchers.IO) {
             val officialAudio = SimpMusicExtractorEngine.findOfficialAudioTrack(videoTrack)
@@ -1745,22 +2127,26 @@ object AuraPlayerManager {
                 _queue.value = origQueue
             }
             val mediaItem = buildMediaItem(origTrack)
+            applyPlaybackParameters()
             player.setMediaItem(mediaItem, currentPos)
             player.prepare()
             if (wasPlaying) {
                 player.play()
             }
+            notifyTrackStateChanged()
             if (SimpMusicExtractorEngine.isVideoThumbnailUrl(origTrack.artworkUrl)) {
                 resolveAndApplyOfficialAudioArtwork(origTrack)
             }
         } else {
             val cur = currentTrack.value ?: return
             val mediaItem = buildMediaItem(cur)
+            applyPlaybackParameters()
             player.setMediaItem(mediaItem, currentPos)
             player.prepare()
             if (wasPlaying) {
                 player.play()
             }
+            notifyTrackStateChanged()
             if (SimpMusicExtractorEngine.isVideoThumbnailUrl(cur.artworkUrl)) {
                 resolveAndApplyOfficialAudioArtwork(cur)
             }
@@ -2008,6 +2394,7 @@ object AuraPlayerManager {
             handleAudioFocus = false,
             useSecondaryDsp = true
         )
+        selectedAudioDeviceInfo?.let { secondary.setPreferredAudioDevice(it) }
         secondary.volume = 0f
         secondary.playWhenReady = false
         secondary.setMediaItem(buildMediaItem(nextTrack), 0L)
@@ -2031,6 +2418,9 @@ object AuraPlayerManager {
         val secondary = crossfadePlayer ?: return
 
         _isCrossfading.value = true
+        // Temporarily neutralize speed/pitch during active crossfade so fade timing stays exact
+        primary.playbackParameters = PlaybackParameters.DEFAULT
+        secondary.playbackParameters = PlaybackParameters.DEFAULT
         crossfadeJob = scope.launch {
             try {
                 // Wait briefly for pre-warmed secondary player to become ready without blocking forever
@@ -2081,6 +2471,7 @@ object AuraPlayerManager {
                 }
                 if (!isActive) return@launch
 
+                recordCurrentSessionPlaybackEvent(completed = true)
                 onTrackFinishedCallback?.invoke(outgoingTrack)
 
                 val handoffPosMs = secondary.currentPosition.coerceAtLeast(0L)
@@ -2092,6 +2483,7 @@ object AuraPlayerManager {
                 _currentTrack.value = nextTrack
                 _durationSec.value = nextTrack.durationSeconds.toFloat().coerceAtLeast(1f)
                 _positionSec.value = (handoffPosMs / 1000f).coerceAtLeast(0f)
+                resetPlaySessionTracker(nextTrack)
 
                 primary.volume = 0f
                 primary.seekTo(targetMediaIdx, handoffPosMs)
@@ -2117,6 +2509,9 @@ object AuraPlayerManager {
                 primary.volume = baseVolume
                 releaseCrossfadePlayerOnly()
                 _isCrossfading.value = false
+                applyPlaybackParameters()
+                persistPlaybackState()
+                notifyTrackStateChanged()
                 prefetchUpcomingTracks(nextTrack.videoId)
             } catch (e: Exception) {
                 Log.w(TAG, "Crossfade transition notice: ${e.message}")
@@ -2145,6 +2540,7 @@ object AuraPlayerManager {
         crossfadeJob = null
         releaseCrossfadePlayerOnly()
         _isCrossfading.value = false
+        applyPlaybackParameters()
         if (!isSleepTimerFading && fadeJob?.isActive != true) {
             exoPlayer?.volume = baseVolume
         }
@@ -2152,8 +2548,14 @@ object AuraPlayerManager {
 
     private fun startProgressTicker() {
         progressJob?.cancel()
+        lastTickerWallMs = System.currentTimeMillis()
+        lastPeriodicSaveWallMs = lastTickerWallMs
         progressJob = scope.launch {
             while (isActive) {
+                val now = System.currentTimeMillis()
+                val deltaMs = (now - lastTickerWallMs).coerceIn(0L, 500L)
+                lastTickerWallMs = now
+
                 val player = exoPlayer
                 if (player != null) {
                     val posSec = (player.currentPosition / 1000f).coerceAtLeast(0f)
@@ -2161,13 +2563,39 @@ object AuraPlayerManager {
                     _positionSec.value = posSec
                     _bufferedSec.value = bufSec
 
+                    val curTrack = _currentTrack.value
+                    if (player.isPlaying && curTrack != null) {
+                        sessionAccumulatedMs += deltaMs
+
+                        if (!sessionEventRecorded && sessionAccumulatedMs >= PLAYBACK_EVENT_THRESHOLD_MS) {
+                            recordCurrentSessionPlaybackEvent(completed = false)
+                        }
+
+                        val canonicalTrack = (if (_isVideoMode.value) originalAudioTrack else null)
+                            ?: sessionTrack
+                            ?: curTrack
+                        if (!sessionScrobbleNotified) {
+                            val durSec = canonicalTrack.durationSeconds.coerceAtLeast(30)
+                            val scrobbleThresholdMs = minOf((durSec * 1000L) / 2L, 240_000L)
+                                .coerceAtLeast(PLAYBACK_EVENT_THRESHOLD_MS)
+                            if (sessionAccumulatedMs >= scrobbleThresholdMs) {
+                                sessionScrobbleNotified = true
+                                onTrackScrobbleEligibleHook?.invoke(canonicalTrack, sessionAccumulatedMs)
+                            }
+                        }
+
+                        if (now - lastPeriodicSaveWallMs >= PERIODIC_PERSIST_INTERVAL_MS) {
+                            lastPeriodicSaveWallMs = now
+                            persistPlaybackState(forceQueueSave = false)
+                        }
+                    }
+
                     val durMs = player.duration
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
                         _durationSec.value = (durMs / 1000f).coerceAtLeast(1f)
 
                         val remainingMs = durMs - player.currentPosition
                         val crossfadeMs = _crossfadeSeconds.value * 1000L
-                        val curTrack = _currentTrack.value
                         val nextTarget = if (crossfadeMs > 0L && durMs > crossfadeMs * 2L + 2000L) {
                             resolveNextTrackForCrossfade()
                         } else {

@@ -56,6 +56,8 @@ import androidx.compose.material.icons.rounded.RepeatOne
 import androidx.compose.material.icons.rounded.Shuffle
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.SkipPrevious
+import androidx.compose.material.icons.rounded.SpeakerGroup
+import androidx.compose.material.icons.rounded.Speed
 import androidx.compose.material.icons.rounded.Videocam
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -67,6 +69,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -88,12 +91,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.auramusic.app.core.media.AudioOutputRouter
+import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.PlaybackMode
+import com.auramusic.app.ui.components.AuraOutputSheet
+import com.auramusic.app.ui.components.AuraSpeedPitchSheet
+import com.auramusic.app.ui.components.AuraTrackInfoSheet
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalGlassBackdrop
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.liquidGlass
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private val DOCK_BUTTON_SIZE = 44.dp
@@ -164,6 +173,7 @@ fun AppleMusicTimesRow(
     isBuffering: Boolean,
     modifier: Modifier = Modifier,
     typography: AppleMusicTypography = rememberAppleMusicTypography(),
+    onOpenTrackInfo: (() -> Unit)? = null,
 ) {
     val safeDuration = durationSec.coerceAtLeast(0f)
     val clampedElapsed = if (safeDuration > 0f) positionSec.coerceIn(0f, safeDuration) else positionSec.coerceAtLeast(0f)
@@ -244,6 +254,9 @@ fun AppleMusicTimesRow(
                     .alpha(qualityAlpha)
                     .clip(RoundedCornerShape(6.dp))
                     .background(Color.White.copy(alpha = 0.08f))
+                    .then(
+                        if (onOpenTrackInfo != null) Modifier.clickable(onClick = onOpenTrackInfo) else Modifier
+                    )
                     .padding(horizontal = 7.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -740,7 +753,18 @@ fun AppleMusicBottomCluster(
     }
 
     val context = LocalContext.current
-    val resolvedOutputLabel = outputDeviceLabel ?: rememberActiveAudioOutputName(context)
+    val playbackSpeed by AuraPlayerManager.playbackSpeed.collectAsState()
+    val playbackPitchSemitones by AuraPlayerManager.playbackPitchSemitones.collectAsState()
+    val selectedOutputId by AuraPlayerManager.selectedAudioOutputId.collectAsState()
+    var showOutputSheet by remember { mutableStateOf(false) }
+    var showSpeedPitchSheet by remember { mutableStateOf(false) }
+    var showTrackInfoSheet by remember { mutableStateOf(false) }
+    val outputDevices = remember(context, showOutputSheet, selectedOutputId) {
+        AudioOutputRouter.listOutputDevices(context)
+    }
+    val resolvedOutputLabel = outputDeviceLabel
+        ?: outputDevices.firstOrNull { it.id == selectedOutputId || it.isActive }?.name
+        ?: rememberActiveAudioOutputName(context)
 
     Column(
         modifier = modifier
@@ -778,6 +802,7 @@ fun AppleMusicBottomCluster(
             durationSec = durationSec,
             isBuffering = isBuffering,
             typography = typography,
+            onOpenTrackInfo = { showTrackInfoSheet = true },
             modifier = Modifier.padding(top = 8.dp),
         )
 
@@ -812,28 +837,120 @@ fun AppleMusicBottomCluster(
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        Crossfade(
-            targetState = resolvedOutputLabel.orEmpty(),
-            animationSpec = tween(300),
-            label = "appleMusicOutputCaption",
+        Row(
             modifier = Modifier.fillMaxWidth(),
-        ) { name ->
-            Box(
-                modifier = Modifier.fillMaxWidth(),
-                contentAlignment = Alignment.Center,
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Crossfade(
+                targetState = resolvedOutputLabel.orEmpty(),
+                animationSpec = tween(300),
+                label = "appleMusicOutputCaption",
+            ) { name ->
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { showOutputSheet = true }
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.SpeakerGroup,
+                        contentDescription = "Audio Output Device",
+                        tint = typography.footer.color,
+                        modifier = Modifier.size(13.dp),
+                    )
+                    Text(
+                        text = name.ifBlank { "Audio Output" },
+                        style = typography.footer,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(6.dp))
+
+            val isSpeedPitchModified = playbackSpeed != 1.0f || playbackPitchSemitones != 0
+            val speedChipLabel = if (isSpeedPitchModified) {
+                buildString {
+                    append(String.format(Locale.US, "%.2gx", playbackSpeed))
+                    if (playbackPitchSemitones != 0) {
+                        append(" ")
+                        append(if (playbackPitchSemitones > 0) "+$playbackPitchSemitones" else "$playbackPitchSemitones")
+                        append("st")
+                    }
+                }
+            } else {
+                "1x"
+            }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (isSpeedPitchModified) AuraNeonLime.copy(alpha = 0.20f)
+                        else Color.White.copy(alpha = 0.09f)
+                    )
+                    .clickable { showSpeedPitchSheet = true }
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
+                Icon(
+                    imageVector = Icons.Rounded.Speed,
+                    contentDescription = "Speed & Pitch",
+                    tint = if (isSpeedPitchModified) AuraNeonLime else typography.footer.color,
+                    modifier = Modifier.size(12.dp),
+                )
                 Text(
-                    text = name,
-                    style = typography.footer,
+                    text = speedChipLabel,
+                    style = typography.footer.copy(
+                        color = if (isSpeedPitchModified) AuraNeonLime else typography.footer.color
+                    ),
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(0.70f),
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(14.dp))
+    }
+
+    if (showOutputSheet) {
+        AuraOutputSheet(
+            devices = outputDevices,
+            selectedDeviceId = selectedOutputId,
+            onSelectDevice = { dev ->
+                AuraPlayerManager.selectAudioOutputDevice(dev)
+                showOutputSheet = false
+            },
+            onDismiss = { showOutputSheet = false },
+        )
+    }
+
+    if (showSpeedPitchSheet) {
+        AuraSpeedPitchSheet(
+            speed = playbackSpeed,
+            pitchSemitones = playbackPitchSemitones,
+            onSpeedChange = { AuraPlayerManager.setPlaybackSpeed(it) },
+            onPitchChange = { AuraPlayerManager.setPlaybackPitchSemitones(it) },
+            onReset = { AuraPlayerManager.resetSpeedAndPitch() },
+            onDismiss = { showSpeedPitchSheet = false },
+        )
+    }
+
+    if (showTrackInfoSheet) {
+        AuraTrackInfoSheet(
+            track = track,
+            rydData = null,
+            description = "",
+            onSeekToSec = { sec ->
+                onSeekTo(sec.toFloat())
+                showTrackInfoSheet = false
+            },
+            onDismiss = { showTrackInfoSheet = false },
+        )
     }
 }
 
