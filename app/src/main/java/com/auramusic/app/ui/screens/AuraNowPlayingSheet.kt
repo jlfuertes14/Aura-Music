@@ -50,6 +50,8 @@ import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.ui.components.AuraAddToPlaylistModal
 import com.auramusic.app.ui.components.AuraCommentsBottomSheet
 import com.auramusic.app.ui.components.AuraCreatePlaylistModal
+import com.auramusic.app.ui.components.AuraSleepTimerSheet
+import com.auramusic.app.ui.components.formatSleepTimerStatus
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricStrip
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsTabView
@@ -138,8 +140,13 @@ fun AuraNowPlayingSheet(
     var isAddToPlaylistModalVisible by remember { mutableStateOf(false) }
     var isCreatePlaylistModalVisible by remember { mutableStateOf(false) }
     var isCommentsVisible by remember { mutableStateOf(false) }
+    var isSleepTimerSheetVisible by remember { mutableStateOf(false) }
     var appleMusicActiveView by remember { mutableStateOf(AppleMusicView.MAIN) }
     val playbackMode by AuraPlayerManager.playbackMode.collectAsState()
+    val sleepTimerRemainingMin by AuraPlayerManager.sleepTimerRemainingMin.collectAsState()
+    val sleepTimerEndOfTrack by AuraPlayerManager.sleepTimerEndOfTrack.collectAsState()
+    val isSleepTimerActive = (sleepTimerRemainingMin != null && (sleepTimerRemainingMin ?: 0) > 0) || sleepTimerEndOfTrack
+    val sleepTimerStatus = formatSleepTimerStatus(sleepTimerRemainingMin, sleepTimerEndOfTrack)
 
     val canonicalVideoId = AuraPlayerManager.originalAudioTrack?.videoId ?: track.videoId
     val activeLyrics = lyrics?.takeIf {
@@ -189,14 +196,15 @@ fun AuraNowPlayingSheet(
     val keyboardController = LocalSoftwareKeyboardController.current
 
     // Always dismiss any lingering search input focus / soft keyboard when opening player or its modals
-    LaunchedEffect(Unit, isQueueSheetVisible, isOptionsModalVisible, isLyricsExpanded, isLivePerformancesModalVisible, isAddToPlaylistModalVisible, isCreatePlaylistModalVisible, isCommentsVisible) {
+    LaunchedEffect(Unit, isQueueSheetVisible, isOptionsModalVisible, isLyricsExpanded, isLivePerformancesModalVisible, isAddToPlaylistModalVisible, isCreatePlaylistModalVisible, isCommentsVisible, isSleepTimerSheetVisible) {
         focusManager.clearFocus(force = true)
         keyboardController?.hide()
     }
 
     // Intercept back gesture / button to smoothly close open sheets / modals
-    BackHandler(enabled = isLyricsExpanded || isLivePerformancesModalVisible || isOptionsModalVisible || isQueueSheetVisible || isAddToPlaylistModalVisible || isCreatePlaylistModalVisible || isCommentsVisible) {
+    BackHandler(enabled = isLyricsExpanded || isLivePerformancesModalVisible || isOptionsModalVisible || isQueueSheetVisible || isAddToPlaylistModalVisible || isCreatePlaylistModalVisible || isCommentsVisible || isSleepTimerSheetVisible) {
         when {
+            isSleepTimerSheetVisible -> isSleepTimerSheetVisible = false
             isCommentsVisible -> isCommentsVisible = false
             isCreatePlaylistModalVisible -> isCreatePlaylistModalVisible = false
             isAddToPlaylistModalVisible -> isAddToPlaylistModalVisible = false
@@ -331,6 +339,9 @@ fun AuraNowPlayingSheet(
                             onOpenArtist = { onOpenArtist(track.artist) },
                             onOpenCurrentPlaylist = onOpenCurrentPlaylist,
                             onOptionsClick = { isOptionsModalVisible = true },
+                            sleepTimerRemainingMin = sleepTimerRemainingMin,
+                            sleepTimerEndOfTrack = sleepTimerEndOfTrack,
+                            onOpenSleepTimer = { isSleepTimerSheetVisible = true },
                             onOpenLyrics = openLyrics,
                             onAdjustLyricsOffset = onAdjustLyricsOffset,
                             onOpenComments = { isCommentsVisible = true; onLoadComments(track.videoId) },
@@ -374,6 +385,8 @@ fun AuraNowPlayingSheet(
                             onPlayQueueTrack = onPlayQueueTrack,
                             isVideoMode = isVideoMode,
                             onToggleVideoMode = onToggleVideoMode,
+                            isSleepTimerActive = isSleepTimerActive,
+                            onOpenSleepTimer = { isSleepTimerSheetVisible = true },
                             hideArtworkForTransition = !isVideoMode &&
                                 ((lyricsExpansionProgress > 0.001f && lyricsHeaderArtBounds != null) ||
                                     hideArtworkForPlayerTransition),
@@ -550,7 +563,12 @@ fun AuraNowPlayingSheet(
                 isDownloaded = isDownloaded,
                 isDownloading = isDownloading,
                 onDownloadTrack = onDownloadTrack?.let { callback -> { isOptionsModalVisible = false; callback(track) } },
-                onRemoveDownload = onRemoveDownload?.let { callback -> { isOptionsModalVisible = false; callback(track) } }
+                onRemoveDownload = onRemoveDownload?.let { callback -> { isOptionsModalVisible = false; callback(track) } },
+                sleepTimerStatus = sleepTimerStatus,
+                onOpenSleepTimer = {
+                    isOptionsModalVisible = false
+                    isSleepTimerSheetVisible = true
+                }
             )
         }
 
@@ -626,6 +644,17 @@ fun AuraNowPlayingSheet(
                 onToggleReplies = onToggleCommentReplies,
                 onLoadMoreReplies = onLoadMoreCommentReplies,
                 onDismiss = { isCommentsVisible = false }
+            )
+        }
+
+        if (isSleepTimerSheetVisible) {
+            AuraSleepTimerSheet(
+                remainingMinutes = sleepTimerRemainingMin,
+                endOfTrackEnabled = sleepTimerEndOfTrack,
+                onSelectMinutes = { AuraPlayerManager.setSleepTimerMinutes(it) },
+                onToggleEndOfTrack = { AuraPlayerManager.setSleepTimerEndOfTrack(it) },
+                onDismiss = { isSleepTimerSheetVisible = false },
+                containerColor = modalContainerColor
             )
         }
     }

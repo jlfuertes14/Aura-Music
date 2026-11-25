@@ -4,12 +4,14 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.auramusic.app.AuraApplication
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.core.update.AuraReleaseInfo
 import com.auramusic.app.core.update.UpdateDownloadProgress
 import com.auramusic.app.core.update.UpdateState
 import com.auramusic.app.data.AuraStorageRepository
+import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.ArtistCarouselItem
 import com.auramusic.app.domain.model.ArtistDetail
@@ -29,6 +31,7 @@ import com.auramusic.app.domain.model.MoodCategory
 import com.auramusic.app.domain.model.NowPlayingStyle
 import com.auramusic.app.domain.model.PlaylistDetail
 import com.auramusic.app.domain.model.ReturnYouTubeDislikeData
+import com.auramusic.app.domain.model.ThemeColorSource
 import com.auramusic.app.domain.model.YtmChartSection
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
 import com.auramusic.app.domain.model.YtmMoodShelf
@@ -74,6 +77,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         storage = storage,
         onReloadLyricsForProvider = { provider -> playback.reloadLyricsForProvider(provider) },
         onApplyDefaultLyricsOffsetIfZero = { offsetMs -> playback.applyDefaultLyricsOffsetIfZero(offsetMs) },
+        onReRomanizeCurrentLyrics = { languages -> playback.reRomanizeCurrentLyrics(languages) },
         onBackupRestored = {
             library.reloadAfterBackupRestore()
             discovery.syncAfterBackupRestore()
@@ -109,6 +113,13 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         AuraPlayerManager.initialize(application)
+        AuraApplication.applyThemeMode(settings.themeMode.value)
+        AuraPlayerManager.setSkipCrossfadeWithinAlbum(storage.loadSkipCrossfadeWithinAlbum())
+        storage.loadActiveAutoEqProfileId()?.let { savedProfileId ->
+            if (AuraPlayerManager.activeAutoEqProfileId.value == null) {
+                AuraPlayerManager.applyAutoEqProfile(savedProfileId)
+            }
+        }
         SimpMusicExtractorEngine.clearStreamCache()
         library.loadInitialFromStorage()
         SimpMusicExtractorEngine.contentCountry = discovery.selectedChartCountry.value
@@ -203,11 +214,19 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     val autoDownloadLikedSongs: StateFlow<Boolean> = settings.autoDownloadLikedSongs
     val recordListeningHistory: StateFlow<Boolean> = settings.recordListeningHistory
     val autoCheckUpdates: StateFlow<Boolean> = settings.autoCheckUpdates
+    val releaseNotificationsEnabled: StateFlow<Boolean> = settings.releaseNotificationsEnabled
     val rydData: StateFlow<ReturnYouTubeDislikeData?> = playback.rydData
     val appThemeStyle: StateFlow<AppThemeStyle> = settings.appThemeStyle
+    val themeMode: StateFlow<AppThemeMode> = settings.themeMode
+    val themeColorSource: StateFlow<ThemeColorSource> = settings.themeColorSource
+    val customAccentArgb: StateFlow<Int?> = settings.customAccentArgb
     val nowPlayingStyle: StateFlow<NowPlayingStyle> = settings.nowPlayingStyle
     val liquidGlassEnabled: StateFlow<Boolean> = settings.liquidGlassEnabled
     val lyricsStyle: StateFlow<LyricsStyle> = settings.lyricsStyle
+    val skipCrossfadeWithinAlbum: StateFlow<Boolean> = AuraPlayerManager.skipCrossfadeWithinAlbum
+    val activeAutoEqProfileId: StateFlow<String?> = AuraPlayerManager.activeAutoEqProfileId
+    val sleepTimerRemainingMin: StateFlow<Int?> = AuraPlayerManager.sleepTimerRemainingMin
+    val sleepTimerEndOfTrack: StateFlow<Boolean> = AuraPlayerManager.sleepTimerEndOfTrack
     val isVideoMode: StateFlow<Boolean> = playback.isVideoMode
     val isVideoLoading: StateFlow<Boolean> = playback.isVideoLoading
     val livePerformances: StateFlow<List<AuraTrack>> = playback.livePerformances
@@ -314,16 +333,24 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     fun setRecordListeningHistory(enabled: Boolean) = settings.setRecordListeningHistory(enabled)
     fun clearListeningHistory() = library.clearListeningHistory()
     fun setAutoCheckUpdates(enabled: Boolean) = settings.setAutoCheckUpdates(enabled)
+    fun setReleaseNotificationsEnabled(enabled: Boolean) = settings.setReleaseNotificationsEnabled(enabled)
     fun toggleSponsorBlockCategory(category: String) = settings.toggleSponsorBlockCategory(category)
     fun clearAllDownloads() = library.clearAllDownloads()
     fun exportBackupToUri(uri: Uri) = settings.exportBackupToUri(uri)
     fun importBackupFromUri(uri: Uri) = settings.importBackupFromUri(uri)
 
     fun setAppThemeStyle(style: AppThemeStyle) = settings.setAppThemeStyle(style)
+    fun setThemeMode(mode: AppThemeMode) = settings.setThemeMode(mode)
+    fun setThemeColorSource(source: ThemeColorSource) = settings.setThemeColorSource(source)
+    fun setCustomAccentArgb(argb: Int?) = settings.setCustomAccentArgb(argb)
     fun setNowPlayingStyle(style: NowPlayingStyle) = settings.setNowPlayingStyle(style)
     fun setLiquidGlassEnabled(enabled: Boolean) = settings.setLiquidGlassEnabled(enabled)
     fun setLyricsStyle(style: LyricsStyle) = settings.setLyricsStyle(style)
     fun selectEqualizerPreset(preset: EqualizerPreset) = settings.selectEqualizerPreset(preset)
+    fun setSkipCrossfadeWithinAlbum(enabled: Boolean) = settings.setSkipCrossfadeWithinAlbum(enabled)
+    fun selectAutoEqProfile(profileId: String?) = settings.selectAutoEqProfile(profileId)
+    fun setSleepTimerMinutes(minutes: Int?) = AuraPlayerManager.setSleepTimerMinutes(minutes)
+    fun setSleepTimerEndOfTrack(enabled: Boolean) = AuraPlayerManager.setSleepTimerEndOfTrack(enabled)
 
     fun toggleVideoMode() = playback.toggleVideoMode()
     fun setVideoMode(enabled: Boolean) = playback.setVideoMode(enabled)

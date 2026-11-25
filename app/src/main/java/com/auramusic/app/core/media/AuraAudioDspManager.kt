@@ -80,7 +80,15 @@ class AuraAudioDspManager {
 
     @Volatile
     private var eqProcessorHook: EqAudioProcessorHook? = null
+    private val secondaryEqHooks = mutableListOf<EqAudioProcessorHook>()
     private val extraAudioProcessors = mutableListOf<AudioProcessor>()
+
+    /** Built-in software 10-band ISO biquad equalizer processor for Media3. */
+    val softwareEqProcessor: EqualizerAudioProcessor = EqualizerAudioProcessor()
+
+    init {
+        eqProcessorHook = softwareEqProcessor
+    }
 
     private val _activeEqPreset = MutableStateFlow(
         SIMPMUSIC_ALL_EQ_PRESETS.find { it.id == "flat" } ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
@@ -112,11 +120,38 @@ class AuraAudioDspManager {
     /** Registers a software Media3 EQ processor hook (Tier 1 10-band + AutoEq integration). */
     fun registerEqAudioProcessorHook(hook: EqAudioProcessorHook?) {
         eqProcessorHook = hook
-        hook?.let {
-            it.setEnabled(_eqEnabled.value)
-            it.updateCurve(_equalizerBands.value, _equalizerPreamp.value)
-            it.applyAutoEqProfile(_activeAutoEqProfile.value)
+        hook?.let { syncEqHook(it) }
+    }
+
+    /** Creates and registers a synced secondary [AudioProcessor] chain for a crossfade player. */
+    fun createSecondaryAudioProcessors(): Array<AudioProcessor> {
+        val secondaryEq = EqualizerAudioProcessor()
+        synchronized(effectLock) {
+            secondaryEqHooks.add(secondaryEq)
+            syncEqHook(secondaryEq)
+            return buildList {
+                add(secondaryEq)
+                addAll(extraAudioProcessors)
+            }.toTypedArray()
         }
+    }
+
+    /** Releases secondary [AudioProcessor] instances created for a crossfade player. */
+    fun releaseSecondaryAudioProcessors(processors: Array<AudioProcessor>?) {
+        if (processors == null) return
+        synchronized(effectLock) {
+            processors.forEach { proc ->
+                if (proc is EqAudioProcessorHook) {
+                    secondaryEqHooks.remove(proc)
+                }
+            }
+        }
+    }
+
+    private fun syncEqHook(hook: EqAudioProcessorHook) {
+        hook.setEnabled(_eqEnabled.value)
+        hook.updateCurve(_equalizerBands.value, _equalizerPreamp.value)
+        hook.applyAutoEqProfile(_activeAutoEqProfile.value)
     }
 
     /** Registers an additional Media3 [AudioProcessor] into the ExoPlayer audio sink chain. */
@@ -151,6 +186,10 @@ class AuraAudioDspManager {
             ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
         _loudnessNormalization.value = storage.loadNormalizeVolume()
         _audioReverbPreset.value = storage.loadAudioReverbPreset()
+        synchronized(effectLock) {
+            eqProcessorHook?.let { syncEqHook(it) }
+            secondaryEqHooks.forEach { syncEqHook(it) }
+        }
     }
 
     /** Updates the active track loudness metadata without immediately applying the curve. */
@@ -219,8 +258,14 @@ class AuraAudioDspManager {
         val hook = eqProcessorHook
 
         if (hook != null) {
+            val maxBoost = if (enabled) bands.maxOrNull()?.coerceAtLeast(0f) ?: 0f else 0f
+            val headroomPreampDb = if (enabled) minOf(preampDb, -maxBoost) else preampDb
             hook.setEnabled(enabled)
-            hook.updateCurve(bands, preampDb)
+            hook.updateCurve(bands, headroomPreampDb)
+            secondaryEqHooks.forEach { sec ->
+                sec.setEnabled(enabled)
+                sec.updateCurve(bands, headroomPreampDb)
+            }
             try {
                 hardwareEq?.enabled = false
             } catch (e: Exception) {
@@ -403,8 +448,11 @@ class AuraAudioDspManager {
         isFadeActive: Boolean = false
     ) {
         _activeAutoEqProfile.value = profile
-        eqProcessorHook?.applyAutoEqProfile(profile)
-        applyCurve(player, isFadeActive)
+        synchronized(effectLock) {
+            eqProcessorHook?.applyAutoEqProfile(profile)
+            secondaryEqHooks.forEach { it.applyAutoEqProfile(profile) }
+            applyCurveLocked(player, isFadeActive)
+        }
     }
 
     fun getAudioSessionId(playerAudioSessionId: Int? = null): Int {

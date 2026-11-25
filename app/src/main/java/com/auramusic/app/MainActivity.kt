@@ -19,6 +19,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,7 +39,7 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { isGranted ->
-        if (isGranted) {
+        if (isGranted && auraViewModel.releaseNotificationsEnabled.value) {
             AuraNotificationManager.setupFcmSubscription(applicationContext)
         }
     }
@@ -46,13 +47,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Make Android status bar header visible with bright white icons & time
+        // Make Android status bar header transparent edge-to-edge (contrast synced by SystemBarEffect)
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         WindowCompat.getInsetsController(window, window.decorView).apply {
-            isAppearanceLightStatusBars = false // Forces status bar text and icons (time, wifi, battery) to be white
+            isAppearanceLightStatusBars = false
             isAppearanceLightNavigationBars = false
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -60,8 +61,10 @@ class MainActivity : ComponentActivity() {
             window.isNavigationBarContrastEnforced = false
         }
 
-        // Always initialize FCM subscription and sync device with Supabase pool on startup
-        AuraNotificationManager.setupFcmSubscription(applicationContext)
+        // Initialize FCM subscription only when release notifications are enabled
+        if (auraViewModel.releaseNotificationsEnabled.value) {
+            AuraNotificationManager.setupFcmSubscription(applicationContext)
+        }
 
         // Request POST_NOTIFICATIONS runtime permission for Android 13+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -83,10 +86,20 @@ class MainActivity : ComponentActivity() {
         setContent {
             val liquidGlassEnabled by auraViewModel.liquidGlassEnabled.collectAsState()
             val lyricsStyle by auraViewModel.lyricsStyle.collectAsState()
+            val themeMode by auraViewModel.themeMode.collectAsState()
+            val themeColorSource by auraViewModel.themeColorSource.collectAsState()
+            val customAccentArgb by auraViewModel.customAccentArgb.collectAsState()
+
+            LaunchedEffect(themeMode) {
+                AuraApplication.applyThemeMode(themeMode)
+            }
 
             AuraMusicTheme(
                 liquidGlassEnabled = liquidGlassEnabled,
                 lyricsStyle = lyricsStyle,
+                themeMode = themeMode,
+                colorSource = themeColorSource,
+                customAccentArgb = customAccentArgb,
             ) {
                 var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate) }
 

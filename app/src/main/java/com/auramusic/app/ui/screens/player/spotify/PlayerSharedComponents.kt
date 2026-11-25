@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
@@ -129,7 +130,9 @@ internal fun NowPlayingOptionsModal(
     isDownloaded: Boolean = false,
     isDownloading: Boolean = false,
     onDownloadTrack: (() -> Unit)? = null,
-    onRemoveDownload: (() -> Unit)? = null
+    onRemoveDownload: (() -> Unit)? = null,
+    sleepTimerStatus: String? = null,
+    onOpenSleepTimer: (() -> Unit)? = null
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     ModalBottomSheet(
@@ -240,6 +243,15 @@ internal fun NowPlayingOptionsModal(
                 label = "Switch Lyrics Provider to $nextLyricsProvider",
                 onClick = { onSwitchLyricsProvider(nextLyricsProvider) }
             )
+
+            // 3c. Sleep Timer
+            if (onOpenSleepTimer != null) {
+                NowPlayingModalOptionRow(
+                    icon = Icons.Rounded.Bedtime,
+                    label = if (sleepTimerStatus != null) "Sleep Timer ($sleepTimerStatus)" else "Sleep Timer",
+                    onClick = onOpenSleepTimer
+                )
+            }
 
             // 4. Go to Artist Screen
             NowPlayingModalOptionRow(

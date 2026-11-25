@@ -5,6 +5,9 @@ import android.content.SharedPreferences
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
+import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import com.auramusic.app.core.recommendations.LocalRecommendationEngine
 import com.auramusic.app.data.db.AuraDatabase
 import com.auramusic.app.data.db.LocalPlaylistEntity
@@ -24,6 +27,7 @@ import com.auramusic.app.data.db.toFavoriteEntity
 import com.auramusic.app.data.db.toPlaylistTrackEntity
 import com.auramusic.app.data.db.toRecentEntity
 import com.auramusic.app.data.prefs.AuraPreferencesStore
+import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraPlaylist
@@ -33,6 +37,7 @@ import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.NowPlayingStyle
+import com.auramusic.app.domain.model.ThemeColorSource
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -1033,6 +1038,65 @@ class AuraStorageRepository @JvmOverloads constructor(
         prefsStore.putBoolean(AuraPreferencesStore.Keys.AUTO_CHECK_UPDATES, enabled)
     }
 
+    // --- Tier 1 Preferences (Theme Mode, Accent, Crossfade Album Skip, AutoEq, Push) ---
+    fun loadThemeMode(): AppThemeMode {
+        val raw = prefsStore.getString(KEY_THEME_MODE, null)
+        return AppThemeMode.entries.firstOrNull { it.name == raw } ?: AppThemeMode.DARK
+    }
+
+    fun saveThemeMode(mode: AppThemeMode) {
+        prefsStore.putString(KEY_THEME_MODE, mode.name)
+    }
+
+    fun loadThemeColorSource(): ThemeColorSource {
+        val raw = prefsStore.getString(KEY_THEME_COLOR_SOURCE, null)
+        return ThemeColorSource.entries.firstOrNull { it.name == raw } ?: ThemeColorSource.DEFAULT
+    }
+
+    fun saveThemeColorSource(source: ThemeColorSource) {
+        prefsStore.putString(KEY_THEME_COLOR_SOURCE, source.name)
+    }
+
+    fun loadCustomAccentArgb(): Int? =
+        if (prefsStore.contains(KEY_CUSTOM_ACCENT_ARGB)) {
+            prefsStore.getInt(KEY_CUSTOM_ACCENT_ARGB, 0)
+        } else {
+            null
+        }
+
+    fun saveCustomAccentArgb(argb: Int?) {
+        if (argb == null) {
+            prefsStore.remove(KEY_CUSTOM_ACCENT_ARGB)
+        } else {
+            prefsStore.putInt(KEY_CUSTOM_ACCENT_ARGB, argb)
+        }
+    }
+
+    fun loadSkipCrossfadeWithinAlbum(): Boolean =
+        prefsStore.getBoolean(KEY_SKIP_CROSSFADE_WITHIN_ALBUM, false)
+
+    fun saveSkipCrossfadeWithinAlbum(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_SKIP_CROSSFADE_WITHIN_ALBUM, enabled)
+    }
+
+    fun loadActiveAutoEqProfileId(): String? =
+        prefsStore.getString(KEY_ACTIVE_AUTO_EQ_PROFILE_ID, null)?.takeIf { it.isNotBlank() }
+
+    fun saveActiveAutoEqProfileId(id: String?) {
+        if (id.isNullOrBlank()) {
+            prefsStore.remove(KEY_ACTIVE_AUTO_EQ_PROFILE_ID)
+        } else {
+            prefsStore.putString(KEY_ACTIVE_AUTO_EQ_PROFILE_ID, id)
+        }
+    }
+
+    fun loadReleaseNotificationsEnabled(): Boolean =
+        prefsStore.getBoolean(KEY_RELEASE_NOTIFICATIONS_ENABLED, true)
+
+    fun saveReleaseNotificationsEnabled(enabled: Boolean) {
+        prefsStore.putBoolean(KEY_RELEASE_NOTIFICATIONS_ENABLED, enabled)
+    }
+
     fun exportBackupJson(): String {
         val favoritesArr = serializeTrackArray(loadFavorites())
         val playlistsArr = JSONArray().apply {
@@ -1376,6 +1440,13 @@ class AuraStorageRepository @JvmOverloads constructor(
         const val LEGACY_PREFS_NAME = "aura_music_storage"
         const val RECENT_LIMIT = 30
         val migrationLock = Any()
+
+        val KEY_THEME_MODE = stringPreferencesKey("setting_theme_mode")
+        val KEY_THEME_COLOR_SOURCE = stringPreferencesKey("setting_theme_color_source")
+        val KEY_CUSTOM_ACCENT_ARGB = intPreferencesKey("setting_custom_accent_argb")
+        val KEY_SKIP_CROSSFADE_WITHIN_ALBUM = booleanPreferencesKey("setting_skip_crossfade_within_album")
+        val KEY_ACTIVE_AUTO_EQ_PROFILE_ID = stringPreferencesKey("setting_active_auto_eq_profile_id")
+        val KEY_RELEASE_NOTIFICATIONS_ENABLED = booleanPreferencesKey("setting_release_notifications_enabled")
 
         @Volatile
         var processMigrated = false

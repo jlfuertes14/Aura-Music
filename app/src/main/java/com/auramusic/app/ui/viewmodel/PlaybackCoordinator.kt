@@ -151,8 +151,13 @@ internal class PlaybackCoordinator(
                     null
                 } else {
                     async {
-                        val offlineLyrics = storage.loadOfflineLyrics(canonicalVid)
-                            ?: storage.loadOfflineLyrics(track.videoId)
+                        val offlineLyrics = (storage.loadOfflineLyrics(canonicalVid)
+                            ?: storage.loadOfflineLyrics(track.videoId))?.let { offline ->
+                            SimpMusicLyricsRepository.applyRomanization(
+                                offline,
+                                settings.romanizationLanguages.value
+                            )
+                        }
                         val cleanTitle = SimpMusicExtractorEngine.cleanSongTitleForVideoSearch(canonicalTrack.title, canonicalTrack.artist)
                         val cleanArtist = SimpMusicExtractorEngine.primaryArtistName(canonicalTrack.artist)
                         offlineLyrics ?: SimpMusicLyricsRepository.getLyrics(
@@ -518,6 +523,11 @@ internal class PlaybackCoordinator(
 
     fun toggleRomanizedLyrics() {
         _showRomanizedLyrics.value = !_showRomanizedLyrics.value
+    }
+
+    fun reRomanizeCurrentLyrics(enabledLanguages: Set<String> = settings.romanizationLanguages.value) {
+        val current = _lyrics.value ?: return
+        _lyrics.value = SimpMusicLyricsRepository.applyRomanization(current, enabledLanguages)
     }
 
     fun reloadLyricsForProvider(provider: String) {

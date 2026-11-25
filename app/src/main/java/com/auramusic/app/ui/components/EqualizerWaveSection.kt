@@ -11,24 +11,37 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,8 +61,11 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auramusic.app.core.media.AutoEqProfile
+import com.auramusic.app.core.media.AutoEqProfiles
 import com.auramusic.app.domain.model.EQUALIZER_BAND_LABELS
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
@@ -57,6 +73,8 @@ import com.auramusic.app.domain.model.findMatchingPreset
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.TextPrimary
 import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private const val BAND_RANGE_DB = 12f
@@ -72,13 +90,19 @@ fun EqualizerWaveSection(
     onPreampChange: (Float) -> Unit,
     onPresetSelect: (EqualizerPreset) -> Unit,
     onReset: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activeAutoEqProfileId: String? = null,
+    onSelectAutoEqProfile: ((String?) -> Unit)? = null
 ) {
     var draftPreamp by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(preampDb) { draftPreamp = null }
 
     var presetMenuOpen by remember { mutableStateOf(false) }
+    var autoEqSheetOpen by remember { mutableStateOf(false) }
     val activePreset = remember(bands) { findMatchingPreset(bands) }
+    val activeAutoEqProfile = remember(activeAutoEqProfileId) {
+        activeAutoEqProfileId?.let { id -> AutoEqProfiles.ALL_PROFILES.firstOrNull { it.id == id } }
+    }
 
     Surface(
         modifier = modifier
@@ -295,6 +319,265 @@ fun EqualizerWaveSection(
                     )
                 }
             }
+
+            if (onSelectAutoEqProfile != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 0.5.dp)
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF1F222C))
+                        .clickable { autoEqSheetOpen = true }
+                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Headphones,
+                            contentDescription = null,
+                            tint = if (activeAutoEqProfile != null) AuraNeonLime else TextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "AutoEq Headphone Profile",
+                                fontSize = 11.sp,
+                                color = TextSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = activeAutoEqProfile?.name ?: "None (Manual)",
+                                fontSize = 13.5.sp,
+                                color = if (activeAutoEqProfile != null) AuraNeonLime else Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Select AutoEq Headphone Profile",
+                        tint = AuraNeonLime,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    if (autoEqSheetOpen && onSelectAutoEqProfile != null) {
+        AutoEqProfilePickerSheet(
+            activeProfileId = activeAutoEqProfileId,
+            onSelectProfile = { profileId ->
+                onSelectAutoEqProfile(profileId)
+                autoEqSheetOpen = false
+            },
+            onDismiss = { autoEqSheetOpen = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AutoEqProfilePickerSheet(
+    activeProfileId: String?,
+    onSelectProfile: (String?) -> Unit,
+    onDismiss: () -> Unit,
+    profiles: List<AutoEqProfile> = AutoEqProfiles.ALL_PROFILES,
+    containerColor: Color = auraGlassSheetColor(Color(0xFF14161E))
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredProfiles = remember(profiles, searchQuery) {
+        val q = searchQuery.trim().lowercase(Locale.ROOT)
+        if (q.isEmpty()) {
+            profiles
+        } else {
+            profiles.filter {
+                it.name.lowercase(Locale.ROOT).contains(q) ||
+                    it.source.lowercase(Locale.ROOT).contains(q)
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = containerColor,
+        scrimColor = Color.Black.copy(alpha = 0.72f),
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(Color.White.copy(alpha = 0.20f))
+            )
+        }
+    ) {
+        ForceWhiteSystemBarsEffect()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "AutoEq Headphone Profile",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Harman target compensation for popular IEMs & headphones",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary
+                    )
+                }
+                IconButton(onClick = onDismiss, modifier = Modifier.size(40.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close AutoEq Picker",
+                        tint = TextSecondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                singleLine = true,
+                placeholder = {
+                    Text(
+                        text = "Search headphones or IEMs…",
+                        color = TextSecondary,
+                        fontSize = 13.5.sp
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Search,
+                        contentDescription = null,
+                        tint = TextSecondary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+                trailingIcon = {
+                    if (searchQuery.isNotEmpty()) {
+                        IconButton(onClick = { searchQuery = "" }) {
+                            Icon(
+                                imageVector = Icons.Rounded.Close,
+                                contentDescription = "Clear search",
+                                tint = TextSecondary,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedBorderColor = AuraNeonLime,
+                    unfocusedBorderColor = Color.White.copy(alpha = 0.14f),
+                    cursorColor = AuraNeonLime
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                item(key = "__none__") {
+                    val isNoneSelected = activeProfileId.isNullOrBlank()
+                    AutoEqProfileRow(
+                        title = "None (Manual)",
+                        subtitle = "Use your manual 10-band EQ curve without AutoEq compensation",
+                        isSelected = isNoneSelected,
+                        onClick = { onSelectProfile(null) }
+                    )
+                }
+
+                items(filteredProfiles, key = { it.id }) { profile ->
+                    val isSelected = activeProfileId == profile.id
+                    val preampLabel = String.format(Locale.US, "%.1f dB preamp", profile.preampDb)
+                    AutoEqProfileRow(
+                        title = profile.name,
+                        subtitle = "${profile.source} · $preampLabel",
+                        isSelected = isSelected,
+                        onClick = { onSelectProfile(profile.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutoEqProfileRow(
+    title: String,
+    subtitle: String,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) AuraNeonLime.copy(alpha = 0.12f) else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = if (isSelected) AuraNeonLime else Color.White,
+                fontSize = 14.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                color = TextSecondary,
+                fontSize = 11.5.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (isSelected) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Selected",
+                tint = AuraNeonLime,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }

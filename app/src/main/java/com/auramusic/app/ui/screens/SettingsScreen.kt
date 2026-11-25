@@ -11,10 +11,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,13 +34,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.Backup
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Block
 import androidx.compose.material.icons.rounded.BookmarkAdded
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.ColorLens
+import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.History
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.MusicNote
@@ -79,6 +88,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,20 +102,30 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.Coil
 import com.auramusic.app.R
+import com.auramusic.app.core.media.AutoEqProfiles
 import com.auramusic.app.core.media.AuraPlayerManager
+import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.ChartSupportedCountries
+import com.auramusic.app.domain.model.ThemeColorSource
 import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.components.AuraLiquidGlassSwitch
+import com.auramusic.app.ui.components.AuraSleepTimerSheet
+import com.auramusic.app.ui.components.AutoEqProfilePickerSheet
 import com.auramusic.app.ui.components.EqualizerWaveSection
+import com.auramusic.app.ui.components.formatSleepTimerStatus
+import com.auramusic.app.ui.theme.AURA_CUSTOM_ACCENT_SWATCHES
 import com.auramusic.app.ui.theme.AuraNeonLime
+import com.auramusic.app.ui.theme.LocalIsDarkTheme
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.SpotifyPitchBlack
 import com.auramusic.app.ui.theme.TextSecondary
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.isLyricsBlurSupported
+import com.auramusic.app.ui.theme.isWallpaperDynamicColorSupported
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
@@ -206,12 +226,19 @@ private fun formatGlobalOffsetLabel(offsetMs: Int): String {
     return "$sign${absMs / 1000}.${(absMs % 1000) / 100}s"
 }
 
-@OptIn(coil.annotation.ExperimentalCoilApi::class)
+@OptIn(coil.annotation.ExperimentalCoilApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(viewModel: AuraViewModel) {
     val context = LocalContext.current
     val appThemeStyle by viewModel.appThemeStyle.collectAsState()
+    val themeMode by viewModel.themeMode.collectAsState()
+    val themeColorSource by viewModel.themeColorSource.collectAsState()
+    val customAccentArgb by viewModel.customAccentArgb.collectAsState()
     val liquidGlassEnabled = LocalLiquidGlassEnabled.current
+    val isDarkTheme = LocalIsDarkTheme.current
+    val primaryAccent = MaterialTheme.colorScheme.primary
+    val primaryTextColor = MaterialTheme.colorScheme.onBackground
+    val secondaryTextColor = MaterialTheme.colorScheme.onSurfaceVariant
     val selectedCountry by viewModel.selectedChartCountry.collectAsState()
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val romanizationLanguages by viewModel.romanizationLanguages.collectAsState()
@@ -220,6 +247,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     val autoDownloadLiked by viewModel.autoDownloadLikedSongs.collectAsState()
     val recordListeningHistory by viewModel.recordListeningHistory.collectAsState()
     val autoCheckUpdates by viewModel.autoCheckUpdates.collectAsState()
+    val releaseNotificationsEnabled by viewModel.releaseNotificationsEnabled.collectAsState()
     val downloads by viewModel.downloads.collectAsState()
 
     // AuraPlayerManager Settings State
@@ -227,6 +255,10 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     val eqBands by AuraPlayerManager.equalizerBands.collectAsState()
     val eqPreamp by AuraPlayerManager.equalizerPreamp.collectAsState()
     val eqPresetName by AuraPlayerManager.activeEqPresetName.collectAsState()
+    val activeAutoEqProfileId by viewModel.activeAutoEqProfileId.collectAsState()
+    val skipCrossfadeWithinAlbum by viewModel.skipCrossfadeWithinAlbum.collectAsState()
+    val sleepTimerRemainingMin by viewModel.sleepTimerRemainingMin.collectAsState()
+    val sleepTimerEndOfTrack by viewModel.sleepTimerEndOfTrack.collectAsState()
 
     val audioQuality by AuraPlayerManager.audioQuality.collectAsState()
     val videoQuality by AuraPlayerManager.videoQuality.collectAsState()
@@ -243,6 +275,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     val maxCacheSizeMb by AuraPlayerManager.maxCacheSizeMb.collectAsState()
 
     // Live storage telemetry
+    val coroutineScope = rememberCoroutineScope()
     var cacheRefreshTick by remember { mutableIntStateOf(0) }
     var streamCacheBytes by remember { mutableLongStateOf(0L) }
     var imageCacheBytes by remember { mutableLongStateOf(0L) }
@@ -250,7 +283,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
     LaunchedEffect(cacheRefreshTick, downloads.size) {
         withContext(Dispatchers.IO) {
-            streamCacheBytes = calculateDirSize(File(context.cacheDir, "aura_media3_cache"))
+            streamCacheBytes = AuraPlayerManager.getMediaCacheSizeBytes()
             imageCacheBytes = calculateDirSize(File(context.cacheDir, "image_cache"))
             downloadsBytes = downloads.sumOf { track ->
                 val f = track.localFilePath?.let { File(it) } ?: AuraPlayerManager.getOfflineFile(context, track.videoId)
@@ -288,8 +321,12 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     var showCacheLimitDialog by remember { mutableStateOf(false) }
     var showClearHistoryConfirm by remember { mutableStateOf(false) }
     var showClearDownloadsConfirm by remember { mutableStateOf(false) }
+    var showAutoEqSheet by remember { mutableStateOf(false) }
+    var showSleepTimerSheet by remember { mutableStateOf(false) }
 
-    val dialogContainerColor = auraGlassSheetColor(Color(0xFF181A22))
+    val dialogContainerColor = auraGlassSheetColor(
+        if (isDarkTheme) Color(0xFF181A22) else MaterialTheme.colorScheme.surface
+    )
 
     val packageInfo = remember(context) {
         try {
@@ -311,7 +348,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack),
+            .background(MaterialTheme.colorScheme.background),
         contentPadding = PaddingValues(start = 22.dp, end = 22.dp, top = 16.dp, bottom = 140.dp)
     ) {
         // 1. Header
@@ -320,18 +357,18 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 Text(
                     text = "Settings",
                     style = MaterialTheme.typography.headlineLarge,
-                    color = Color.White
+                    color = primaryTextColor
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = "Fidelity, audio processing & interface controls",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = TextSecondary
+                    color = secondaryTextColor
                 )
             }
         }
 
-        // 2. Appearance (Unified Theme)
+        // 2. Appearance (Theme Style, Theme Mode, Accent Color)
         item {
             SettingsCategoryHeader(title = "Appearance")
             Spacer(modifier = Modifier.height(10.dp))
@@ -345,11 +382,189 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
                         contentDescription = "Select Theme",
-                        tint = TextSecondary,
+                        tint = secondaryTextColor,
                         modifier = Modifier.size(20.dp)
                     )
                 }
             )
+
+            SettingsDivider()
+
+            // Theme Mode Segmented Control (System / Dark / Light)
+            Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SettingsRowIcon(icon = Icons.Rounded.DarkMode)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Theme Mode",
+                            color = primaryTextColor,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "Switch between System, Dark, and Light appearance",
+                            color = secondaryTextColor,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isDarkTheme) Color.White.copy(alpha = 0.06f)
+                            else Color.Black.copy(alpha = 0.06f)
+                        )
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AppThemeMode.entries.forEach { mode ->
+                        val selected = themeMode == mode
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (selected) primaryAccent else Color.Transparent)
+                                .clickable { viewModel.setThemeMode(mode) }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = mode.label,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary else secondaryTextColor,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+
+            SettingsDivider()
+
+            // Accent Color Segmented Control (Default / Wallpaper / Custom)
+            val wallpaperSupported = isWallpaperDynamicColorSupported()
+            val accentSources = remember(wallpaperSupported) {
+                if (wallpaperSupported) {
+                    listOf(ThemeColorSource.DEFAULT, ThemeColorSource.WALLPAPER, ThemeColorSource.CUSTOM)
+                } else {
+                    listOf(ThemeColorSource.DEFAULT, ThemeColorSource.CUSTOM)
+                }
+            }
+            Column(modifier = Modifier.padding(vertical = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    SettingsRowIcon(icon = Icons.Rounded.ColorLens)
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "Accent Color",
+                            color = primaryTextColor,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = when (themeColorSource) {
+                                ThemeColorSource.DEFAULT -> "Aura signature Neon Lime"
+                                ThemeColorSource.WALLPAPER -> "Material You dynamic wallpaper palette"
+                                ThemeColorSource.CUSTOM -> "Custom accent swatch"
+                            },
+                            color = secondaryTextColor,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (isDarkTheme) Color.White.copy(alpha = 0.06f)
+                            else Color.Black.copy(alpha = 0.06f)
+                        )
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    accentSources.forEach { source ->
+                        val selected = themeColorSource == source
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(9.dp))
+                                .background(if (selected) primaryAccent else Color.Transparent)
+                                .clickable {
+                                    if (source == ThemeColorSource.CUSTOM && customAccentArgb == null) {
+                                        viewModel.setCustomAccentArgb(
+                                            AURA_CUSTOM_ACCENT_SWATCHES.first().second.toInt()
+                                        )
+                                    }
+                                    viewModel.setThemeColorSource(source)
+                                }
+                                .padding(vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = source.label,
+                                color = if (selected) MaterialTheme.colorScheme.onPrimary else secondaryTextColor,
+                                fontSize = 12.5.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+
+                AnimatedVisibility(visible = themeColorSource == ThemeColorSource.CUSTOM) {
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 48.dp, top = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AURA_CUSTOM_ACCENT_SWATCHES.forEach { (swatchName, argbLong) ->
+                            val swatchInt = argbLong.toInt()
+                            val swatchColor = Color(argbLong)
+                            val isSelected = customAccentArgb == swatchInt
+                            Box(
+                                modifier = Modifier
+                                    .size(34.dp)
+                                    .clip(CircleShape)
+                                    .background(swatchColor)
+                                    .then(
+                                        if (isSelected) {
+                                            Modifier.border(2.5.dp, primaryTextColor, CircleShape)
+                                        } else {
+                                            Modifier.border(
+                                                1.dp,
+                                                primaryTextColor.copy(alpha = 0.22f),
+                                                CircleShape
+                                            )
+                                        }
+                                    )
+                                    .clickable {
+                                        viewModel.setCustomAccentArgb(swatchInt)
+                                        viewModel.setThemeColorSource(ThemeColorSource.CUSTOM)
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "$swatchName selected",
+                                        tint = Color.Black,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(30.dp))
         }
@@ -469,10 +684,34 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                         onBandsChange = { AuraPlayerManager.setEqualizerBands(it) },
                         onPreampChange = { AuraPlayerManager.setEqualizerPreamp(it) },
                         onPresetSelect = { AuraPlayerManager.applyEqualizerPreset(it) },
-                        onReset = { AuraPlayerManager.resetEqualizer() }
+                        onReset = { AuraPlayerManager.resetEqualizer() },
+                        activeAutoEqProfileId = activeAutoEqProfileId,
+                        onSelectAutoEqProfile = { viewModel.selectAutoEqProfile(it) }
                     )
                 }
             }
+
+            SettingsDivider()
+
+            val activeAutoEqName = remember(activeAutoEqProfileId) {
+                activeAutoEqProfileId?.let { id ->
+                    AutoEqProfiles.ALL_PROFILES.firstOrNull { it.id == id }?.name
+                } ?: "None (Manual)"
+            }
+            ModernClickableRow(
+                icon = Icons.Rounded.Headphones,
+                title = "AutoEq Headphone Profile",
+                subtitle = activeAutoEqName,
+                onClick = { showAutoEqSheet = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Select AutoEq Headphone Profile",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
 
             SettingsDivider()
 
@@ -686,6 +925,34 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             SettingsDivider()
 
             ModernSwitchRow(
+                icon = Icons.Rounded.Album,
+                title = "Skip crossfade within same album",
+                subtitle = "Keep consecutive album tracks gapless without crossfading",
+                checked = skipCrossfadeWithinAlbum,
+                onCheckedChange = { viewModel.setSkipCrossfadeWithinAlbum(it) }
+            )
+
+            SettingsDivider()
+
+            val sleepTimerSummary = formatSleepTimerStatus(sleepTimerRemainingMin, sleepTimerEndOfTrack)
+            ModernClickableRow(
+                icon = Icons.Rounded.Bedtime,
+                title = "Sleep Timer",
+                subtitle = sleepTimerSummary ?: "Off — pause playback after a duration or track",
+                onClick = { showSleepTimerSheet = true },
+                trailingContent = {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                        contentDescription = "Configure Sleep Timer",
+                        tint = secondaryTextColor,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            )
+
+            SettingsDivider()
+
+            ModernSwitchRow(
                 icon = Icons.Rounded.BookmarkAdded,
                 title = "Save Playback State",
                 subtitle = "Remember shuffle and repeat mode across app restarts",
@@ -816,16 +1083,16 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 title = "Clear Media Stream Cache",
                 subtitle = "Release audio & video fragments (${formatBytesLabel(streamCacheBytes)})",
                 onClick = {
-                    try {
-                        val cacheDir = File(context.cacheDir, "aura_media3_cache")
-                        if (cacheDir.exists()) {
-                            cacheDir.deleteRecursively()
-                            cacheDir.mkdirs()
+                    coroutineScope.launch {
+                        try {
+                            withContext(Dispatchers.IO) {
+                                AuraPlayerManager.clearMediaCache()
+                            }
+                            cacheRefreshTick++
+                            Toast.makeText(context, "Stream cache successfully emptied", Toast.LENGTH_SHORT).show()
+                        } catch (e: Exception) {
+                            Toast.makeText(context, "Cache clear notice: ${e.message}", Toast.LENGTH_SHORT).show()
                         }
-                        cacheRefreshTick++
-                        Toast.makeText(context, "Stream cache successfully emptied", Toast.LENGTH_SHORT).show()
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "Cache clear notice: ${e.message}", Toast.LENGTH_SHORT).show()
                     }
                 },
                 trailingContent = { }
@@ -931,11 +1198,16 @@ fun SettingsScreen(viewModel: AuraViewModel) {
 
             SettingsDivider()
 
-            ModernSettingsRow(
+            ModernSwitchRow(
                 icon = Icons.Rounded.Notifications,
                 title = "Release Push Notifications",
-                subtitle = "Receive alerts when new builds are published",
-                trailingContent = { }
+                subtitle = if (releaseNotificationsEnabled) {
+                    "Subscribed to new build alerts (releases)"
+                } else {
+                    "Unsubscribed from new build alerts"
+                },
+                checked = releaseNotificationsEnabled,
+                onCheckedChange = { viewModel.setReleaseNotificationsEnabled(it) }
             )
 
             Spacer(modifier = Modifier.height(30.dp))
@@ -960,14 +1232,14 @@ fun SettingsScreen(viewModel: AuraViewModel) {
                 Column {
                     Text(
                         text = "Aura v$appVersionName",
-                        color = Color.White,
+                        color = primaryTextColor,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "Powered by SimpMusic & YouTube Music Innertube",
-                        color = TextSecondary,
+                        color = secondaryTextColor,
                         fontSize = 12.sp
                     )
                 }
@@ -1613,13 +1885,36 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             shape = RoundedCornerShape(16.dp)
         )
     }
+
+    if (showAutoEqSheet) {
+        AutoEqProfilePickerSheet(
+            activeProfileId = activeAutoEqProfileId,
+            onSelectProfile = { profileId ->
+                viewModel.selectAutoEqProfile(profileId)
+                showAutoEqSheet = false
+            },
+            onDismiss = { showAutoEqSheet = false },
+            containerColor = dialogContainerColor
+        )
+    }
+
+    if (showSleepTimerSheet) {
+        AuraSleepTimerSheet(
+            remainingMinutes = sleepTimerRemainingMin,
+            endOfTrackEnabled = sleepTimerEndOfTrack,
+            onSelectMinutes = { viewModel.setSleepTimerMinutes(it) },
+            onToggleEndOfTrack = { viewModel.setSleepTimerEndOfTrack(it) },
+            onDismiss = { showSleepTimerSheet = false },
+            containerColor = dialogContainerColor
+        )
+    }
 }
 
 @Composable
 private fun SettingsCategoryHeader(title: String) {
     Text(
         text = title.uppercase(),
-        color = TextSecondary,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
         style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.5.sp),
         letterSpacing = 0.8.sp,
         modifier = Modifier.padding(start = 2.dp)
@@ -1628,8 +1923,9 @@ private fun SettingsCategoryHeader(title: String) {
 
 @Composable
 private fun SettingsDivider() {
+    val isDark = LocalIsDarkTheme.current
     HorizontalDivider(
-        color = Color.White.copy(alpha = 0.05f),
+        color = if (isDark) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.07f),
         thickness = 0.5.dp,
         modifier = Modifier.padding(start = 48.dp, top = 2.dp, bottom = 2.dp)
     )
@@ -1638,6 +1934,7 @@ private fun SettingsDivider() {
 @Composable
 private fun SettingsRowIcon(icon: ImageVector) {
     val isGlass = LocalLiquidGlassEnabled.current
+    val isDark = LocalIsDarkTheme.current
     Box(
         modifier = Modifier
             .size(36.dp)
@@ -1647,7 +1944,10 @@ private fun SettingsRowIcon(icon: ImageVector) {
                 } else {
                     Modifier
                         .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.05f))
+                        .background(
+                            if (isDark) Color.White.copy(alpha = 0.05f)
+                            else Color.Black.copy(alpha = 0.06f)
+                        )
                 }
             ),
         contentAlignment = Alignment.Center
@@ -1655,7 +1955,7 @@ private fun SettingsRowIcon(icon: ImageVector) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = Color.White.copy(alpha = 0.88f),
+            tint = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.88f),
             modifier = Modifier.size(18.dp)
         )
     }
@@ -1684,13 +1984,13 @@ private fun ModernSettingsRow(
             Column {
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.labelLarge
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -1725,13 +2025,13 @@ private fun ModernClickableRow(
             Column {
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.labelLarge
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -1766,13 +2066,13 @@ private fun ModernSwitchRow(
             Column {
                 Text(
                     text = title,
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onBackground,
                     style = MaterialTheme.typography.labelLarge
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = subtitle,
-                    color = TextSecondary,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }

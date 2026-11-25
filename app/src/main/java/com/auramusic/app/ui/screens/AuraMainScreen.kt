@@ -439,7 +439,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
     }
 
-    val glassBackdrop = rememberGlassBackdrop(SpotifyPitchBlack)
+    val screenBgColor = MaterialTheme.colorScheme.background
+    val glassBackdrop = rememberGlassBackdrop(screenBgColor)
     val liquidGlassEnabled = LocalLiquidGlassEnabled.current
     val dockGlassLayer = rememberGraphicsLayer()
     val dockLuminance = rememberGlassLuminance(
@@ -451,7 +452,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(screenBgColor)
     ) {
         // Sibling backdrop source: contains ONLY the main tabs + detail navigation stack.
         // Never place any .liquidGlass(...) surface inside this Box to prevent RuntimeShader feedback loops.
@@ -815,16 +816,16 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         colors = if (liquidGlassEnabled) {
                             listOf(
                                 Color.Transparent,
-                                SpotifyPitchBlack.copy(alpha = 0.22f),
-                                SpotifyPitchBlack.copy(alpha = 0.45f),
-                                SpotifyPitchBlack.copy(alpha = 0.65f)
+                                screenBgColor.copy(alpha = 0.22f),
+                                screenBgColor.copy(alpha = 0.45f),
+                                screenBgColor.copy(alpha = 0.65f)
                             )
                         } else {
                             listOf(
                                 Color.Transparent,
-                                SpotifyPitchBlack.copy(alpha = 0.70f),
-                                SpotifyPitchBlack.copy(alpha = 0.95f),
-                                SpotifyPitchBlack
+                                screenBgColor.copy(alpha = 0.70f),
+                                screenBgColor.copy(alpha = 0.95f),
+                                screenBgColor
                             )
                         }
                     )

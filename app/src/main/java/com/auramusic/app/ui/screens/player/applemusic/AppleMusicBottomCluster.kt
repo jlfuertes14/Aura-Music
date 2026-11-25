@@ -46,6 +46,7 @@ import androidx.compose.material.icons.automirrored.rounded.VolumeDown
 import androidx.compose.material.icons.automirrored.rounded.VolumeMute
 import androidx.compose.material.icons.automirrored.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Audiotrack
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.Lyrics
 import androidx.compose.material.icons.rounded.Pause
@@ -89,6 +90,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.PlaybackMode
+import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalGlassBackdrop
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
 import com.auramusic.app.ui.theme.liquidGlass
@@ -530,6 +532,8 @@ fun AppleMusicActionRow(
     modifier: Modifier = Modifier,
     isVideoMode: Boolean = false,
     onToggleVideoMode: () -> Unit = {},
+    isSleepTimerActive: Boolean = false,
+    onOpenSleepTimer: (() -> Unit)? = null,
 ) {
     @Suppress("UNUSED_PARAMETER")
     val ignoredShare = onShareTrack
@@ -539,11 +543,13 @@ fun AppleMusicActionRow(
     val activePillContent = remember(seedColor) { lerp(seedColor, Color.Black, 0.6f) }
     val glassBackdrop = LocalGlassBackdrop.current
     val useGlass = LocalLiquidGlassEnabled.current && glassBackdrop != null
+    val segmentCount = if (onOpenSleepTimer != null) 3 else 2
 
     BoxWithConstraints(modifier = modifier.fillMaxWidth()) {
-        val segmentWidth = ((maxWidth - DOCK_BUTTON_SIZE * 2 - 1.dp - 16.dp) / 2)
-            .coerceIn(46.dp, 64.dp)
-        val contentWidth = DOCK_BUTTON_SIZE * 2 + segmentWidth * 2 + 1.dp
+        val dividerCount = segmentCount - 1
+        val segmentWidth = ((maxWidth - DOCK_BUTTON_SIZE * 2 - dividerCount.dp - 16.dp) / segmentCount)
+            .coerceIn(44.dp, if (segmentCount == 3) 56.dp else 64.dp)
+        val contentWidth = DOCK_BUTTON_SIZE * 2 + segmentWidth * segmentCount + dividerCount.dp
         val edgeInset = ((maxWidth - contentWidth) / 4).coerceAtLeast(0.dp)
 
         Row(
@@ -593,6 +599,22 @@ fun AppleMusicActionRow(
                     width = segmentWidth,
                     onClick = onOpenComments,
                 )
+                if (onOpenSleepTimer != null) {
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(Color.White.copy(alpha = 0.20f)),
+                    )
+                    AppleMusicCapsuleSegment(
+                        icon = Icons.Rounded.Bedtime,
+                        contentDescription = "Sleep Timer",
+                        width = segmentWidth,
+                        tint = if (isSleepTimerActive) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                        showIndicatorDot = isSleepTimerActive,
+                        onClick = onOpenSleepTimer,
+                    )
+                }
                 Box(
                     modifier = Modifier
                         .width(1.dp)
@@ -626,6 +648,8 @@ private fun AppleMusicCapsuleSegment(
     icon: ImageVector,
     contentDescription: String,
     width: Dp,
+    tint: Color = Color.White.copy(alpha = 0.85f),
+    showIndicatorDot: Boolean = false,
     onClick: () -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -649,7 +673,7 @@ private fun AppleMusicCapsuleSegment(
         Icon(
             imageVector = icon,
             contentDescription = contentDescription,
-            tint = Color.White.copy(alpha = 0.85f),
+            tint = tint,
             modifier = Modifier
                 .graphicsLayer {
                     scaleX = glyphScale
@@ -657,6 +681,16 @@ private fun AppleMusicCapsuleSegment(
                 }
                 .size(22.dp),
         )
+        if (showIndicatorDot) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 8.dp, end = 10.dp)
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(AuraNeonLime),
+            )
+        }
     }
 }
 
@@ -686,6 +720,8 @@ fun AppleMusicBottomCluster(
     modifier: Modifier = Modifier,
     isVideoMode: Boolean = false,
     onToggleVideoMode: () -> Unit = {},
+    isSleepTimerActive: Boolean = false,
+    onOpenSleepTimer: (() -> Unit)? = null,
     typography: AppleMusicTypography = rememberAppleMusicTypography(),
     topPadding: Dp = 8.dp,
     outputDeviceLabel: String? = null,
@@ -770,6 +806,8 @@ fun AppleMusicBottomCluster(
             onShareTrack = onShareTrack,
             isVideoMode = isVideoMode,
             onToggleVideoMode = onToggleVideoMode,
+            isSleepTimerActive = isSleepTimerActive,
+            onOpenSleepTimer = onOpenSleepTimer,
         )
 
         Spacer(modifier = Modifier.height(12.dp))

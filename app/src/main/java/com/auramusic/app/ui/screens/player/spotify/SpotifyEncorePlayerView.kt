@@ -43,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Comment
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -151,6 +152,9 @@ internal fun SpotifyEncorePlayerView(
     onOpenArtist: () -> Unit,
     onOpenCurrentPlaylist: () -> Unit = {},
     onOptionsClick: () -> Unit,
+    sleepTimerRemainingMin: Int? = null,
+    sleepTimerEndOfTrack: Boolean = false,
+    onOpenSleepTimer: () -> Unit = {},
     onOpenLyrics: () -> Unit,
     onAdjustLyricsOffset: (Int) -> Unit = {},
     onOpenComments: () -> Unit,
@@ -270,13 +274,54 @@ internal fun SpotifyEncorePlayerView(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        IconButton(onClick = onOptionsClick, modifier = Modifier.size(38.dp)) {
-                            Icon(
-                                imageVector = Icons.Rounded.MoreVert,
-                                contentDescription = "More Options",
-                                tint = Color.White,
-                                modifier = Modifier.size(24.dp)
-                            )
+                        val isSleepTimerActive = (sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0) || sleepTimerEndOfTrack
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .then(
+                                        if (isSleepTimerActive) {
+                                            Modifier.background(AuraNeonLime.copy(alpha = 0.16f))
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .clickable(onClick = onOpenSleepTimer)
+                                    .padding(horizontal = if (isSleepTimerActive) 8.dp else 7.dp, vertical = 7.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Bedtime,
+                                        contentDescription = "Sleep Timer",
+                                        tint = if (isSleepTimerActive) AuraNeonLime else Color.White.copy(alpha = 0.88f),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    if (isSleepTimerActive) {
+                                        val badgeLabel = when {
+                                            sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0 -> "${sleepTimerRemainingMin}m"
+                                            else -> "Track"
+                                        }
+                                        Text(
+                                            text = badgeLabel,
+                                            color = AuraNeonLime,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                            IconButton(onClick = onOptionsClick, modifier = Modifier.size(38.dp)) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreVert,
+                                    contentDescription = "More Options",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(24.dp)
+                                )
+                            }
                         }
                     }
                 }

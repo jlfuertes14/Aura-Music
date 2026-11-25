@@ -3,18 +3,23 @@ package com.auramusic.app.ui.viewmodel
 import android.app.Application
 import android.net.Uri
 import android.widget.Toast
+import com.auramusic.app.AuraApplication
 import com.auramusic.app.core.lyrics.SimpMusicLyricsRepository
 import com.auramusic.app.core.media.AuraPlayerManager
+import com.auramusic.app.core.notifications.AuraNotificationManager
 import com.auramusic.app.core.sponsorblock.SponsorBlockRepository
 import com.auramusic.app.core.update.AuraReleaseInfo
 import com.auramusic.app.core.update.AuraUpdateManager
 import com.auramusic.app.core.update.UpdateDownloadProgress
 import com.auramusic.app.core.update.UpdateState
 import com.auramusic.app.data.AuraStorageRepository
+import com.auramusic.app.domain.model.AppThemeMode
 import com.auramusic.app.domain.model.AppThemeStyle
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.LyricsStyle
 import com.auramusic.app.domain.model.NowPlayingStyle
+import com.auramusic.app.domain.model.ThemeColorSource
+import com.google.firebase.messaging.FirebaseMessaging
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -31,10 +36,15 @@ internal class SettingsCoordinator(
     private val storage: AuraStorageRepository,
     private val onReloadLyricsForProvider: (String) -> Unit,
     private val onApplyDefaultLyricsOffsetIfZero: (Int) -> Unit,
+    private val onReRomanizeCurrentLyrics: (Set<String>) -> Unit = {},
     private val onBackupRestored: () -> Unit
 ) {
     private val _romanizationLanguages = MutableStateFlow(storage.loadRomanizationLanguages())
     val romanizationLanguages: StateFlow<Set<String>> = _romanizationLanguages.asStateFlow()
+
+    init {
+        SimpMusicLyricsRepository.setEnabledRomanizationLanguages(_romanizationLanguages.value)
+    }
 
     private val _mainLyricsProvider = MutableStateFlow(storage.loadMainLyricsProvider())
     val mainLyricsProvider: StateFlow<String> = _mainLyricsProvider.asStateFlow()
@@ -51,8 +61,20 @@ internal class SettingsCoordinator(
     private val _autoCheckUpdates = MutableStateFlow(storage.loadAutoCheckUpdates())
     val autoCheckUpdates: StateFlow<Boolean> = _autoCheckUpdates.asStateFlow()
 
+    private val _releaseNotificationsEnabled = MutableStateFlow(storage.loadReleaseNotificationsEnabled())
+    val releaseNotificationsEnabled: StateFlow<Boolean> = _releaseNotificationsEnabled.asStateFlow()
+
     private val _appThemeStyle = MutableStateFlow(storage.loadAppThemeStyle())
     val appThemeStyle: StateFlow<AppThemeStyle> = _appThemeStyle.asStateFlow()
+
+    private val _themeMode = MutableStateFlow(storage.loadThemeMode())
+    val themeMode: StateFlow<AppThemeMode> = _themeMode.asStateFlow()
+
+    private val _themeColorSource = MutableStateFlow(storage.loadThemeColorSource())
+    val themeColorSource: StateFlow<ThemeColorSource> = _themeColorSource.asStateFlow()
+
+    private val _customAccentArgb = MutableStateFlow(storage.loadCustomAccentArgb())
+    val customAccentArgb: StateFlow<Int?> = _customAccentArgb.asStateFlow()
 
     private val _nowPlayingStyle = MutableStateFlow(storage.loadNowPlayingStyle())
     val nowPlayingStyle: StateFlow<NowPlayingStyle> = _nowPlayingStyle.asStateFlow()
@@ -83,15 +105,22 @@ internal class SettingsCoordinator(
 
     fun reloadThemeAndPrefsFromStorage() {
         _appThemeStyle.value = storage.loadAppThemeStyle()
+        _themeMode.value = storage.loadThemeMode()
+        _themeColorSource.value = storage.loadThemeColorSource()
+        _customAccentArgb.value = storage.loadCustomAccentArgb()
         _nowPlayingStyle.value = storage.loadNowPlayingStyle()
         _liquidGlassEnabled.value = storage.loadLiquidGlassEnabled()
         _lyricsStyle.value = storage.loadLyricsStyle()
         _romanizationLanguages.value = storage.loadRomanizationLanguages()
+        SimpMusicLyricsRepository.setEnabledRomanizationLanguages(_romanizationLanguages.value)
+        onReRomanizeCurrentLyrics(_romanizationLanguages.value)
         _mainLyricsProvider.value = storage.loadMainLyricsProvider()
         _defaultLyricsOffsetMs.value = storage.loadDefaultLyricsOffsetMs()
         _autoDownloadLikedSongs.value = storage.loadAutoDownloadLikedSongs()
         _recordListeningHistory.value = storage.loadRecordListeningHistory()
         _autoCheckUpdates.value = storage.loadAutoCheckUpdates()
+        _releaseNotificationsEnabled.value = storage.loadReleaseNotificationsEnabled()
+        AuraApplication.applyThemeMode(_themeMode.value)
     }
 
     fun toggleRomanizationLanguage(language: String) {
@@ -101,13 +130,14 @@ internal class SettingsCoordinator(
         } else {
             current.add(language)
         }
-        _romanizationLanguages.value = current
-        storage.saveRomanizationLanguages(current)
+        setRomanizationLanguages(current)
     }
 
     fun setRomanizationLanguages(languages: Set<String>) {
         _romanizationLanguages.value = languages
         storage.saveRomanizationLanguages(languages)
+        SimpMusicLyricsRepository.setEnabledRomanizationLanguages(languages)
+        onReRomanizeCurrentLyrics(languages)
     }
 
     fun setMainLyricsProvider(provider: String) {
@@ -137,6 +167,46 @@ internal class SettingsCoordinator(
     fun setAutoCheckUpdates(enabled: Boolean) {
         _autoCheckUpdates.value = enabled
         storage.saveAutoCheckUpdates(enabled)
+    }
+
+    fun setReleaseNotificationsEnabled(enabled: Boolean) {
+        _releaseNotificationsEnabled.value = enabled
+        storage.saveReleaseNotificationsEnabled(enabled)
+        runCatching {
+            val messaging = FirebaseMessaging.getInstance()
+            if (enabled) {
+                messaging.subscribeToTopic(AuraNotificationManager.TOPIC_RELEASES)
+                AuraNotificationManager.setupFcmSubscription(application)
+            } else {
+                messaging.unsubscribeFromTopic(AuraNotificationManager.TOPIC_RELEASES)
+            }
+        }
+    }
+
+    fun setThemeMode(mode: AppThemeMode) {
+        _themeMode.value = mode
+        storage.saveThemeMode(mode)
+        AuraApplication.applyThemeMode(mode)
+    }
+
+    fun setThemeColorSource(source: ThemeColorSource) {
+        _themeColorSource.value = source
+        storage.saveThemeColorSource(source)
+    }
+
+    fun setCustomAccentArgb(argb: Int?) {
+        _customAccentArgb.value = argb
+        storage.saveCustomAccentArgb(argb)
+    }
+
+    fun setSkipCrossfadeWithinAlbum(enabled: Boolean) {
+        AuraPlayerManager.setSkipCrossfadeWithinAlbum(enabled)
+        storage.saveSkipCrossfadeWithinAlbum(enabled)
+    }
+
+    fun selectAutoEqProfile(profileId: String?) {
+        AuraPlayerManager.applyAutoEqProfile(profileId)
+        storage.saveActiveAutoEqProfileId(profileId)
     }
 
     fun toggleSponsorBlockCategory(category: String) {
