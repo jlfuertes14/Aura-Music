@@ -71,7 +71,7 @@
                 android:src="@drawable/aura_app_icon_round" />
         </LinearLayout>
 
-        <View
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_weight="1" />
@@ -96,7 +96,7 @@
                     android:src="@drawable/ic_widget_prev" />
             </FrameLayout>
 
-            <View
+            <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />
@@ -116,7 +116,7 @@
                     android:src="@drawable/ic_widget_play" />
             </FrameLayout>
 
-            <View
+            <FrameLayout
                 android:layout_width="0dp"
                 android:layout_height="1dp"
                 android:layout_weight="1" />

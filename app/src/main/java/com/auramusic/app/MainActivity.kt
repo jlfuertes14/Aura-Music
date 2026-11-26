@@ -25,15 +25,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -45,6 +48,8 @@ import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.components.AuraLaunchSplash
 import com.auramusic.app.ui.screens.AuraMainScreen
 import com.auramusic.app.ui.theme.AuraMusicTheme
+
+val LocalIsInPipMode = staticCompositionLocalOf { false }
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -124,23 +129,25 @@ class MainActivity : ComponentActivity() {
                 updatePipParams(autoEnter = isVideoMode && isPlaying)
             }
 
-            if (isInPipMode) {
-                PipVideoOnlyPlayer()
-            } else {
-                AuraMusicTheme(
-                    liquidGlassEnabled = liquidGlassEnabled,
-                    lyricsStyle = lyricsStyle,
-                    themeMode = themeMode,
-                    colorSource = themeColorSource,
-                    customAccentArgb = customAccentArgb,
-                ) {
-                    var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate && !openedFromWidget) }
+            AuraMusicTheme(
+                liquidGlassEnabled = liquidGlassEnabled,
+                lyricsStyle = lyricsStyle,
+                themeMode = themeMode,
+                colorSource = themeColorSource,
+                customAccentArgb = customAccentArgb,
+            ) {
+                var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate && !openedFromWidget) }
 
+                CompositionLocalProvider(LocalIsInPipMode provides isInPipMode) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         AuraMainScreen(viewModel = auraViewModel)
 
+                        if (isInPipMode) {
+                            PipVideoOnlyPlayer()
+                        }
+
                         AnimatedVisibility(
-                            visible = isSplashActive,
+                            visible = isSplashActive && !isInPipMode,
                             enter = fadeIn(),
                             exit = fadeOut(tween(380, easing = FastOutSlowInEasing))
                         ) {
@@ -157,7 +164,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            val exitingPip = isInPipMode && !isInPictureInPictureMode
             isInPipMode = isInPictureInPictureMode
+            if (exitingPip && AuraPlayerManager.currentTrack.value != null) {
+                auraViewModel.openNowPlayingFromWidget(autoPlay = false)
+            }
         }
     }
 
@@ -166,7 +177,14 @@ class MainActivity : ComponentActivity() {
         newConfig: Configuration
     ) {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        val exitingPip = isInPipMode && !isInPictureInPictureMode
         isInPipMode = isInPictureInPictureMode
+        if (exitingPip &&
+            lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) &&
+            AuraPlayerManager.currentTrack.value != null
+        ) {
+            auraViewModel.openNowPlayingFromWidget(autoPlay = false)
+        }
     }
 
     private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
@@ -271,6 +289,11 @@ private fun PipVideoOnlyPlayer() {
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     player = AuraPlayerManager.exoPlayer
+                    post {
+                        if (isAttachedToWindow && player !== AuraPlayerManager.exoPlayer) {
+                            player = AuraPlayerManager.exoPlayer
+                        }
+                    }
                 }
             },
             update = { view ->

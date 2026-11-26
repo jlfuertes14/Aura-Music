@@ -296,9 +296,10 @@ internal object AuraWidgetSupport {
                     Intent.FLAG_ACTIVITY_SINGLE_TOP
             )
         }
+        val requestBase = if (receiverClass == AuraQuickPlayWidgetReceiver::class.java) 1000 else 2000
         val openPi = PendingIntent.getActivity(
             context,
-            1001,
+            requestBase + 1,
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -307,15 +308,15 @@ internal object AuraWidgetSupport {
         // 6. Direct Broadcast PendingIntents for instant transport controls
         views.setOnClickPendingIntent(
             R.id.widget_btn_prev,
-            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PREV, 2001)
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PREV, requestBase + 11)
         )
         views.setOnClickPendingIntent(
             R.id.widget_btn_play_pause,
-            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PLAY_PAUSE, 2002)
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PLAY_PAUSE, requestBase + 12)
         )
         views.setOnClickPendingIntent(
             R.id.widget_btn_next,
-            createActionBroadcast(context, receiverClass, ACTION_WIDGET_NEXT, 2003)
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_NEXT, requestBase + 13)
         )
 
         return views

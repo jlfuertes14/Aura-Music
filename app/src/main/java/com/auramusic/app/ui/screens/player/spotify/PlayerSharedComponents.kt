@@ -79,6 +79,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.auramusic.app.LocalIsInPipMode
 import com.auramusic.app.core.media.AuraPlayerManager
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.NowPlayingStyle
@@ -333,6 +334,8 @@ internal fun SpotifyVideoPlayerSurface(
     isLoading: Boolean,
     onSwitchToAudio: () -> Unit
 ) {
+    val isInPipMode = LocalIsInPipMode.current
+
     Box(
         modifier = modifier
             .background(Color.Black)
@@ -354,34 +357,41 @@ internal fun SpotifyVideoPlayerSurface(
                 .blur(28.dp)
         )
 
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = AuraPlayerManager.exoPlayer
-                    useController = false
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setKeepContentOnPlayerReset(true)
-                    setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    setBackgroundColor(android.graphics.Color.TRANSPARENT)
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+        if (!isInPipMode) {
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = AuraPlayerManager.exoPlayer
+                        useController = false
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        setKeepContentOnPlayerReset(true)
+                        setShutterBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+                        layoutParams = ViewGroup.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        post {
+                            if (isAttachedToWindow && player !== AuraPlayerManager.exoPlayer) {
+                                player = AuraPlayerManager.exoPlayer
+                            }
+                        }
+                    }
+                },
+                update = { view ->
+                    if (view.player !== AuraPlayerManager.exoPlayer) {
+                        view.player = AuraPlayerManager.exoPlayer
+                    }
+                },
+                modifier = Modifier.fillMaxSize(),
+                onRelease = { view ->
+                    // PlayerView uses a separate video surface by default. Explicitly detach it
+                    // when the full player leaves composition so it cannot cover or intercept
+                    // the mini-player after a video is collapsed or during PiP handoff.
+                    view.player = null
                 }
-            },
-            update = { view ->
-                if (view.player != AuraPlayerManager.exoPlayer) {
-                    view.player = AuraPlayerManager.exoPlayer
-                }
-            },
-            modifier = Modifier.fillMaxSize(),
-            onRelease = { view ->
-                // PlayerView uses a separate video surface by default. Explicitly detach it
-                // when the full player leaves composition so it cannot cover or intercept
-                // the mini-player after a video is collapsed.
-                view.player = null
-            }
-        )
+            )
+        }
 
         // Loading indicator overlay while resolving video stream
         if (isLoading) {

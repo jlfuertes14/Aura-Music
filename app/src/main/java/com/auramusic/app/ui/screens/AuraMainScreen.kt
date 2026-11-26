@@ -30,6 +30,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
@@ -188,8 +189,8 @@ private class NonUniformScaledRoundedShape(
 
 @Composable
 fun AuraMainScreen(viewModel: AuraViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var isPlayerExpanded by remember { mutableStateOf(false) }
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var isPlayerExpanded by rememberSaveable { mutableStateOf(false) }
     var isPlayerCollapseTransition by remember { mutableStateOf(false) }
     var isPlayerExpandTransition by remember { mutableStateOf(false) }
     var fullPlayerArtworkBounds by remember { mutableStateOf<Rect?>(null) }
@@ -408,7 +409,9 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
 
     LaunchedEffect(deepLinkExpandPlayer, currentTrack != null) {
         if (deepLinkExpandPlayer && currentTrack != null) {
-            expandFullPlayer()
+            if (!isPlayerExpanded) {
+                expandFullPlayer()
+            }
             viewModel.consumeDeepLinkExpandPlayer()
         }
     }
