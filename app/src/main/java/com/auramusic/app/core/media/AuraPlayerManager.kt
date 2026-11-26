@@ -868,8 +868,37 @@ object AuraPlayerManager {
                 player.pause()
                 _isBuffering.value = false
                 _isPlaying.value = false
+                notifyTrackStateChanged()
             }
             else -> playWithFadeIn()
+        }
+    }
+
+    /**
+     * Instant zero-fade play/pause toggle for home-screen widgets so playback state
+     * and widget icons flip immediately without waiting on the 200ms audio fade.
+     */
+    fun togglePlayPauseImmediate(): Boolean {
+        val player = exoPlayer ?: return _isPlaying.value
+        fadeJob?.cancel()
+        cancelCrossfade()
+        player.volume = baseVolume
+        return if (player.isPlaying || (player.playWhenReady && player.playbackState == Player.STATE_BUFFERING)) {
+            player.pause()
+            _isBuffering.value = false
+            _isPlaying.value = false
+            persistPlaybackState()
+            notifyTrackStateChanged()
+            false
+        } else {
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+            player.play()
+            _isPlaying.value = true
+            _isBuffering.value = player.playbackState == Player.STATE_BUFFERING
+            notifyTrackStateChanged()
+            true
         }
     }
 
@@ -1506,6 +1535,13 @@ object AuraPlayerManager {
         val durMs = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
             ?: ((track?.durationSeconds ?: 0).coerceAtLeast(0) * 1000L)
         onTrackStateChangedHook?.invoke(track, playing, posMs, durMs)
+        appContext?.let { ctx ->
+            com.auramusic.app.ui.widget.AuraWidgetUpdater.notifyPlayerStateChanged(
+                context = ctx,
+                track = track,
+                isPlaying = playing
+            )
+        }
     }
 
     fun setSponsorSegments(segments: List<SponsorSegment>) {
