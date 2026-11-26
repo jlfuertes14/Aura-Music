@@ -288,54 +288,13 @@ internal fun SpotifyEncorePlayerView(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                        val isSleepTimerActive = (sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0) || sleepTimerEndOfTrack
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(50))
-                                    .then(
-                                        if (isSleepTimerActive) {
-                                            Modifier.background(Color.White.copy(alpha = 0.16f))
-                                        } else {
-                                            Modifier
-                                        }
-                                    )
-                                    .clickable(onClick = onOpenSleepTimer)
-                                    .padding(horizontal = if (isSleepTimerActive) 8.dp else 7.dp, vertical = 7.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Bedtime,
-                                        contentDescription = "Sleep Timer",
-                                        tint = if (isSleepTimerActive) Color.White else Color.White.copy(alpha = 0.85f),
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                    if (isSleepTimerActive) {
-                                        val badgeLabel = when {
-                                            sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0 -> "${sleepTimerRemainingMin}m"
-                                            else -> "Track"
-                                        }
-                                        Text(
-                                            text = badgeLabel,
-                                            color = Color.White,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                            IconButton(onClick = onOptionsClick, modifier = Modifier.size(38.dp)) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MoreVert,
-                                    contentDescription = "More Options",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                        IconButton(onClick = onOptionsClick, modifier = Modifier.size(38.dp)) {
+                            Icon(
+                                imageVector = Icons.Rounded.MoreVert,
+                                contentDescription = "More Options",
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }
@@ -677,16 +636,57 @@ internal fun SpotifyEncorePlayerView(
                             }
                         }
 
-                        IconButton(
-                            onClick = onOpenTrackInfo,
-                            modifier = Modifier.size(34.dp)
+                        val isSleepTimerActive = (sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0) || sleepTimerEndOfTrack
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Rounded.Info,
-                                contentDescription = "Track Info",
-                                tint = Color.White.copy(alpha = 0.78f),
-                                modifier = Modifier.size(18.dp)
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(50))
+                                    .then(
+                                        if (isSleepTimerActive) {
+                                            Modifier.background(Color.White.copy(alpha = 0.16f))
+                                        } else {
+                                            Modifier
+                                        }
+                                    )
+                                    .clickable(onClick = onOpenSleepTimer)
+                                    .padding(horizontal = if (isSleepTimerActive) 9.dp else 8.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Bedtime,
+                                    contentDescription = "Sleep Timer",
+                                    tint = if (isSleepTimerActive) Color.White else Color.White.copy(alpha = 0.78f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                if (isSleepTimerActive) {
+                                    val badgeLabel = when {
+                                        sleepTimerRemainingMin != null && sleepTimerRemainingMin > 0 -> "${sleepTimerRemainingMin}m"
+                                        else -> "Track"
+                                    }
+                                    Text(
+                                        text = badgeLabel,
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+
+                            IconButton(
+                                onClick = onOpenTrackInfo,
+                                modifier = Modifier.size(34.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Info,
+                                    contentDescription = "Song Info",
+                                    tint = Color.White.copy(alpha = 0.78f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
 

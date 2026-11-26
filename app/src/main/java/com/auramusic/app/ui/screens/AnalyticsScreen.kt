@@ -25,6 +25,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,8 +49,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
@@ -79,7 +78,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -91,6 +93,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
@@ -188,59 +191,30 @@ fun AnalyticsScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.weight(1f)
-                ) {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(auraColors.circleButtonBg)
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                            tint = auraColors.textPrimary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Text(
-                        text = "Stats",
-                        color = auraColors.textPrimary,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = (-0.4).sp
-                    )
-                }
-
-                Row(
+                IconButton(
+                    onClick = onBack,
                     modifier = Modifier
+                        .size(44.dp)
                         .clip(CircleShape)
-                        .background(auraColors.accent)
-                        .clickable { showWrapped = true }
-                        .padding(horizontal = 14.dp, vertical = 9.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .background(auraColors.circleButtonBg)
                 ) {
                     Icon(
-                        imageVector = Icons.Rounded.GraphicEq,
-                        contentDescription = null,
-                        tint = auraColors.onAccent,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Wrapped",
-                        color = auraColors.onAccent,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                        contentDescription = "Back",
+                        tint = auraColors.textPrimary,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
+                Spacer(modifier = Modifier.width(12.dp))
+                Text(
+                    text = "Stats",
+                    color = auraColors.textPrimary,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.4).sp
+                )
             }
 
             // Borderless Horizontal Range Pills
@@ -457,7 +431,7 @@ fun AnalyticsScreen(
             }
         }
 
-        // Aura Wrapped Full-Bleed Story Overlay with Emil Kowalski Horizontal Slide Transition
+        // Aura Wrapped Full-Bleed Z-Index Overlay (blocks all touches to underlying Stats screen)
         AnimatedVisibility(
             visible = showWrapped,
             enter = slideInHorizontally(
@@ -468,7 +442,9 @@ fun AnalyticsScreen(
                 targetOffsetX = { it },
                 animationSpec = tween(durationMillis = 270, easing = WrappedSlideEasing)
             ) + fadeOut(animationSpec = tween(durationMillis = 180)),
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(50f)
         ) {
             AuraWrappedOverlay(
                 snapshot = snapshot,
@@ -1158,15 +1134,16 @@ private fun ThermalReceiptCard(
 
         Spacer(modifier = Modifier.height(16.dp))
 
+        val buttonInk = accentColor.contrastInk()
         Button(
             onClick = onShareReceipt,
             enabled = !isSharing,
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = accentColor,
-                contentColor = onAccentColor,
+                contentColor = buttonInk,
                 disabledContainerColor = accentColor.copy(alpha = 0.6f),
-                disabledContentColor = onAccentColor.copy(alpha = 0.7f)
+                disabledContentColor = buttonInk.copy(alpha = 0.7f)
             ),
             modifier = Modifier
                 .fillMaxWidth()
@@ -1174,13 +1151,14 @@ private fun ThermalReceiptCard(
         ) {
             if (isSharing) {
                 CircularProgressIndicator(
-                    color = onAccentColor,
+                    color = buttonInk,
                     strokeWidth = 2.dp,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Rendering PNG…",
+                    color = buttonInk,
                     fontSize = 13.5.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1188,11 +1166,13 @@ private fun ThermalReceiptCard(
                 Icon(
                     imageVector = Icons.Rounded.Share,
                     contentDescription = null,
+                    tint = buttonInk,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Share Receipt",
+                    color = buttonInk,
                     fontSize = 13.5.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1241,166 +1221,306 @@ private fun AuraWrappedOverlay(
 
     val pageCount = 5
     val pagerState = rememberPagerState(pageCount = { pageCount })
-    val scope = rememberCoroutineScope()
+    val blockingInteraction = remember { MutableInteractionSource() }
 
     val slideGradients = remember {
         listOf(
-            listOf(Color(0xFF1F143D), Color(0xFF0E1018)),
-            listOf(Color(0xFF0F2A33), Color(0xFF0B0E16)),
-            listOf(Color(0xFF34142E), Color(0xFF0E1018)),
-            listOf(Color(0xFF14281B), Color(0xFF0B0F14)),
-            listOf(Color(0xFF211A3D), Color(0xFF0C0E15))
+            listOf(Color(0xFF190C3B), Color(0xFF0A0B14)),
+            listOf(Color(0xFF082630), Color(0xFF070D14)),
+            listOf(Color(0xFF3A0B2B), Color(0xFF0C0913)),
+            listOf(Color(0xFF0B291B), Color(0xFF080E10)),
+            listOf(Color(0xFF1F1240), Color(0xFF0A0B13))
         )
     }
 
-    val currentGradient = slideGradients[pagerState.currentPage.coerceIn(0, slideGradients.lastIndex)]
-    val chromeInk = currentGradient.first().contrastInk()
+    val currentPage = pagerState.currentPage.coerceIn(0, slideGradients.lastIndex)
+    val currentGradient = slideGradients[currentPage]
+    val chromeInk = Color.White
 
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .zIndex(50f)
             .background(Brush.verticalGradient(currentGradient))
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            // Consume all taps so nothing can ever click through to Stats behind Wrapped
+            .clickable(
+                interactionSource = blockingInteraction,
+                indication = null,
+                onClick = {}
+            )
     ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            // Clean Story Progress Bars + Close Button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 14.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                repeat(pageCount) { index ->
-                    val active = index <= pagerState.currentPage
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(3.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (active) accentColor else chromeInk.copy(alpha = 0.22f)
-                            )
-                    )
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                IconButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(chromeInk.copy(alpha = 0.12f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Aura Wrapped",
-                        tint = chromeInk,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
+        HorizontalPager(
+            state = pagerState,
+            modifier = Modifier.fillMaxSize()
+        ) { page ->
+            val gradient = slideGradients[page.coerceIn(0, slideGradients.lastIndex)]
+            when (page) {
+                0 -> WrappedSummarySlide(
+                    snapshot = snapshot,
+                    gradient = gradient,
+                    accentColor = accentColor,
+                    onAccentColor = accentColor.contrastInk()
+                )
+                1 -> WrappedChronotypeSlide(
+                    snapshot = snapshot,
+                    gradient = gradient,
+                    accentColor = accentColor
+                )
+                2 -> WrappedTopArtistSlide(
+                    snapshot = snapshot,
+                    gradient = gradient,
+                    accentColor = accentColor
+                )
+                3 -> WrappedTopTracksSlide(
+                    snapshot = snapshot,
+                    gradient = gradient,
+                    accentColor = accentColor,
+                    onPlayTrack = { track ->
+                        onPlayTrack(track)
+                        onDismiss()
+                    }
+                )
+                else -> WrappedShareSlide(
+                    snapshot = snapshot,
+                    gradient = gradient,
+                    accentColor = accentColor,
+                    onAccentColor = accentColor.contrastInk(),
+                    onShareReceipt = onShareReceipt,
+                    onDone = onDismiss
+                )
             }
+        }
 
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-            ) { page ->
-                val gradient = slideGradients[page.coerceIn(0, slideGradients.lastIndex)]
-                when (page) {
-                    0 -> WrappedSummarySlide(
-                        snapshot = snapshot,
-                        gradient = gradient,
-                        accentColor = accentColor,
-                        onAccentColor = onAccentColor
-                    )
-                    1 -> WrappedChronotypeSlide(
-                        snapshot = snapshot,
-                        gradient = gradient,
-                        accentColor = accentColor
-                    )
-                    2 -> WrappedTopArtistSlide(
-                        snapshot = snapshot,
-                        gradient = gradient,
-                        accentColor = accentColor
-                    )
-                    3 -> WrappedTopTracksSlide(
-                        snapshot = snapshot,
-                        gradient = gradient,
-                        accentColor = accentColor,
-                        onPlayTrack = { track ->
-                            onPlayTrack(track)
-                            onDismiss()
-                        }
-                    )
-                    else -> WrappedShareSlide(
-                        snapshot = snapshot,
-                        gradient = gradient,
-                        accentColor = accentColor,
-                        onAccentColor = onAccentColor,
-                        onShareReceipt = onShareReceipt,
-                        onDone = onDismiss
-                    )
-                }
-            }
-
-            // Bottom Story Navigation
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 18.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = {
-                        if (pagerState.currentPage > 0) {
-                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                        }
-                    },
-                    enabled = pagerState.currentPage > 0,
+        // Top Story Progress Bars + Close Button (floating cleanly over full-bleed artwork)
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            repeat(pageCount) { index ->
+                val active = index <= pagerState.currentPage
+                Box(
                     modifier = Modifier
-                        .size(44.dp)
+                        .weight(1f)
+                        .height(3.dp)
                         .clip(CircleShape)
-                        .background(chromeInk.copy(alpha = 0.10f))
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowLeft,
-                        contentDescription = "Previous slide",
-                        tint = if (pagerState.currentPage > 0) chromeInk else chromeInk.copy(alpha = 0.30f)
-                    )
-                }
+                        .background(
+                            if (active) accentColor else chromeInk.copy(alpha = 0.28f)
+                        )
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.34f))
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = "Close Wrapped",
+                    tint = chromeInk,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
 
-                Text(
-                    text = "${pagerState.currentPage + 1} / $pageCount",
-                    color = chromeInk.copy(alpha = 0.72f),
-                    style = TextStyle(
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        fontFeatureSettings = "tnum"
+@Composable
+private fun WrappedGraphicBackdrop(
+    pageIndex: Int,
+    gradient: List<Color>,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val vibrantAccent = if (accentColor.luminance() > 0.35f) accentColor else AuraNeonLime
+    Canvas(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Brush.verticalGradient(gradient))
+    ) {
+        val w = size.width
+        val h = size.height
+        when (pageIndex) {
+            0 -> {
+                // Summary: Bold sweeping Spotify Wrapped ribbons + radial burst + vinyl arcs
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF7C3AED).copy(alpha = 0.55f), Color.Transparent),
+                        center = Offset(w * 0.88f, h * 0.18f),
+                        radius = w * 0.78f
+                    ),
+                    radius = w * 0.78f,
+                    center = Offset(w * 0.88f, h * 0.18f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(vibrantAccent.copy(alpha = 0.28f), Color.Transparent),
+                        center = Offset(w * 0.12f, h * 0.82f),
+                        radius = w * 0.72f
+                    ),
+                    radius = w * 0.72f,
+                    center = Offset(w * 0.12f, h * 0.82f)
+                )
+                val ribbon = Path().apply {
+                    moveTo(-w * 0.15f, h * 0.68f)
+                    cubicTo(w * 0.25f, h * 0.48f, w * 0.65f, h * 0.86f, w * 1.15f, h * 0.56f)
+                    lineTo(w * 1.15f, h * 0.78f)
+                    cubicTo(w * 0.65f, h * 1.04f, w * 0.25f, h * 0.68f, -w * 0.15f, h * 0.86f)
+                    close()
+                }
+                drawPath(
+                    path = ribbon,
+                    brush = Brush.linearGradient(
+                        colors = listOf(
+                            vibrantAccent.copy(alpha = 0.22f),
+                            Color(0xFFEC4899).copy(alpha = 0.26f)
+                        )
                     )
                 )
-
-                IconButton(
-                    onClick = {
-                        if (pagerState.currentPage < pageCount - 1) {
-                            scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                        } else {
-                            onDismiss()
-                        }
-                    },
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(accentColor)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                        contentDescription = if (pagerState.currentPage < pageCount - 1) "Next slide" else "Finish",
-                        tint = onAccentColor
+                for (i in 1..4) {
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.06f),
+                        radius = w * (0.24f + i * 0.14f),
+                        center = Offset(w * 0.92f, h * 0.24f),
+                        style = Stroke(width = 1.5.dp.toPx())
                     )
                 }
+            }
+            1 -> {
+                // Chronotype / Peak Time: Concentric clock rings + electric wave arcs
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF06B6D4).copy(alpha = 0.45f), Color.Transparent),
+                        center = Offset(w * 0.5f, h * 0.28f),
+                        radius = w * 0.85f
+                    ),
+                    radius = w * 0.85f,
+                    center = Offset(w * 0.5f, h * 0.28f)
+                )
+                for (i in 1..6) {
+                    drawCircle(
+                        color = if (i % 2 == 0) vibrantAccent.copy(alpha = 0.14f) else Color.White.copy(alpha = 0.08f),
+                        radius = w * (0.16f + i * 0.12f),
+                        center = Offset(w * 0.82f, h * 0.30f),
+                        style = Stroke(width = (if (i == 3) 4.dp else 1.5.dp).toPx())
+                    )
+                }
+                val wave = Path().apply {
+                    moveTo(-w * 0.1f, h * 0.76f)
+                    cubicTo(w * 0.28f, h * 0.62f, w * 0.68f, h * 0.92f, w * 1.1f, h * 0.72f)
+                }
+                drawPath(
+                    path = wave,
+                    color = vibrantAccent.copy(alpha = 0.36f),
+                    style = Stroke(width = 22.dp.toPx(), cap = StrokeCap.Round)
+                )
+            }
+            2 -> {
+                // #1 Artist: Dramatic magenta/coral radial glow + sweeping diagonal graphic bands
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFFEC4899).copy(alpha = 0.52f), Color.Transparent),
+                        center = Offset(w * 0.5f, h * 0.34f),
+                        radius = w * 0.78f
+                    ),
+                    radius = w * 0.78f,
+                    center = Offset(w * 0.5f, h * 0.34f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFFFF6B4A).copy(alpha = 0.30f), Color.Transparent),
+                        center = Offset(w * 0.15f, h * 0.78f),
+                        radius = w * 0.62f
+                    ),
+                    radius = w * 0.62f,
+                    center = Offset(w * 0.15f, h * 0.78f)
+                )
+                for (i in 0..3) {
+                    val yStart = h * (0.08f + i * 0.22f)
+                    val band = Path().apply {
+                        moveTo(-w * 0.1f, yStart + h * 0.12f)
+                        lineTo(w * 1.1f, yStart - h * 0.08f)
+                        lineTo(w * 1.1f, yStart - h * 0.02f)
+                        lineTo(-w * 0.1f, yStart + h * 0.18f)
+                        close()
+                    }
+                    drawPath(
+                        path = band,
+                        color = Color.White.copy(alpha = if (i % 2 == 0) 0.055f else 0.03f)
+                    )
+                }
+            }
+            3 -> {
+                // Top 5 Songs: Asymmetric emerald/lime soundwave bands
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(vibrantAccent.copy(alpha = 0.32f), Color.Transparent),
+                        center = Offset(w * 0.85f, h * 0.16f),
+                        radius = w * 0.75f
+                    ),
+                    radius = w * 0.75f,
+                    center = Offset(w * 0.85f, h * 0.16f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF10B981).copy(alpha = 0.36f), Color.Transparent),
+                        center = Offset(w * 0.12f, h * 0.86f),
+                        radius = w * 0.70f
+                    ),
+                    radius = w * 0.70f,
+                    center = Offset(w * 0.12f, h * 0.86f)
+                )
+                for (i in 0..2) {
+                    val offset = i * 28.dp.toPx()
+                    val curve = Path().apply {
+                        moveTo(-w * 0.1f, h * 0.18f + offset)
+                        cubicTo(w * 0.35f, h * 0.06f + offset, w * 0.70f, h * 0.28f + offset, w * 1.1f, h * 0.14f + offset)
+                    }
+                    drawPath(
+                        path = curve,
+                        color = vibrantAccent.copy(alpha = 0.16f - i * 0.04f),
+                        style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                    )
+                }
+            }
+            else -> {
+                // Share Slide: Rich ultraviolet + lime kinetic wave backdrop
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF8B5CF6).copy(alpha = 0.50f), Color.Transparent),
+                        center = Offset(w * 0.2f, h * 0.22f),
+                        radius = w * 0.82f
+                    ),
+                    radius = w * 0.82f,
+                    center = Offset(w * 0.2f, h * 0.22f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(vibrantAccent.copy(alpha = 0.26f), Color.Transparent),
+                        center = Offset(w * 0.85f, h * 0.80f),
+                        radius = w * 0.72f
+                    ),
+                    radius = w * 0.72f,
+                    center = Offset(w * 0.85f, h * 0.80f)
+                )
+                val arc = Path().apply {
+                    moveTo(-w * 0.1f, h * 0.52f)
+                    cubicTo(w * 0.30f, h * 0.36f, w * 0.70f, h * 0.68f, w * 1.1f, h * 0.44f)
+                    lineTo(w * 1.1f, h * 0.60f)
+                    cubicTo(w * 0.70f, h * 0.84f, w * 0.30f, h * 0.52f, -w * 0.1f, h * 0.68f)
+                    close()
+                }
+                drawPath(
+                    path = arc,
+                    color = Color.White.copy(alpha = 0.055f)
+                )
             }
         }
     }
@@ -1408,38 +1528,48 @@ private fun AuraWrappedOverlay(
 
 @Composable
 private fun WrappedSlideLayout(
+    pageIndex: Int,
     tag: String,
     gradient: List<Color>,
     accentColor: Color,
     content: @Composable (ink: Color, accentOnSlide: Color) -> Unit
 ) {
-    val ink = gradient.first().contrastInk()
+    val ink = Color.White
     val accentOnSlide = if (accentColor.luminance() > 0.35f) accentColor else AuraNeonLime
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Brush.verticalGradient(gradient))
-            .padding(horizontal = 28.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = tag,
-            color = accentOnSlide,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.1.sp
+    Box(modifier = Modifier.fillMaxSize()) {
+        WrappedGraphicBackdrop(
+            pageIndex = pageIndex,
+            gradient = gradient,
+            accentColor = accentColor
         )
 
-        content(ink, accentOnSlide)
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(top = 68.dp, bottom = 28.dp, start = 28.dp, end = 28.dp),
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = tag,
+                color = accentOnSlide,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp
+            )
 
-        Text(
-            text = "AURA MUSIC WRAPPED",
-            color = ink.copy(alpha = 0.45f),
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Bold,
-            letterSpacing = 1.sp
-        )
+            content(ink, accentOnSlide)
+
+            Text(
+                text = "AURA WRAPPED",
+                color = ink.copy(alpha = 0.48f),
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.1.sp
+            )
+        }
     }
 }
 
@@ -1450,26 +1580,39 @@ private fun WrappedSummarySlide(
     accentColor: Color,
     onAccentColor: Color
 ) {
+    val heroArtUrl = snapshot.topTracks.firstOrNull()?.first?.highResArtworkUrl
     WrappedSlideLayout(
+        pageIndex = 0,
         tag = "WRAPPED • ${snapshot.range.label.uppercase(Locale.US)}",
         gradient = gradient,
         accentColor = accentColor
     ) { ink, _ ->
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (!heroArtUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = heroArtUrl,
+                    contentDescription = "Top song artwork",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .size(132.dp)
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(ink.copy(alpha = 0.12f))
+                )
+            }
             Text(
                 text = "${formatIntStat(snapshot.totalMinutes)} min",
                 color = ink,
                 style = TextStyle(
-                    fontSize = 44.sp,
+                    fontSize = 48.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    lineHeight = 48.sp,
-                    letterSpacing = (-1.0).sp,
+                    lineHeight = 52.sp,
+                    letterSpacing = (-1.2).sp,
                     fontFeatureSettings = "tnum"
                 )
             )
             Text(
                 text = "${formatIntStat(snapshot.totalPlays)} plays · ${formatIntStat(snapshot.uniqueArtists)} artists",
-                color = ink.copy(alpha = 0.80f),
+                color = ink.copy(alpha = 0.84f),
                 style = TextStyle(
                     fontSize = 17.sp,
                     lineHeight = 24.sp,
@@ -1515,6 +1658,7 @@ private fun WrappedChronotypeSlide(
     }
 
     WrappedSlideLayout(
+        pageIndex = 1,
         tag = "PEAK TIME",
         gradient = gradient,
         accentColor = accentColor
@@ -1524,21 +1668,21 @@ private fun WrappedChronotypeSlide(
                 imageVector = Icons.Rounded.Schedule,
                 contentDescription = null,
                 tint = ink,
-                modifier = Modifier.size(38.dp)
+                modifier = Modifier.size(40.dp)
             )
             Text(
                 text = chronotypeTitle,
                 color = ink,
-                fontSize = 36.sp,
+                fontSize = 40.sp,
                 fontWeight = FontWeight.ExtraBold,
-                lineHeight = 40.sp,
-                letterSpacing = (-0.6).sp
+                lineHeight = 44.sp,
+                letterSpacing = (-0.8).sp
             )
             Text(
                 text = "Peak hour: ${snapshot.peakHourLabel.ifBlank { "Evening" }}",
-                color = ink.copy(alpha = 0.80f),
+                color = ink.copy(alpha = 0.84f),
                 style = TextStyle(
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFeatureSettings = "tnum"
                 )
@@ -1554,39 +1698,84 @@ private fun WrappedTopArtistSlide(
     accentColor: Color
 ) {
     val topArtist = snapshot.topArtists.firstOrNull()
+    val artistCoverUrl = remember(snapshot, topArtist) {
+        val artistName = topArtist?.first
+        val matchingTrack = if (!artistName.isNullOrBlank()) {
+            snapshot.topTracks.firstOrNull { (track, _) ->
+                track.artist.contains(artistName, ignoreCase = true)
+            }?.first
+        } else {
+            null
+        }
+        (matchingTrack ?: snapshot.topTracks.firstOrNull()?.first)?.highResArtworkUrl
+    }
+
     WrappedSlideLayout(
+        pageIndex = 2,
         tag = "#1 ARTIST",
         gradient = gradient,
         accentColor = accentColor
-    ) { ink, _ ->
-        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Icon(
-                imageVector = Icons.Rounded.GraphicEq,
-                contentDescription = null,
-                tint = ink,
-                modifier = Modifier.size(38.dp)
-            )
-            Text(
-                text = topArtist?.first ?: "No top artist",
-                color = ink,
-                fontSize = 36.sp,
-                fontWeight = FontWeight.ExtraBold,
-                lineHeight = 40.sp,
-                letterSpacing = (-0.6).sp
-            )
-            Text(
-                text = if (topArtist != null) {
-                    "${topArtist.second} plays"
-                } else {
-                    "Play a few songs to see your stats"
-                },
-                color = ink.copy(alpha = 0.80f),
-                style = TextStyle(
-                    fontSize = 16.sp,
-                    lineHeight = 23.sp,
-                    fontFeatureSettings = "tnum"
+    ) { ink, accentOnSlide ->
+        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+            if (!artistCoverUrl.isNullOrBlank()) {
+                Box(contentAlignment = Alignment.Center) {
+                    Box(
+                        modifier = Modifier
+                            .size(204.dp)
+                            .clip(CircleShape)
+                            .background(
+                                Brush.radialGradient(
+                                    colors = listOf(
+                                        accentOnSlide.copy(alpha = 0.36f),
+                                        Color.Transparent
+                                    )
+                                )
+                            )
+                    )
+                    AsyncImage(
+                        model = artistCoverUrl,
+                        contentDescription = topArtist?.first ?: "Top artist cover",
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(182.dp)
+                            .clip(CircleShape)
+                            .background(ink.copy(alpha = 0.12f))
+                    )
+                }
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.GraphicEq,
+                    contentDescription = null,
+                    tint = ink,
+                    modifier = Modifier.size(44.dp)
                 )
-            )
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = topArtist?.first ?: "No top artist",
+                    color = ink,
+                    fontSize = 38.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 42.sp,
+                    letterSpacing = (-0.7).sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = if (topArtist != null) {
+                        "${topArtist.second} plays"
+                    } else {
+                        "Play a few songs to see your stats"
+                    },
+                    color = ink.copy(alpha = 0.82f),
+                    style = TextStyle(
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        fontFeatureSettings = "tnum"
+                    )
+                )
+            }
         }
     }
 }
@@ -1600,6 +1789,7 @@ private fun WrappedTopTracksSlide(
 ) {
     val topFive = snapshot.topTracks.take(5)
     WrappedSlideLayout(
+        pageIndex = 3,
         tag = "TOP SONGS",
         gradient = gradient,
         accentColor = accentColor
@@ -1608,11 +1798,11 @@ private fun WrappedTopTracksSlide(
             Text(
                 text = "Top 5",
                 color = ink,
-                fontSize = 32.sp,
+                fontSize = 36.sp,
                 fontWeight = FontWeight.ExtraBold,
-                letterSpacing = (-0.5).sp
+                letterSpacing = (-0.6).sp
             )
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             if (topFive.isEmpty()) {
                 Text(
                     text = "Play a few songs to see your stats",
@@ -1632,7 +1822,7 @@ private fun WrappedTopTracksSlide(
                             text = "${idx + 1}",
                             color = accentOnSlide,
                             style = TextStyle(
-                                fontSize = 15.sp,
+                                fontSize = 16.sp,
                                 fontWeight = FontWeight.ExtraBold,
                                 fontFeatureSettings = "tnum"
                             ),
@@ -1643,8 +1833,8 @@ private fun WrappedTopTracksSlide(
                             contentDescription = track.title,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(8.dp))
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(10.dp))
                                 .background(ink.copy(alpha = 0.12f))
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -1652,14 +1842,14 @@ private fun WrappedTopTracksSlide(
                             Text(
                                 text = track.title,
                                 color = ink,
-                                fontSize = 15.sp,
+                                fontSize = 15.5.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
                                 text = "${track.artist} • ${plays}x",
-                                color = ink.copy(alpha = 0.70f),
+                                color = ink.copy(alpha = 0.74f),
                                 style = TextStyle(
                                     fontSize = 12.5.sp,
                                     fontFeatureSettings = "tnum"
@@ -1671,7 +1861,7 @@ private fun WrappedTopTracksSlide(
                     }
                     if (idx < topFive.lastIndex) {
                         HorizontalDivider(
-                            modifier = Modifier.padding(start = 82.dp),
+                            modifier = Modifier.padding(start = 86.dp),
                             thickness = 0.5.dp,
                             color = ink.copy(alpha = 0.14f)
                         )
@@ -1691,25 +1881,62 @@ private fun WrappedShareSlide(
     onShareReceipt: () -> Unit,
     onDone: () -> Unit
 ) {
+    val topTrack = snapshot.topTracks.firstOrNull()?.first
+    val shareInk = accentColor.contrastInk()
+
     WrappedSlideLayout(
+        pageIndex = 4,
         tag = "RECEIPT",
         gradient = gradient,
         accentColor = accentColor
     ) { ink, _ ->
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (topTrack != null && topTrack.highResArtworkUrl.isNotBlank()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    AsyncImage(
+                        model = topTrack.highResArtworkUrl,
+                        contentDescription = topTrack.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier
+                            .size(72.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(ink.copy(alpha = 0.14f))
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = topTrack.title,
+                            color = ink,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = topTrack.artist,
+                            color = ink.copy(alpha = 0.74f),
+                            fontSize = 13.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
             Text(
                 text = "Share your stats",
                 color = ink,
-                fontSize = 34.sp,
+                fontSize = 36.sp,
                 fontWeight = FontWeight.ExtraBold,
-                lineHeight = 38.sp,
-                letterSpacing = (-0.5).sp
+                lineHeight = 40.sp,
+                letterSpacing = (-0.6).sp
             )
             Text(
                 text = "${formatIntStat(snapshot.totalMinutes)} min · ${formatIntStat(snapshot.totalPlays)} plays",
-                color = ink.copy(alpha = 0.80f),
+                color = ink.copy(alpha = 0.82f),
                 style = TextStyle(
-                    fontSize = 15.sp,
+                    fontSize = 15.5.sp,
                     fontWeight = FontWeight.SemiBold,
                     fontFeatureSettings = "tnum"
                 )
@@ -1720,7 +1947,7 @@ private fun WrappedShareSlide(
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = accentColor,
-                    contentColor = onAccentColor
+                    contentColor = shareInk
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1729,23 +1956,34 @@ private fun WrappedShareSlide(
                 Icon(
                     imageVector = Icons.Rounded.Share,
                     contentDescription = null,
+                    tint = shareInk,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Share Receipt", fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                Text(
+                    text = "Share Receipt",
+                    color = shareInk,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.5.sp
+                )
             }
             Button(
                 onClick = onDone,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = ink.copy(alpha = 0.12f),
+                    containerColor = ink.copy(alpha = 0.14f),
                     contentColor = ink
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
             ) {
-                Text("Done", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+                Text(
+                    text = "Done",
+                    color = ink,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.5.sp
+                )
             }
         }
     }

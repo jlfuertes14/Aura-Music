@@ -320,7 +320,7 @@ private fun buildAuraTypography(isDark: Boolean): Typography {
             fontFamily = AuraPoppinsFontFamily,
             fontWeight = FontWeight.SemiBold,
             fontSize = 15.sp,
-            color = primaryText
+            color = Color.Unspecified
         ),
         labelMedium = TextStyle(
             fontFamily = AuraPoppinsFontFamily,

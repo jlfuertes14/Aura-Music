@@ -279,11 +279,13 @@ fun AuraTrackInfoSheet(
                     Icon(
                         imageVector = Icons.Rounded.ContentCopy,
                         contentDescription = null,
+                        tint = auraColors.textPrimary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Copy link",
+                        color = auraColors.textPrimary,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -317,11 +319,13 @@ fun AuraTrackInfoSheet(
                     Icon(
                         imageVector = Icons.AutoMirrored.Rounded.OpenInNew,
                         contentDescription = null,
+                        tint = auraColors.onAccent,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "YouTube",
+                        color = auraColors.onAccent,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )
