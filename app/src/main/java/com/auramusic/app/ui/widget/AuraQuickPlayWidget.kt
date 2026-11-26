@@ -12,12 +12,13 @@ import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
 import androidx.glance.LocalSize
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -56,6 +57,8 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
 
     @Composable
     private fun QuickPlayContent(snapshot: WidgetSnapshot) {
+        val context = LocalContext.current
+        val openPlayerAction = AuraWidgetSupport.openPlayerActivityAction(context)
         val palette = snapshot.palette
         val widgetSize = LocalSize.current
         // Extra top & bottom breathing room while keeping cover art flush-aligned with title & controls
@@ -67,9 +70,10 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
         Row(
             modifier = GlanceModifier
                 .fillMaxSize()
+                .appWidgetBackground()
                 .background(ColorProvider(palette.widgetBg))
                 .cornerRadius(24.dp)
-                .clickable(actionRunCallback<WidgetOpenPlayerAction>())
+                .clickable(openPlayerAction)
                 .padding(horizontal = horizontalPad, vertical = verticalPad),
             verticalAlignment = Alignment.Vertical.CenterVertically
         ) {
@@ -78,7 +82,8 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
                 width = artWidth,
                 height = contentHeight,
                 cornerRadius = 15.dp,
-                placeholderBg = palette.artSurfaceBg
+                placeholderBg = palette.artSurfaceBg,
+                onClick = openPlayerAction
             )
 
             Spacer(modifier = GlanceModifier.width(16.dp))
@@ -93,7 +98,7 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
                 Row(
                     modifier = GlanceModifier
                         .fillMaxWidth()
-                        .clickable(actionRunCallback<WidgetOpenPlayerAction>()),
+                        .clickable(openPlayerAction),
                     verticalAlignment = Alignment.Vertical.Top
                 ) {
                     Column(modifier = GlanceModifier.defaultWeight()) {

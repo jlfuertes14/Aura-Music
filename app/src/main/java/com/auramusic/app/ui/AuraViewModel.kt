@@ -594,7 +594,7 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         _deepLinkExpandPlayer.value = false
     }
 
-    fun openNowPlayingFromWidget(autoPlay: Boolean = true) {
+    fun openNowPlayingFromWidget(autoPlay: Boolean = false) {
         _deepLinkExpandPlayer.value = true
         val app = getApplication<Application>()
         AuraPlayerManager.initialize(app)

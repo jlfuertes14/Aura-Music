@@ -20,6 +20,8 @@ import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.LocalContext
+import androidx.glance.action.Action
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
@@ -28,6 +30,8 @@ import androidx.glance.appwidget.GlanceAppWidgetReceiver
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
+import androidx.glance.appwidget.action.actionStartActivity
+import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.state.updateAppWidgetState
@@ -489,6 +493,24 @@ internal object AuraWidgetSupport {
         }
     }
 
+    /**
+     * Direct Activity PendingIntent action (instead of a broadcast ActionCallback) so Android 12+
+     * launchers attach the native Spotify-style widget expand-down launch animation and
+     * roll-up collapse animation back to the widget bounds when returning Home.
+     * Does NOT auto-play; only opens the current track in the full-screen player.
+     */
+    fun openPlayerActivityAction(context: Context): Action {
+        val intent = Intent(context.applicationContext, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_FROM_WIDGET
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
+            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
+        }
+        return actionStartActivity(intent)
+    }
+
     suspend fun ensurePlayerReadyAndRestored(
         context: Context,
         autoPlayOnRestore: Boolean
@@ -519,11 +541,12 @@ class WidgetOpenPlayerAction : ActionCallback {
         parameters: ActionParameters
     ) {
         val intent = Intent(context, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_FROM_WIDGET
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                 Intent.FLAG_ACTIVITY_SINGLE_TOP or
                 Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
-            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, true)
+            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
         }
         context.startActivity(intent)
     }
@@ -599,7 +622,8 @@ internal fun WidgetArtworkBox(
     width: Dp,
     height: Dp,
     cornerRadius: Dp,
-    placeholderBg: Color
+    placeholderBg: Color,
+    onClick: Action
 ) {
     Box(
         modifier = GlanceModifier
@@ -607,7 +631,7 @@ internal fun WidgetArtworkBox(
             .height(height)
             .cornerRadius(cornerRadius)
             .background(ColorProvider(placeholderBg))
-            .clickable(actionRunCallback<WidgetOpenPlayerAction>()),
+            .clickable(onClick),
         contentAlignment = Alignment.Center
     ) {
         val artProvider = if (artwork != null && !artwork.isRecycled) {
@@ -721,20 +745,23 @@ class AuraTurntableWidget : GlanceAppWidget() {
 
     @Composable
     private fun TurntableContent(snapshot: WidgetSnapshot) {
+        val context = LocalContext.current
+        val openPlayerAction = AuraWidgetSupport.openPlayerActivityAction(context)
         val palette = snapshot.palette
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
+                .appWidgetBackground()
                 .background(ColorProvider(palette.widgetBg))
                 .cornerRadius(22.dp)
-                .clickable(actionRunCallback<WidgetOpenPlayerAction>())
+                .clickable(openPlayerAction)
                 .padding(12.dp),
             verticalAlignment = Alignment.Vertical.CenterVertically
         ) {
             Row(
                 modifier = GlanceModifier
                     .fillMaxWidth()
-                    .clickable(actionRunCallback<WidgetOpenPlayerAction>()),
+                    .clickable(openPlayerAction),
                 verticalAlignment = Alignment.Vertical.Top
             ) {
                 WidgetArtworkBox(
@@ -742,7 +769,8 @@ class AuraTurntableWidget : GlanceAppWidget() {
                     width = 50.dp,
                     height = 50.dp,
                     cornerRadius = 11.dp,
-                    placeholderBg = palette.artSurfaceBg
+                    placeholderBg = palette.artSurfaceBg,
+                    onClick = openPlayerAction
                 )
 
                 Spacer(modifier = GlanceModifier.width(8.dp))

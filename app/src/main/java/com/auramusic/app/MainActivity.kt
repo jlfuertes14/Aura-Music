@@ -38,6 +38,7 @@ import com.auramusic.app.ui.theme.AuraMusicTheme
 
 class MainActivity : ComponentActivity() {
     companion object {
+        const val ACTION_OPEN_FROM_WIDGET = "com.auramusic.app.ACTION_OPEN_FROM_WIDGET"
         const val EXTRA_OPEN_NOW_PLAYING = "com.auramusic.app.EXTRA_OPEN_NOW_PLAYING"
         const val EXTRA_WIDGET_AUTO_PLAY = "com.auramusic.app.EXTRA_WIDGET_AUTO_PLAY"
     }
@@ -164,10 +165,15 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_OPEN_NOW_PLAYING, false) == true) {
-            val autoPlay = intent.getBooleanExtra(EXTRA_WIDGET_AUTO_PLAY, true)
+        val fromWidget = intent?.action == ACTION_OPEN_FROM_WIDGET ||
+            intent?.getBooleanExtra(EXTRA_OPEN_NOW_PLAYING, false) == true
+        if (fromWidget && intent != null) {
+            val autoPlay = intent.getBooleanExtra(EXTRA_WIDGET_AUTO_PLAY, false)
             intent.removeExtra(EXTRA_OPEN_NOW_PLAYING)
             intent.removeExtra(EXTRA_WIDGET_AUTO_PLAY)
+            if (intent.action == ACTION_OPEN_FROM_WIDGET) {
+                intent.action = null
+            }
             auraViewModel.openNowPlayingFromWidget(autoPlay = autoPlay)
         }
 
