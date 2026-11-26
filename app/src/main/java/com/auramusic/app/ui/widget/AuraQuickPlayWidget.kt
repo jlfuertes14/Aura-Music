@@ -58,11 +58,11 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
     private fun QuickPlayContent(snapshot: WidgetSnapshot) {
         val palette = snapshot.palette
         val widgetSize = LocalSize.current
-        // Generous top & bottom breathing room while keeping cover art aligned with title/controls
+        // Extra top & bottom breathing room while keeping cover art flush-aligned with title & controls
         val horizontalPad = 16.dp
-        val verticalPad = 20.dp
-        val contentHeight = (widgetSize.height - (verticalPad * 2)).coerceIn(92.dp, 114.dp)
-        val artWidth = (contentHeight * 1.04f).coerceAtMost((widgetSize.width * 0.38f).coerceAtLeast(96.dp))
+        val verticalPad = 24.dp
+        val contentHeight = (widgetSize.height - (verticalPad * 2)).coerceIn(84.dp, 100.dp)
+        val artWidth = (contentHeight * 1.04f).coerceAtMost((widgetSize.width * 0.36f).coerceAtLeast(88.dp))
 
         Row(
             modifier = GlanceModifier

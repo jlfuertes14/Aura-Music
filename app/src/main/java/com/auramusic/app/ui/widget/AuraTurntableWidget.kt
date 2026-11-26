@@ -633,10 +633,11 @@ internal fun SpotifyTransportRow(
     palette: WidgetThemePalette,
     compact: Boolean
 ) {
-    // Equal-sized visual & touch footprint for Previous, Play/Pause, and Next
-    val controlSize = if (compact) 38.dp else 44.dp
-    val skipIconSize = if (compact) 28.dp else 34.dp
-    val playIconSize = if (compact) 22.dp else 26.dp
+    // Equal-sized visual & touch footprint for Previous, Play/Pause, and Next;
+    // flush start/end alignment so Previous lines up cleanly under Song Title/Artist
+    val controlSize = if (compact) 36.dp else 42.dp
+    val skipIconSize = if (compact) 26.dp else 32.dp
+    val playIconSize = if (compact) 20.dp else 24.dp
 
     Row(
         modifier = GlanceModifier
@@ -644,13 +645,14 @@ internal fun SpotifyTransportRow(
             .height(controlSize),
         verticalAlignment = Alignment.Vertical.CenterVertically
     ) {
-        // Previous button (pure white, equal height/footprint to Play/Pause & Next)
+        // Previous button flush left to align with Song Title & Artist
         Box(
             modifier = GlanceModifier
-                .size(controlSize)
+                .width(controlSize)
+                .height(controlSize)
                 .cornerRadius(controlSize / 2)
                 .clickable(actionRunCallback<WidgetPreviousAction>()),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.CenterStart
         ) {
             Image(
                 provider = ImageProvider(R.drawable.ic_widget_prev),
@@ -683,13 +685,14 @@ internal fun SpotifyTransportRow(
 
         Spacer(modifier = GlanceModifier.defaultWeight())
 
-        // Next button (pure white, equal height/footprint to Play/Pause & Previous)
+        // Next button flush right to align with Aura App Logo
         Box(
             modifier = GlanceModifier
-                .size(controlSize)
+                .width(controlSize)
+                .height(controlSize)
                 .cornerRadius(controlSize / 2)
                 .clickable(actionRunCallback<WidgetNextAction>()),
-            contentAlignment = Alignment.Center
+            contentAlignment = Alignment.CenterEnd
         ) {
             Image(
                 provider = ImageProvider(R.drawable.ic_widget_next),
