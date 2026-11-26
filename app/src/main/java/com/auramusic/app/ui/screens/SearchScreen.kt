@@ -1521,7 +1521,7 @@ private fun SearchQuickArtistRow(
                 Icon(
                     imageVector = Icons.Rounded.CheckCircle,
                     contentDescription = "Verified Artist",
-                    tint = auraColors.accent,
+                    tint = auraColors.textSecondary,
                     modifier = Modifier.size(15.dp)
                 )
             }
@@ -1623,7 +1623,7 @@ private fun RecentPlayedTrackRow(
             Icon(
                 imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = if (isFavorite) "Unlike" else "Like",
-                tint = if (isFavorite) auraColors.accent else auraColors.textSecondary,
+                tint = if (isFavorite) auraColors.textPrimary else auraColors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -1687,7 +1687,7 @@ private fun ArtistSearchResultHeader(
                 Icon(
                     imageVector = Icons.Rounded.CheckCircle,
                     contentDescription = "Verified Artist",
-                    tint = auraColors.accent,
+                    tint = auraColors.textSecondary,
                     modifier = Modifier.size(16.dp)
                 )
             }
@@ -1824,7 +1824,7 @@ private fun SearchResultPlaylistTile(
             Icon(
                 imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = if (isSaved) "Liked playlist" else "Like playlist",
-                tint = if (isSaved) auraColors.accent else auraColors.textSecondary,
+                tint = if (isSaved) auraColors.textPrimary else auraColors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -1955,7 +1955,7 @@ private fun SearchResultSongTile(
             Icon(
                 imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 contentDescription = if (isFavorite) "Unlike" else "Like",
-                tint = if (isFavorite) auraColors.accent else auraColors.textSecondary,
+                tint = if (isFavorite) auraColors.textPrimary else auraColors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }

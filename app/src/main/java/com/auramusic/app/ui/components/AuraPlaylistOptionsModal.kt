@@ -131,7 +131,7 @@ fun AuraPlaylistOptionsModal(
             // 1. Download All Songs
             TrackOptionRow(
                 icon = Icons.Rounded.Download,
-                label = "Download All Songs (${playlist.tracks.size})",
+                label = "Download All (${playlist.tracks.size})",
                 iconTint = auraColors.textPrimary,
                 onClick = onDownloadAll
             )
@@ -144,11 +144,11 @@ fun AuraPlaylistOptionsModal(
                 onClick = onChangeCover
             )
 
-            // 3. Reset to Spotify Collage
+            // 3. Reset Cover
             if (playlist.coverUrl.isNotBlank() && onResetCover != null) {
                 TrackOptionRow(
                     icon = Icons.Rounded.RestartAlt,
-                    label = "Reset to Spotify Collage",
+                    label = "Reset Cover",
                     iconTint = auraColors.textPrimary,
                     onClick = onResetCover
                 )

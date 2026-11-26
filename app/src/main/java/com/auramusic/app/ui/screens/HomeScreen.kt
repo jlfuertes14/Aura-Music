@@ -759,7 +759,7 @@ fun HomeScreen(
                                                 Icon(
                                                     imageVector = Icons.Rounded.PlayArrow,
                                                     contentDescription = null,
-                                                    tint = AuraNeonLime,
+                                                    tint = Color.White,
                                                     modifier = Modifier.size(28.dp)
                                                 )
                                             }
@@ -1001,7 +1001,7 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.ArrowDownward,
                                     contentDescription = "See More",
-                                    tint = auraColors.accent,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -1585,7 +1585,7 @@ fun HomeScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.ArrowDownward,
                                             contentDescription = "See More",
-                                            tint = auraColors.accent,
+                                            tint = auraColors.textPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
@@ -2231,7 +2231,7 @@ fun SpotifyTrackRowItem(
                         Icon(
                             imageVector = Icons.Rounded.DownloadDone,
                             contentDescription = "Downloaded",
-                            tint = auraColors.accent,
+                            tint = auraColors.textSecondary,
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2492,7 +2492,7 @@ internal fun MoodCarouselShelf(
                                 Icon(
                                     imageVector = if (isCurrent && isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                     contentDescription = null,
-                                    tint = if (isCurrent) AuraNeonLime else Color.White,
+                                    tint = Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
@@ -2617,7 +2617,7 @@ internal fun MoodCarouselShelf(
                                     Icon(
                                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                         contentDescription = null,
-                                        tint = AuraNeonLime,
+                                        tint = Color.White,
                                         modifier = Modifier.size(28.dp)
                                     )
                                 }
@@ -2714,7 +2714,7 @@ private fun HomeRecommendationShelf(
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                     contentDescription = null,
-                                    tint = AuraNeonLime,
+                                    tint = Color.White,
                                     modifier = Modifier.size(28.dp)
                                 )
                             }

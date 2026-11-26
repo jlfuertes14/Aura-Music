@@ -97,6 +97,7 @@ object AuraPlayerManager {
     private const val TAG = "AuraPlayerManager"
     private const val PLAYBACK_EVENT_THRESHOLD_MS = 15_000L
     private const val PERIODIC_PERSIST_INTERVAL_MS = 5_000L
+    private const val MAX_STREAM_RECOVERY_ATTEMPTS = 2
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -105,6 +106,8 @@ object AuraPlayerManager {
     private var radioFetchJob: Job? = null
     private var fadeJob: Job? = null
     private var crossfadeJob: Job? = null
+    private var streamRecoveryTrackId: String? = null
+    private var streamRecoveryAttempts: Int = 0
 
     private var appContext: Context? = null
     private var simpleCache: SimpleCache? = null
@@ -460,6 +463,10 @@ object AuraPlayerManager {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
+                if (isPlaying) {
+                    _isBuffering.value = false
+                    streamRecoveryAttempts = 0
+                }
                 lastTickerWallMs = System.currentTimeMillis()
                 if (!isPlaying && _currentTrack.value != null) {
                     persistPlaybackState()
@@ -467,9 +474,14 @@ object AuraPlayerManager {
                 notifyTrackStateChanged()
             }
 
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                _isBuffering.value = playWhenReady && player.playbackState == Player.STATE_BUFFERING
+            }
+
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _isBuffering.value = playbackState == Player.STATE_BUFFERING
+                _isBuffering.value = playbackState == Player.STATE_BUFFERING && player.playWhenReady
                 if (playbackState == Player.STATE_READY) {
+                    streamRecoveryAttempts = 0
                     val durMs = player.duration
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
                         _durationSec.value = (durMs / 1000f).coerceAtLeast(1f)
@@ -574,12 +586,17 @@ object AuraPlayerManager {
                 Log.e(TAG, "ExoPlayer error: ${error.message}", error)
                 if (_isVideoMode.value) {
                     _isVideoLoading.value = false
+                    _isBuffering.value = false
                     Log.w(TAG, "Video playback failed; restoring the original audio track")
                     (originalAudioTrack ?: _currentTrack.value)?.let { onVideoUnavailableCallback?.invoke(it) }
                     switchToAudioMode()
                     return
                 }
-                val failedVid = _currentTrack.value?.videoId ?: return
+                val failedVid = _currentTrack.value?.videoId
+                if (failedVid == null) {
+                    _isBuffering.value = false
+                    return
+                }
                 if (failedVid.startsWith("spotify_pending") || _currentTrack.value?.isPendingResolution == true) {
                     _currentTrack.value?.let { pending ->
                         scope.launch {
@@ -590,6 +607,7 @@ object AuraPlayerManager {
                                 }
                             } else {
                                 withContext(Dispatchers.Main) {
+                                    _isBuffering.value = false
                                     skipToNext(recordSkip = false)
                                 }
                             }
@@ -597,12 +615,26 @@ object AuraPlayerManager {
                     }
                     return
                 }
+                if (streamRecoveryTrackId != failedVid) {
+                    streamRecoveryTrackId = failedVid
+                    streamRecoveryAttempts = 0
+                }
+                if (streamRecoveryAttempts >= MAX_STREAM_RECOVERY_ATTEMPTS) {
+                    Log.w(TAG, "Stream recovery exhausted ($MAX_STREAM_RECOVERY_ATTEMPTS attempts) for $failedVid")
+                    player.pause()
+                    _isBuffering.value = false
+                    _isPlaying.value = false
+                    return
+                }
+                streamRecoveryAttempts++
                 SimpMusicExtractorEngine.invalidateStream(failedVid)
                 // Automatic SimpMusic stream recovery
                 scope.launch {
                     delay(350)
-                    player.prepare()
-                    player.play()
+                    if (_currentTrack.value?.videoId == failedVid && !_isVideoMode.value) {
+                        player.prepare()
+                        player.play()
+                    }
                 }
             }
         })
@@ -647,6 +679,8 @@ object AuraPlayerManager {
         originalAudioQueue = null
         originalAudioIndex = -1
         _isVideoMode.value = false
+        streamRecoveryTrackId = null
+        streamRecoveryAttempts = 0
 
         val rawNewQueue = newQueue?.map(::withOfflineArtwork)
         val effectiveTrack = withOfflineArtwork(track)
@@ -806,6 +840,7 @@ object AuraPlayerManager {
         fadeJob?.cancel()
         val targetVol = baseVolume
         if (player.playbackState == Player.STATE_IDLE) {
+            streamRecoveryAttempts = 0
             player.prepare()
         }
         player.volume = 0f
@@ -824,10 +859,17 @@ object AuraPlayerManager {
 
     fun togglePlayPause() {
         val player = exoPlayer ?: return
-        if (player.isPlaying) {
-            pauseWithFadeOut()
-        } else {
-            playWithFadeIn()
+        when {
+            player.isPlaying -> pauseWithFadeOut()
+            player.playWhenReady && player.playbackState == Player.STATE_BUFFERING -> {
+                fadeJob?.cancel()
+                cancelCrossfade()
+                player.volume = baseVolume
+                player.pause()
+                _isBuffering.value = false
+                _isPlaying.value = false
+            }
+            else -> playWithFadeIn()
         }
     }
 
@@ -1168,6 +1210,8 @@ object AuraPlayerManager {
         } ?: index.takeIf { it in 0 until player.mediaItemCount }
 
         if (mediaIndex != null) {
+            streamRecoveryTrackId = null
+            streamRecoveryAttempts = 0
             _currentTrack.value = target
             _positionSec.value = 0f
             _bufferedSec.value = 0f
@@ -2558,6 +2602,14 @@ object AuraPlayerManager {
 
                 val player = exoPlayer
                 if (player != null) {
+                    val isResolvingPendingTrack = _currentTrack.value?.isPendingResolution == true
+                    if (_isBuffering.value && (
+                            player.isPlaying ||
+                                (!isResolvingPendingTrack && (!player.playWhenReady || player.playbackState == Player.STATE_READY))
+                            )
+                    ) {
+                        _isBuffering.value = false
+                    }
                     val posSec = (player.currentPosition / 1000f).coerceAtLeast(0f)
                     val bufSec = (player.bufferedPosition / 1000f).coerceAtLeast(0f)
                     _positionSec.value = posSec

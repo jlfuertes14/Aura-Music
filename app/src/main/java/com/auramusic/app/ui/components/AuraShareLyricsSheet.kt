@@ -19,7 +19,6 @@ import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,7 +32,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -50,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -68,6 +65,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,10 +91,10 @@ import java.io.File
 import java.io.FileOutputStream
 
 private enum class LyricCardTheme(val label: String) {
-    ARTWORK_GRADIENT("Artwork Gradient"),
-    DEEP_OBSIDIAN("Deep Obsidian"),
-    WARM_CREAM("Warm Cream"),
-    FROSTED_ACCENT("Frosted Accent")
+    ARTWORK_GRADIENT("Artwork"),
+    DEEP_OBSIDIAN("Dark"),
+    WARM_CREAM("Cream"),
+    FROSTED_ACCENT("Accent")
 }
 
 private const val MAX_SELECTED_LYRIC_LINES = 6
@@ -102,7 +103,7 @@ private const val CARD_HEIGHT_PX = 1350
 private val CardEase = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 
 /**
- * Bottom sheet allowing users to pick up to 6 consecutive lyric lines, choose one of 4 curated
+ * Bottom sheet allowing users to pick up to 6 consecutive lyric lines, choose one of 4
  * visual card themes, preview the card, and export a 1080x1350 PNG via [FileProvider].
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -114,7 +115,6 @@ fun AuraShareLyricsSheet(
     onDismiss: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -187,21 +187,23 @@ fun AuraShareLyricsSheet(
                         Icon(
                             imageVector = Icons.Rounded.FormatQuote,
                             contentDescription = null,
-                            tint = accentTint,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column {
                         Text(
-                            text = "Share Lyric Card",
+                            text = "Share Lyrics",
                             style = MaterialTheme.typography.titleMedium,
                             color = auraColors.textPrimary,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Tap up to $MAX_SELECTED_LYRIC_LINES consecutive lines (${selectedLines.size}/$MAX_SELECTED_LYRIC_LINES)",
-                            style = MaterialTheme.typography.bodySmall,
+                            text = "${selectedLines.size} / $MAX_SELECTED_LYRIC_LINES",
+                            style = MaterialTheme.typography.bodySmall.merge(
+                                TextStyle(fontFeatureSettings = "tnum")
+                            ),
                             color = auraColors.textSecondary
                         )
                     }
@@ -212,7 +214,7 @@ fun AuraShareLyricsSheet(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close Share Lyric Card",
+                        contentDescription = "Close Share Lyrics",
                         tint = auraColors.textSecondary
                     )
                 }
@@ -220,7 +222,6 @@ fun AuraShareLyricsSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Live miniature preview of the shareable card
             LyricCardPreview(
                 track = track,
                 selectedLines = selectedLines,
@@ -230,46 +231,56 @@ fun AuraShareLyricsSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // 4 Background Theme Pills (borderless)
+            // 4 compact theme dots (borderless selection ring)
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 LyricCardTheme.entries.forEach { theme ->
                     val isSelected = theme == selectedTheme
-                    Surface(
-                        onClick = { selectedTheme = theme },
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) auraColors.accent else auraColors.pillInactiveBg,
-                        modifier = Modifier.heightIn(min = 40.dp)
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .clickable(role = Role.RadioButton) { selectedTheme = theme }
+                            .semantics { contentDescription = theme.label },
+                        contentAlignment = Alignment.Center
                     ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                        Box(
+                            modifier = Modifier
+                                .size(34.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    if (isSelected) auraColors.textPrimary else Color.Transparent
+                                )
+                                .padding(2.dp),
+                            contentAlignment = Alignment.Center
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(12.dp)
+                                    .size(30.dp)
                                     .clip(CircleShape)
-                                    .background(themeSwatchColor(theme, palette))
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = theme.label,
-                                color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
-                                fontSize = 12.5.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                                    .background(
+                                        if (isSelected) auraColors.sheetBackground else Color.Transparent
+                                    )
+                                    .padding(2.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(themeSwatchColor(theme, palette))
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
-            // Selectable lyric lines list
             if (selectableLines.isEmpty()) {
                 Box(
                     modifier = Modifier
@@ -278,7 +289,7 @@ fun AuraShareLyricsSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No lyric lines available for this track.",
+                        text = "No lyrics available",
                         color = auraColors.textSecondary,
                         style = MaterialTheme.typography.bodyMedium
                     )
@@ -293,11 +304,7 @@ fun AuraShareLyricsSheet(
                     itemsIndexed(selectableLines) { idx, lineText ->
                         val isLineSelected = selectedRange?.contains(idx) == true
                         val rowBg by animateColorAsState(
-                            targetValue = if (isLineSelected) {
-                                auraColors.accent.copy(alpha = if (auraColors.isDark) 0.16f else 0.18f)
-                            } else {
-                                Color.Transparent
-                            },
+                            targetValue = if (isLineSelected) auraColors.surfaceCard else Color.Transparent,
                             animationSpec = tween(durationMillis = 180, easing = CardEase),
                             label = "lyricLineBg"
                         )
@@ -329,7 +336,7 @@ fun AuraShareLyricsSheet(
                                 Icon(
                                     imageVector = Icons.Rounded.Check,
                                     contentDescription = "Selected line",
-                                    tint = accentTint,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(18.dp)
                                 )
                             }
@@ -361,7 +368,7 @@ fun AuraShareLyricsSheet(
                         }.onFailure { err ->
                             Toast.makeText(
                                 context,
-                                "Unable to share lyric card: ${err.message ?: "unknown error"}",
+                                "Unable to share: ${err.message ?: "unknown error"}",
                                 Toast.LENGTH_SHORT
                             ).show()
                         }
@@ -387,7 +394,7 @@ fun AuraShareLyricsSheet(
                         modifier = Modifier.size(20.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
-                    Text("Rendering Card…", fontWeight = FontWeight.Bold)
+                    Text("Sharing…", fontWeight = FontWeight.Bold)
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.Share,
@@ -395,7 +402,7 @@ fun AuraShareLyricsSheet(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text("Share Lyric Card", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Text("Share", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                 }
             }
         }
@@ -467,7 +474,7 @@ private fun LyricCardPreview(
             Spacer(modifier = Modifier.height(14.dp))
 
             val displayText = if (selectedLines.isEmpty()) {
-                "Select up to 6 lines below…"
+                "Tap lines below"
             } else {
                 selectedLines.joinToString("\n")
             }
@@ -611,7 +618,7 @@ private fun launchShareIntent(context: Context, file: File, track: AuraTrack) {
             putExtra(Intent.EXTRA_TEXT, "${track.title} — ${track.artist}")
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        val chooser = Intent.createChooser(shareIntent, "Share Lyric Card").apply {
+        val chooser = Intent.createChooser(shareIntent, "Share Lyrics").apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
         context.startActivity(chooser)

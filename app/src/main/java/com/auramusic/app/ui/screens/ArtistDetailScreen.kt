@@ -438,7 +438,7 @@ fun ArtistDetailScreen(
                                                     Icon(
                                                         imageVector = Icons.Rounded.PlayArrow,
                                                         contentDescription = "Play",
-                                                        tint = AuraNeonLime,
+                                                        tint = Color.White,
                                                         modifier = Modifier
                                                             .padding(6.dp)
                                                             .fillMaxSize()

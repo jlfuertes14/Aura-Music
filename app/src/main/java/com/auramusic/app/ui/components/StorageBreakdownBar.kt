@@ -61,13 +61,13 @@ fun StorageBreakdownBar(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = "Storage Footprint",
+                text = "Storage",
                 color = auraColors.textPrimary,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.SemiBold
             )
             Text(
-                text = "${formatStorageBytes(totalBytes)} used",
+                text = formatStorageBytes(totalBytes),
                 color = auraColors.textSecondary,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,

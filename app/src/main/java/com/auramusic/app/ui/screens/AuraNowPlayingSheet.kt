@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -943,28 +944,28 @@ private fun AuraNowPlayingOptionsSheet(
             )
             OptionsSheetRow(
                 icon = Icons.Rounded.SpeakerGroup,
-                label = "Audio Output Device",
+                label = "Audio Output",
                 onClick = onOpenOutputRouter
             )
             OptionsSheetRow(
                 icon = Icons.Rounded.Info,
-                label = "Track Info & Stats for Nerds",
+                label = "Track Info",
                 onClick = onOpenTrackInfo
             )
             if (lyricsAvailable) {
                 OptionsSheetRow(
                     icon = Icons.Rounded.Translate,
                     label = when {
-                        isTranslatingLyrics -> "Translating Lyrics…"
-                        hasTranslatedLyrics -> "Hide AI Translation"
-                        else -> "AI Translate Lyrics"
+                        isTranslatingLyrics -> "Translating…"
+                        hasTranslatedLyrics -> "Hide Translation"
+                        else -> "Translate Lyrics"
                     },
                     accentTint = hasTranslatedLyrics,
                     onClick = onTranslateLyrics
                 )
                 OptionsSheetRow(
                     icon = Icons.Rounded.Share,
-                    label = "Share Lyric Card",
+                    label = "Share Lyrics",
                     onClick = onShareLyricsCard
                 )
             }
@@ -974,20 +975,20 @@ private fun AuraNowPlayingOptionsSheet(
 
             OptionsSheetRow(
                 icon = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
-                label = if (isVideoMode) "Switch to Audio Mode" else "Watch Official Video",
+                label = if (isVideoMode) "Switch to Audio" else "Watch Video",
                 onClick = onToggleVideoMode
             )
 
             if (isDownloaded && onRemoveDownload != null) {
                 OptionsSheetRow(
                     icon = Icons.Rounded.DeleteOutline,
-                    label = "Remove from Downloads",
+                    label = "Remove Download",
                     onClick = onRemoveDownload
                 )
             } else if (onDownloadTrack != null) {
                 OptionsSheetRow(
                     icon = if (isDownloaded) Icons.Rounded.DeleteOutline else Icons.Rounded.Download,
-                    label = if (isDownloading) "Downloading…" else if (isDownloaded) "Remove from Downloads" else "Download Song",
+                    label = if (isDownloading) "Downloading…" else if (isDownloaded) "Remove Download" else "Download",
                     onClick = {
                         if (isDownloaded && onRemoveDownload != null) onRemoveDownload() else onDownloadTrack()
                     }
@@ -1003,7 +1004,7 @@ private fun AuraNowPlayingOptionsSheet(
             val nextThemeLabel = if (currentStyle == NowPlayingStyle.SPOTIFY) "Liquid Glass" else "Default"
             OptionsSheetRow(
                 icon = Icons.Rounded.Palette,
-                label = "Switch Theme to $nextThemeLabel",
+                label = "Switch to $nextThemeLabel",
                 onClick = onToggleTheme
             )
 
@@ -1012,7 +1013,7 @@ private fun AuraNowPlayingOptionsSheet(
             val nextLyricsProvider = providers[(curIdx + 1).mod(providers.size)]
             OptionsSheetRow(
                 icon = Icons.Rounded.Lyrics,
-                label = "Switch Lyrics Provider ($mainLyricsProvider → $nextLyricsProvider)",
+                label = "Lyrics Source: $mainLyricsProvider",
                 onClick = { onSwitchLyricsProvider(nextLyricsProvider) }
             )
 
@@ -1030,7 +1031,7 @@ private fun AuraNowPlayingOptionsSheet(
             )
             OptionsSheetRow(
                 icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (isFavorite) "Remove from Liked Songs" else "Add to Liked Songs",
+                label = if (isFavorite) "Remove from Liked" else "Like Song",
                 onClick = onToggleFavorite
             )
             OptionsSheetRow(
@@ -1061,7 +1062,6 @@ private fun OptionsSheetRow(
     accentTint: Boolean = false,
     onClick: () -> Unit
 ) {
-    val tint = if (accentTint) AuraNeonLime else Color.White
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1073,16 +1073,26 @@ private fun OptionsSheetRow(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = tint,
+            tint = Color.White,
             modifier = Modifier.size(22.dp)
         )
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = label,
-            color = tint,
+            color = Color.White,
             fontWeight = FontWeight.Medium,
-            fontSize = 15.sp
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1f)
         )
+        if (accentTint) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(AuraNeonLime)
+            )
+        }
     }
 }
 

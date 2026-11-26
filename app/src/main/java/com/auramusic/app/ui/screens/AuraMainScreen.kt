@@ -406,8 +406,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         viewModel.consumePendingDeepLinkTab()
     }
 
-    LaunchedEffect(deepLinkExpandPlayer) {
-        if (deepLinkExpandPlayer) {
+    LaunchedEffect(deepLinkExpandPlayer, currentTrack != null) {
+        if (deepLinkExpandPlayer && currentTrack != null) {
             expandFullPlayer()
             viewModel.consumeDeepLinkExpandPlayer()
         }
@@ -1767,7 +1767,7 @@ private fun AuraMiniPlayer(
                             contentAlignment = Alignment.Center
                         ) {
                             val playTint = if (liquidGlassEnabled) foregroundColor else lighterProgressColor.contrastInk()
-                            if (isBuffering) {
+                            if (isBuffering && !isPlaying) {
                                 CircularProgressIndicator(
                                     color = playTint,
                                     strokeWidth = 2.dp,

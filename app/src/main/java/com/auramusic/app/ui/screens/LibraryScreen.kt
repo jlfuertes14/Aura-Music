@@ -329,7 +329,7 @@ fun LibraryScreen(
                         Icon(
                             imageVector = Icons.Rounded.Link,
                             contentDescription = null,
-                            tint = auraColors.accent,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -550,7 +550,7 @@ fun LibraryScreen(
                                 Spacer(Modifier.height(10.dp))
                                 LibraryOverviewTile(
                                     title = "Cached",
-                                    subtitle = "${cachedTracks.size} cached stream tracks",
+                                    subtitle = "${cachedTracks.size} songs",
                                     tracks = cachedTracks.take(3),
                                     modifier = Modifier.fillMaxWidth().height(104.dp),
                                     onClick = {
@@ -559,7 +559,7 @@ fun LibraryScreen(
                                     }
                                 )
                                 Spacer(Modifier.height(10.dp))
-                                // Listening Insights & Wrapped Card (clean borderless Library card, no star icon)
+                                // Stats & Wrapped Card
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -577,20 +577,20 @@ fun LibraryScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.BarChart,
                                             contentDescription = null,
-                                            tint = auraColors.accent,
+                                            tint = auraColors.textPrimary,
                                             modifier = Modifier.size(22.dp)
                                         )
                                         Spacer(Modifier.width(12.dp))
                                         Column {
                                             Text(
-                                                text = "Listening Insights & Wrapped",
+                                                text = "Stats",
                                                 color = auraColors.textPrimary,
                                                 fontSize = 14.5.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
                                             Spacer(Modifier.height(2.dp))
                                             Text(
-                                                text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays · Receipt & Story",
+                                                text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays",
                                                 color = auraColors.textSecondary,
                                                 fontSize = 12.sp,
                                                 maxLines = 1,
@@ -600,8 +600,8 @@ fun LibraryScreen(
                                     }
                                     Icon(
                                         imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                        contentDescription = "Open Listening Insights & Wrapped",
-                                        tint = auraColors.accent,
+                                        contentDescription = "Open Stats",
+                                        tint = auraColors.textSecondary,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
@@ -612,7 +612,7 @@ fun LibraryScreen(
                         }
                         if (uniqueRecent.isEmpty()) {
                             item(key = "empty_tracks") {
-                                EmptyVaultMessage("No recently played songs yet. Play tracks to see them here.")
+                                EmptyVaultMessage("No recently played songs yet.")
                             }
                         } else items(uniqueRecent, key = { "recent_${it.videoId.ifBlank { it.id }}" }) { track ->
                             val isFav = favorites.any { it.videoId == track.videoId }
@@ -636,7 +636,7 @@ fun LibraryScreen(
             }
             1 -> {
                 if (playlists.isEmpty()) {
-                    EmptyVaultMessage("No playlists created or imported yet.")
+                    EmptyVaultMessage("No playlists yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(playlists, key = { it.id }) { playlist ->
@@ -651,7 +651,7 @@ fun LibraryScreen(
             }
             2 -> {
                 if (musicFavorites.isEmpty()) {
-                    EmptyVaultMessage("No liked songs yet. Tap the heart on any song to save it here.")
+                    EmptyVaultMessage("No liked songs yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(musicFavorites, key = { it.videoId }) { track ->
@@ -684,7 +684,7 @@ fun LibraryScreen(
                 }
 
                 if (podcastShows.isEmpty() && podcastEpisodes.isEmpty()) {
-                    EmptyVaultMessage("No liked podcasts yet. Tap the heart on any podcast show or episode to save it here.")
+                    EmptyVaultMessage("No liked podcasts yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         if (podcastShows.isNotEmpty()) {
@@ -737,7 +737,7 @@ fun LibraryScreen(
             }
             4 -> {
                 if (downloads.isEmpty()) {
-                    EmptyVaultMessage("No downloaded songs yet. Tap download on any song for offline listening.")
+                    EmptyVaultMessage("No downloaded songs yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(downloads, key = { it.videoId }) { track ->
@@ -762,7 +762,7 @@ fun LibraryScreen(
             }
             5 -> {
                 if (cachedTracks.isEmpty()) {
-                    EmptyVaultMessage("No cached stream tracks yet. Stream songs to cache them for instant playback.")
+                    EmptyVaultMessage("No cached songs yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(cachedTracks, key = { "cached_${it.videoId}" }) { track ->

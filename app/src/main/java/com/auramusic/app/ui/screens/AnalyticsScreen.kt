@@ -210,20 +210,13 @@ fun AnalyticsScreen(
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Stats",
-                            color = auraColors.textPrimary,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = (-0.4).sp
-                        )
-                        Text(
-                            text = "On-device listening replay",
-                            color = auraColors.textSecondary,
-                            fontSize = 12.5.sp
-                        )
-                    }
+                    Text(
+                        text = "Stats",
+                        color = auraColors.textPrimary,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.4).sp
+                    )
                 }
 
                 Row(
@@ -324,15 +317,10 @@ fun AnalyticsScreen(
                     Spacer(modifier = Modifier.height(24.dp))
                 }
 
-                // 4. Borderless Top Tracks
+                // 4. Borderless Top Songs
                 item {
                     SectionHeader(
-                        title = "Top Tracks",
-                        subtitle = if (snapshot.topTracks.isEmpty()) {
-                            "Play songs to build your chart"
-                        } else {
-                            "Tap any track to play"
-                        },
+                        title = "Top Songs",
                         textPrimary = auraColors.textPrimary,
                         textSecondary = auraColors.textSecondary
                     )
@@ -340,7 +328,7 @@ fun AnalyticsScreen(
 
                     if (snapshot.topTracks.isEmpty()) {
                         EmptyInsightNote(
-                            text = "No tracks recorded in this range yet.",
+                            text = "Play a few songs to see your stats",
                             color = auraColors.textMuted
                         )
                     } else {
@@ -377,11 +365,6 @@ fun AnalyticsScreen(
                     val maxArtistPlays = snapshot.topArtists.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
                     SectionHeader(
                         title = "Top Artists",
-                        subtitle = if (snapshot.topArtists.isEmpty()) {
-                            "Your most played artists"
-                        } else {
-                            "${snapshot.topArtists.size} featured"
-                        },
                         textPrimary = auraColors.textPrimary,
                         textSecondary = auraColors.textSecondary
                     )
@@ -389,7 +372,7 @@ fun AnalyticsScreen(
 
                     if (snapshot.topArtists.isEmpty()) {
                         EmptyInsightNote(
-                            text = "No artist plays recorded yet.",
+                            text = "Play a few songs to see your stats",
                             color = auraColors.textMuted
                         )
                     } else {
@@ -422,7 +405,6 @@ fun AnalyticsScreen(
                     val maxGenrePlays = snapshot.topGenres.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
                     SectionHeader(
                         title = "Top Genres",
-                        subtitle = "Sound signature breakdown",
                         textPrimary = auraColors.textPrimary,
                         textSecondary = auraColors.textSecondary
                     )
@@ -430,7 +412,7 @@ fun AnalyticsScreen(
 
                     if (snapshot.topGenres.isEmpty()) {
                         EmptyInsightNote(
-                            text = "No genre data recorded yet.",
+                            text = "Play a few songs to see your stats",
                             color = auraColors.textMuted
                         )
                     } else {
@@ -459,8 +441,7 @@ fun AnalyticsScreen(
                 // 7. Thermal Listening Receipt (Zero border strokes, primary Share button uses accent + onAccent)
                 item {
                     SectionHeader(
-                        title = "Listening Receipt",
-                        subtitle = "Shareable thermal summary",
+                        title = "Receipt",
                         textPrimary = auraColors.textPrimary,
                         textSecondary = auraColors.textSecondary
                     )
@@ -649,23 +630,15 @@ private fun WrappedEditorialBanner(
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = "AURA WRAPPED • ${rangeLabel.uppercase(Locale.US)}",
-                color = bannerAccent,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.9.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "Your Listening Story",
+                text = "Wrapped",
                 color = bannerInk,
-                fontSize = 18.sp,
+                fontSize = 19.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = (-0.2).sp
             )
             Spacer(modifier = Modifier.height(2.dp))
             Text(
-                text = "Chronotype, #1 artist & top 5 anthems",
+                text = "$rangeLabel summary",
                 color = bannerInk.copy(alpha = 0.72f),
                 fontSize = 12.5.sp
             )
@@ -728,7 +701,7 @@ private fun ListeningClockSection(
         ) {
             Column {
                 Text(
-                    text = "24-Hour Listening Clock",
+                    text = "Listening Clock",
                     color = textPrimary,
                     fontSize = 20.sp,
                     fontWeight = FontWeight.Bold,
@@ -736,7 +709,7 @@ private fun ListeningClockSection(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "Peak window: ${peakHourLabel.ifBlank { "No data yet" }}",
+                    text = "Peak: ${peakHourLabel.ifBlank { "—" }}",
                     color = textSecondary,
                     style = TextStyle(
                         fontSize = 13.sp,
@@ -745,9 +718,9 @@ private fun ListeningClockSection(
                 )
             }
             Icon(
-                imageVector = Icons.Rounded.Equalizer,
+                imageVector = Icons.Rounded.BarChart,
                 contentDescription = null,
-                tint = readableAccentText,
+                tint = textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -819,9 +792,9 @@ private fun ListeningClockSection(
 @Composable
 private fun SectionHeader(
     title: String,
-    subtitle: String,
     textPrimary: Color,
-    textSecondary: Color
+    textSecondary: Color,
+    subtitle: String? = null
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Text(
@@ -831,12 +804,14 @@ private fun SectionHeader(
             fontWeight = FontWeight.Bold,
             letterSpacing = (-0.3).sp
         )
-        Spacer(modifier = Modifier.height(2.dp))
-        Text(
-            text = subtitle,
-            color = textSecondary,
-            fontSize = 13.sp
-        )
+        if (!subtitle.isNullOrBlank()) {
+            Spacer(modifier = Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                color = textSecondary,
+                fontSize = 13.sp
+            )
+        }
     }
 }
 
@@ -1217,7 +1192,7 @@ private fun ThermalReceiptCard(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Share Receipt PNG",
+                    text = "Share Receipt",
                     fontSize = 13.5.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -1476,24 +1451,24 @@ private fun WrappedSummarySlide(
     onAccentColor: Color
 ) {
     WrappedSlideLayout(
-        tag = "YOUR ${snapshot.range.label.uppercase(Locale.US)} IN SOUND",
+        tag = "WRAPPED • ${snapshot.range.label.uppercase(Locale.US)}",
         gradient = gradient,
         accentColor = accentColor
     ) { ink, _ ->
-        Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(
-                text = "${formatIntStat(snapshot.totalMinutes)} minutes",
+                text = "${formatIntStat(snapshot.totalMinutes)} min",
                 color = ink,
                 style = TextStyle(
-                    fontSize = 42.sp,
+                    fontSize = 44.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    lineHeight = 46.sp,
+                    lineHeight = 48.sp,
                     letterSpacing = (-1.0).sp,
                     fontFeatureSettings = "tnum"
                 )
             )
             Text(
-                text = "spent locked into your favorite tracks across ${formatIntStat(snapshot.totalPlays)} plays and ${formatIntStat(snapshot.uniqueArtists)} artists.",
+                text = "${formatIntStat(snapshot.totalPlays)} plays · ${formatIntStat(snapshot.uniqueArtists)} artists",
                 color = ink.copy(alpha = 0.80f),
                 style = TextStyle(
                     fontSize = 17.sp,
@@ -1510,7 +1485,7 @@ private fun WrappedSummarySlide(
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Text(
-                        text = "Top Genre: $topGenre",
+                        text = topGenre,
                         color = onAccentColor,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -1532,47 +1507,41 @@ private fun WrappedChronotypeSlide(
     } else {
         21
     }
-    val (chronotypeTitle, chronotypeDesc) = when (peakHour) {
-        in 5..10 -> "The Dawn Listener" to "You start the day early with crisp morning soundtracks before the world wakes up."
-        in 11..16 -> "The Sunlit Curator" to "Afternoon momentum fuels your deepest playlists and discovery sessions."
-        in 17..20 -> "The Golden Hour Groover" to "Sunset transitions and evening commutes are when your speakers shine brightest."
-        else -> "The Midnight Audiophile" to "Late-night quiet lets every bassline and vocal nuance hit harder."
+    val chronotypeTitle = when (peakHour) {
+        in 5..10 -> "Early Bird"
+        in 11..16 -> "Daytime Listener"
+        in 17..20 -> "Evening Listener"
+        else -> "Night Owl"
     }
 
     WrappedSlideLayout(
-        tag = "LISTENING CHRONOTYPE",
+        tag = "PEAK TIME",
         gradient = gradient,
         accentColor = accentColor
-    ) { ink, accentOnSlide ->
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    ) { ink, _ ->
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(
                 imageVector = Icons.Rounded.Schedule,
                 contentDescription = null,
-                tint = accentOnSlide,
-                modifier = Modifier.size(40.dp)
+                tint = ink,
+                modifier = Modifier.size(38.dp)
             )
             Text(
                 text = chronotypeTitle,
                 color = ink,
-                fontSize = 34.sp,
+                fontSize = 36.sp,
                 fontWeight = FontWeight.ExtraBold,
-                lineHeight = 38.sp,
+                lineHeight = 40.sp,
                 letterSpacing = (-0.6).sp
             )
             Text(
                 text = "Peak hour: ${snapshot.peakHourLabel.ifBlank { "Evening" }}",
-                color = accentOnSlide,
+                color = ink.copy(alpha = 0.80f),
                 style = TextStyle(
                     fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontWeight = FontWeight.SemiBold,
                     fontFeatureSettings = "tnum"
                 )
-            )
-            Text(
-                text = chronotypeDesc,
-                color = ink.copy(alpha = 0.80f),
-                fontSize = 16.sp,
-                lineHeight = 23.sp
             )
         }
     }
@@ -1589,16 +1558,16 @@ private fun WrappedTopArtistSlide(
         tag = "#1 ARTIST",
         gradient = gradient,
         accentColor = accentColor
-    ) { ink, accentOnSlide ->
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    ) { ink, _ ->
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Icon(
-                imageVector = Icons.Rounded.Equalizer,
+                imageVector = Icons.Rounded.GraphicEq,
                 contentDescription = null,
-                tint = accentOnSlide,
-                modifier = Modifier.size(40.dp)
+                tint = ink,
+                modifier = Modifier.size(38.dp)
             )
             Text(
-                text = topArtist?.first ?: "Waiting for your #1",
+                text = topArtist?.first ?: "No top artist",
                 color = ink,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.ExtraBold,
@@ -1607,11 +1576,11 @@ private fun WrappedTopArtistSlide(
             )
             Text(
                 text = if (topArtist != null) {
-                    "${topArtist.second} plays in ${snapshot.range.label} — an undisputed staple in your rotation."
+                    "${topArtist.second} plays"
                 } else {
-                    "Keep playing music to crown your top artist."
+                    "Play a few songs to see your stats"
                 },
-                color = ink.copy(alpha = 0.82f),
+                color = ink.copy(alpha = 0.80f),
                 style = TextStyle(
                     fontSize = 16.sp,
                     lineHeight = 23.sp,
@@ -1631,22 +1600,22 @@ private fun WrappedTopTracksSlide(
 ) {
     val topFive = snapshot.topTracks.take(5)
     WrappedSlideLayout(
-        tag = "TOP 5 TRACKS",
+        tag = "TOP SONGS",
         gradient = gradient,
         accentColor = accentColor
     ) { ink, accentOnSlide ->
         Column(modifier = Modifier.fillMaxWidth()) {
             Text(
-                text = "Heavy Rotation",
+                text = "Top 5",
                 color = ink,
-                fontSize = 30.sp,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.ExtraBold,
                 letterSpacing = (-0.5).sp
             )
             Spacer(modifier = Modifier.height(14.dp))
             if (topFive.isEmpty()) {
                 Text(
-                    text = "Play a few tracks to unlock your top 5 countdown.",
+                    text = "Play a few songs to see your stats",
                     color = ink.copy(alpha = 0.72f),
                     fontSize = 15.sp
                 )
@@ -1723,25 +1692,25 @@ private fun WrappedShareSlide(
     onDone: () -> Unit
 ) {
     WrappedSlideLayout(
-        tag = "SHARE YOUR STATS",
+        tag = "RECEIPT",
         gradient = gradient,
         accentColor = accentColor
-    ) { ink, accentOnSlide ->
+    ) { ink, _ ->
         Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text(
-                text = "Take your sound receipt anywhere",
+                text = "Share your stats",
                 color = ink,
-                fontSize = 32.sp,
+                fontSize = 34.sp,
                 fontWeight = FontWeight.ExtraBold,
-                lineHeight = 36.sp,
+                lineHeight = 38.sp,
                 letterSpacing = (-0.5).sp
             )
             Text(
-                text = "${formatIntStat(snapshot.totalMinutes)} min • ${formatIntStat(snapshot.totalPlays)} plays • Peak ${snapshot.peakHourLabel.ifBlank { "—" }}",
-                color = accentOnSlide,
+                text = "${formatIntStat(snapshot.totalMinutes)} min · ${formatIntStat(snapshot.totalPlays)} plays",
+                color = ink.copy(alpha = 0.80f),
                 style = TextStyle(
-                    fontSize = 14.5.sp,
-                    fontWeight = FontWeight.Bold,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
                     fontFeatureSettings = "tnum"
                 )
             )
@@ -1763,7 +1732,7 @@ private fun WrappedShareSlide(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Share Receipt PNG", fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                Text("Share Receipt", fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
             }
             Button(
                 onClick = onDone,

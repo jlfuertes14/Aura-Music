@@ -55,7 +55,6 @@ fun AuraChartCountryPickerModal(
     onSelectCountry: (String) -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
 
@@ -105,22 +104,14 @@ fun AuraChartCountryPickerModal(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "Select Chart Country",
-                        style = MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        ),
-                        color = auraColors.textPrimary
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Explore official YouTube Music charts for this region",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = auraColors.textSecondary
-                    )
-                }
+                Text(
+                    text = "Chart Country",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    ),
+                    color = auraColors.textPrimary
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -135,7 +126,7 @@ fun AuraChartCountryPickerModal(
                     fontWeight = FontWeight.Normal
                 ),
                 singleLine = true,
-                cursorBrush = SolidColor(accentTint),
+                cursorBrush = SolidColor(auraColors.textPrimary),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp)
@@ -192,11 +183,7 @@ fun AuraChartCountryPickerModal(
             ) {
                 items(filteredCountries, key = { it.first }) { (code, name) ->
                     val isSelected = code.equals(currentCountryCode, ignoreCase = true)
-                    val rowBg = if (isSelected) {
-                        auraColors.accent.copy(alpha = if (auraColors.isDark) 0.14f else 0.18f)
-                    } else {
-                        Color.Transparent
-                    }
+                    val rowBg = if (isSelected) auraColors.surfaceCard else Color.Transparent
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -212,7 +199,7 @@ fun AuraChartCountryPickerModal(
                     ) {
                         Text(
                             text = name,
-                            color = if (isSelected) accentTint else auraColors.textPrimary,
+                            color = auraColors.textPrimary,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 15.sp,
                             modifier = Modifier.weight(1f)
@@ -222,7 +209,7 @@ fun AuraChartCountryPickerModal(
                             Icon(
                                 imageVector = Icons.Rounded.Check,
                                 contentDescription = "Selected country",
-                                tint = accentTint,
+                                tint = auraColors.textPrimary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }

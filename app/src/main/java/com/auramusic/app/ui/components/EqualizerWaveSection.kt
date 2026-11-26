@@ -150,7 +150,7 @@ fun EqualizerWaveSection(
                             Icon(
                                 imageVector = Icons.Rounded.KeyboardArrowDown,
                                 contentDescription = "Select Preset",
-                                tint = accentTint,
+                                tint = auraColors.textSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -167,7 +167,7 @@ fun EqualizerWaveSection(
                                         Column {
                                             Text(
                                                 text = preset.name,
-                                                color = if (isSelected) accentTint else auraColors.textPrimary,
+                                                color = auraColors.textPrimary,
                                                 fontSize = 13.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                             )
@@ -183,7 +183,7 @@ fun EqualizerWaveSection(
                                             Icon(
                                                 imageVector = Icons.Rounded.Check,
                                                 contentDescription = null,
-                                                tint = accentTint,
+                                                tint = auraColors.textPrimary,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         } else {
@@ -244,7 +244,7 @@ fun EqualizerWaveSection(
                     onValueChangeFinished = { draftPreamp?.let(onPreampChange) },
                     valueRange = PREAMP_MIN_DB..0f,
                     colors = SliderDefaults.colors(
-                        thumbColor = accentTint,
+                        thumbColor = auraColors.textPrimary,
                         activeTrackColor = accentTint,
                         inactiveTrackColor = auraColors.pillInactiveBg
                     ),
@@ -346,20 +346,20 @@ fun EqualizerWaveSection(
                         Icon(
                             imageVector = Icons.Rounded.Headphones,
                             contentDescription = null,
-                            tint = if (activeAutoEqProfile != null) accentTint else auraColors.textSecondary,
+                            tint = if (activeAutoEqProfile != null) auraColors.textPrimary else auraColors.textSecondary,
                             modifier = Modifier.size(20.dp)
                         )
                         Column {
                             Text(
-                                text = "AutoEq Headphone Profile",
+                                text = "Headphone Profile",
                                 fontSize = 11.5.sp,
                                 color = auraColors.textSecondary,
                                 fontWeight = FontWeight.Medium
                             )
                             Text(
-                                text = activeAutoEqProfile?.name ?: "None (Manual)",
+                                text = activeAutoEqProfile?.name ?: "None",
                                 fontSize = 14.sp,
-                                color = if (activeAutoEqProfile != null) accentTint else auraColors.textPrimary,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -368,8 +368,8 @@ fun EqualizerWaveSection(
                     }
                     Icon(
                         imageVector = Icons.Rounded.KeyboardArrowDown,
-                        contentDescription = "Select AutoEq Headphone Profile",
-                        tint = accentTint,
+                        contentDescription = "Select Headphone Profile",
+                        tint = auraColors.textSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -399,7 +399,6 @@ fun AutoEqProfilePickerSheet(
     containerColor: Color = auraGlassSheetColor(LocalAuraColors.current.sheetBackground)
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
     val filteredProfiles = remember(profiles, searchQuery) {
@@ -441,23 +440,17 @@ fun AutoEqProfilePickerSheet(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "AutoEq Headphone Profile",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = auraColors.textPrimary,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Harman target compensation for popular IEMs & headphones",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = auraColors.textSecondary
-                    )
-                }
+                Text(
+                    text = "Headphone Profile",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = auraColors.textPrimary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
                 IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
-                        contentDescription = "Close AutoEq Picker",
+                        contentDescription = "Close Headphone Profile",
                         tint = auraColors.textSecondary
                     )
                 }
@@ -475,7 +468,7 @@ fun AutoEqProfilePickerSheet(
                     fontWeight = FontWeight.Normal
                 ),
                 singleLine = true,
-                cursorBrush = SolidColor(accentTint),
+                cursorBrush = SolidColor(auraColors.textPrimary),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(44.dp)
@@ -497,7 +490,7 @@ fun AutoEqProfilePickerSheet(
                         Box(modifier = Modifier.weight(1f)) {
                             if (searchQuery.isEmpty()) {
                                 Text(
-                                    text = "Search headphones or IEMs…",
+                                    text = "Search headphones…",
                                     color = auraColors.textSecondary,
                                     fontSize = 13.5.sp
                                 )
@@ -532,8 +525,8 @@ fun AutoEqProfilePickerSheet(
                 item(key = "__none__") {
                     val isNoneSelected = activeProfileId.isNullOrBlank()
                     AutoEqProfileRow(
-                        title = "None (Manual)",
-                        subtitle = "Use your manual 10-band EQ curve without AutoEq compensation",
+                        title = "None",
+                        subtitle = null,
                         isSelected = isNoneSelected,
                         onClick = { onSelectProfile(null) }
                     )
@@ -541,7 +534,7 @@ fun AutoEqProfilePickerSheet(
 
                 items(filteredProfiles, key = { it.id }) { profile ->
                     val isSelected = activeProfileId == profile.id
-                    val preampLabel = String.format(Locale.US, "%.1f dB preamp", profile.preampDb)
+                    val preampLabel = String.format(Locale.US, "%.1f dB", profile.preampDb)
                     AutoEqProfileRow(
                         title = profile.name,
                         subtitle = "${profile.source} · $preampLabel",
@@ -557,13 +550,12 @@ fun AutoEqProfilePickerSheet(
 @Composable
 private fun AutoEqProfileRow(
     title: String,
-    subtitle: String,
+    subtitle: String?,
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
-    val selectedBg = auraColors.accent.copy(alpha = if (auraColors.isDark) 0.14f else 0.18f)
+    val selectedBg = auraColors.surfaceCard
 
     Row(
         modifier = Modifier
@@ -579,27 +571,29 @@ private fun AutoEqProfileRow(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
-                color = if (isSelected) accentTint else auraColors.textPrimary,
+                color = auraColors.textPrimary,
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = subtitle,
-                color = auraColors.textSecondary,
-                fontSize = 11.5.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = auraColors.textSecondary,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
         }
         if (isSelected) {
             Spacer(modifier = Modifier.width(8.dp))
             Icon(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = "Selected",
-                tint = accentTint,
+                tint = auraColors.textPrimary,
                 modifier = Modifier.size(18.dp)
             )
         }

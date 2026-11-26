@@ -72,7 +72,6 @@ fun AuraCommentsBottomSheet(
     onDismiss: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -170,7 +169,7 @@ fun AuraCommentsBottomSheet(
                 when {
                     isLoading && (page == null || page.comments.isEmpty()) -> CircularProgressIndicator(
                         modifier = Modifier.align(Alignment.Center),
-                        color = accentTint,
+                        color = auraColors.textPrimary,
                         strokeWidth = 2.dp
                     )
                     error != null && page == null -> Column(
@@ -179,10 +178,10 @@ fun AuraCommentsBottomSheet(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(error, color = auraColors.textSecondary)
-                        TextButton(onClick = onRetry) { Text("Retry", color = accentTint) }
+                        TextButton(onClick = onRetry) { Text("Retry", color = auraColors.textPrimary) }
                     }
                     page?.commentsDisabled == true || (page != null && page.comments.isEmpty()) -> Text(
-                        if (page?.commentsDisabled == true) "Comments are turned off for this video." else "No comments to show yet.",
+                        if (page?.commentsDisabled == true) "Comments are off" else "No comments yet",
                         color = auraColors.textSecondary,
                         modifier = Modifier.align(Alignment.Center)
                     )
@@ -199,11 +198,11 @@ fun AuraCommentsBottomSheet(
                                 if (isLoading) {
                                     CircularProgressIndicator(
                                         Modifier.size(16.dp),
-                                        color = accentTint,
+                                        color = auraColors.textPrimary,
                                         strokeWidth = 2.dp
                                     )
                                 } else {
-                                    Text("Load more comments", color = accentTint)
+                                    Text("Load more", color = auraColors.textPrimary)
                                 }
                             }
                         }
@@ -221,7 +220,6 @@ private fun CommentThreadItem(
     onLoadMoreReplies: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val hasReplies = comment.replyCountText.isNotBlank() ||
         comment.repliesContinuation != null ||
         comment.replies.isNotEmpty()
@@ -248,13 +246,13 @@ private fun CommentThreadItem(
                 Icon(
                     imageVector = if (comment.isRepliesExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                     contentDescription = if (comment.isRepliesExpanded) "Hide replies" else "Show replies",
-                    tint = accentTint,
+                    tint = auraColors.textPrimary,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
                     text = if (comment.isRepliesExpanded) "Hide replies" else comment.replyCountText.ifBlank { "View replies" },
-                    color = accentTint,
+                    color = auraColors.textPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -289,8 +287,8 @@ private fun CommentThreadItem(
                     }
                 } else if (comment.repliesNextContinuation != null) {
                     Text(
-                        text = "Show more replies",
-                        color = accentTint,
+                        text = "More replies",
+                        color = auraColors.textPrimary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
@@ -421,9 +419,9 @@ private fun CommentBodyRow(
                     } else {
                         Text(
                             text = if (isShowingTranslated && !translatedText.isNullOrBlank()) {
-                                "See original (Translated by Google)"
+                                "See original"
                             } else {
-                                "Translate to English"
+                                "Translate"
                             },
                             color = auraColors.textSecondary,
                             fontSize = 12.sp,

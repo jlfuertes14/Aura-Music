@@ -59,7 +59,6 @@ fun AuraOutputSheet(
     onDismiss: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -103,24 +102,17 @@ fun AuraOutputSheet(
                         Icon(
                             imageVector = Icons.Rounded.Speaker,
                             contentDescription = null,
-                            tint = accentTint,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Audio Output",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = auraColors.textPrimary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Choose playback route for Aura",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = auraColors.textSecondary
-                        )
-                    }
+                    Text(
+                        text = "Audio Output",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = auraColors.textPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
@@ -138,9 +130,8 @@ fun AuraOutputSheet(
             OutputDeviceRow(
                 icon = Icons.Rounded.PhoneAndroid,
                 title = "System Default",
-                subtitle = "Follow Android active media route",
+                typeLabel = null,
                 isSelected = selectedDeviceId == null,
-                badge = if (selectedDeviceId == null) "Default" else null,
                 onClick = {
                     onSelectDevice(null)
                     onDismiss()
@@ -161,7 +152,7 @@ fun AuraOutputSheet(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No additional audio routes detected",
+                        text = "No other devices",
                         color = auraColors.textSecondary,
                         fontSize = 13.sp
                     )
@@ -175,13 +166,12 @@ fun AuraOutputSheet(
                 ) {
                     items(devices, key = { it.id }) { device ->
                         val isExplicitSelected = selectedDeviceId == device.id
-                        val icon = resolveOutputIcon(device)
+                        val shortType = resolveShortTypeLabel(device)
                         OutputDeviceRow(
-                            icon = icon,
-                            title = device.name.ifBlank { device.typeLabel },
-                            subtitle = device.typeLabel,
+                            icon = resolveOutputIcon(device),
+                            title = device.name.ifBlank { shortType },
+                            typeLabel = shortType,
                             isSelected = isExplicitSelected,
-                            badge = if (!isExplicitSelected && device.isActive) "Active" else null,
                             onClick = {
                                 onSelectDevice(device)
                                 onDismiss()
@@ -194,12 +184,20 @@ fun AuraOutputSheet(
     }
 }
 
+private fun resolveShortTypeLabel(device: AudioOutputDevice): String = when {
+    device.isBluetooth -> "Bluetooth"
+    device.isSpeaker -> "Speaker"
+    device.typeLabel.contains("USB", ignoreCase = true) -> "USB"
+    device.typeLabel.contains("HDMI", ignoreCase = true) -> "HDMI"
+    device.isWired -> "Wired"
+    else -> "Audio"
+}
+
 private fun resolveOutputIcon(device: AudioOutputDevice): ImageVector = when {
     device.isBluetooth -> Icons.Rounded.BluetoothAudio
     device.isWired -> Icons.Rounded.Headphones
     device.typeLabel.contains("USB", ignoreCase = true) ||
         device.typeLabel.contains("HDMI", ignoreCase = true) -> Icons.Rounded.Usb
-    device.isSpeaker -> Icons.Rounded.Speaker
     else -> Icons.Rounded.Speaker
 }
 
@@ -207,18 +205,12 @@ private fun resolveOutputIcon(device: AudioOutputDevice): ImageVector = when {
 private fun OutputDeviceRow(
     icon: ImageVector,
     title: String,
-    subtitle: String,
+    typeLabel: String?,
     isSelected: Boolean,
-    badge: String?,
     onClick: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
-    val rowBg = if (isSelected) {
-        auraColors.accent.copy(alpha = if (auraColors.isDark) 0.14f else 0.18f)
-    } else {
-        Color.Transparent
-    }
+    val rowBg = if (isSelected) auraColors.surfaceCard else Color.Transparent
 
     Row(
         modifier = Modifier
@@ -239,13 +231,13 @@ private fun OutputDeviceRow(
                 modifier = Modifier
                     .size(38.dp)
                     .clip(CircleShape)
-                    .background(if (isSelected) auraColors.accent else auraColors.circleButtonBg),
+                    .background(auraColors.circleButtonBg),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = icon,
                     contentDescription = null,
-                    tint = if (isSelected) auraColors.onAccent else auraColors.textPrimary,
+                    tint = auraColors.textPrimary,
                     modifier = Modifier.size(19.dp)
                 )
             }
@@ -259,29 +251,17 @@ private fun OutputDeviceRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(2.dp))
-                Text(
-                    text = subtitle,
-                    color = auraColors.textSecondary,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (!typeLabel.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = typeLabel,
+                        color = auraColors.textSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-        }
-
-        if (badge != null) {
-            Text(
-                text = badge,
-                color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.SemiBold,
-                modifier = Modifier
-                    .padding(start = 8.dp)
-                    .clip(CircleShape)
-                    .background(if (isSelected) auraColors.accent else auraColors.pillInactiveBg)
-                    .padding(horizontal = 9.dp, vertical = 4.dp)
-            )
         }
 
         if (isSelected) {
@@ -289,7 +269,7 @@ private fun OutputDeviceRow(
             Icon(
                 imageVector = Icons.Rounded.Check,
                 contentDescription = "Selected route",
-                tint = accentTint,
+                tint = auraColors.textPrimary,
                 modifier = Modifier.size(20.dp)
             )
         }

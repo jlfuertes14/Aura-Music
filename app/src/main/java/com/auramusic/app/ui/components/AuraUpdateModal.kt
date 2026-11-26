@@ -116,7 +116,6 @@ fun AuraUpdateModal(
         if (release == null) return@AnimatedVisibility
 
         val auraColors = LocalAuraColors.current
-        val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
         val canvasBg = auraColors.groupedBackground
         val sheetSurfaceBg = auraColors.surface
         val context = LocalContext.current
@@ -173,29 +172,20 @@ fun AuraUpdateModal(
                     text = "Aura",
                     fontSize = 14.5.sp,
                     fontWeight = FontWeight.Bold,
-                    color = accentTint
+                    color = auraColors.textSecondary
                 )
 
                 Spacer(modifier = Modifier.height(4.dp))
 
                 Text(
-                    text = "New version available",
+                    text = "Update Available",
                     fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     color = auraColors.textPrimary,
                     textAlign = TextAlign.Center
                 )
 
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = "Better music. Smoother experience.",
-                    fontSize = 13.5.sp,
-                    color = auraColors.textSecondary,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.2" }
                 val cleanRemote = release.version.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.3" }
@@ -223,7 +213,7 @@ fun AuraUpdateModal(
                         text = "v$cleanRemote",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.ExtraBold,
-                        color = accentTint
+                        color = auraColors.textPrimary
                     )
                     if (formattedDate.isNotBlank()) {
                         Spacer(modifier = Modifier.width(8.dp))
@@ -285,7 +275,6 @@ fun AuraUpdateModal(
 
                         MarkdownChangelogView(
                             content = release.releaseNotes,
-                            accentTint = accentTint,
                             textPrimary = auraColors.textPrimary,
                             textSecondary = auraColors.textSecondary,
                             dividerColor = auraColors.divider
@@ -521,7 +510,6 @@ fun AuraUpdateModal(
 @Composable
 private fun MarkdownChangelogView(
     content: String,
-    accentTint: Color,
     textPrimary: Color,
     textSecondary: Color,
     dividerColor: Color
@@ -573,7 +561,7 @@ private fun MarkdownChangelogView(
                         text = subSection,
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = accentTint,
+                        color = textPrimary,
                         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
                     )
                 }
@@ -593,7 +581,7 @@ private fun MarkdownChangelogView(
                                 .padding(top = 7.dp)
                                 .size(5.dp)
                                 .clip(CircleShape)
-                                .background(accentTint)
+                                .background(textSecondary)
                         )
                         Text(
                             text = cleanBullet,

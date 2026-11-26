@@ -263,7 +263,7 @@ fun AuraCreatePlaylistModal(
                         onValueChange = { description = it },
                         placeholder = {
                             Text(
-                                text = "Description (Optional)",
+                                text = "Description",
                                 color = auraColors.textMuted,
                                 fontSize = 13.sp
                             )

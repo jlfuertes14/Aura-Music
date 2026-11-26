@@ -57,7 +57,6 @@ fun AuraCommunityPlaylistOptionsModal(
     onOpenDetails: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -137,7 +136,7 @@ fun AuraCommunityPlaylistOptionsModal(
             CommunityPlaylistOptionRow(
                 icon = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (isSaved) "Remove from Library" else "Save to Library",
-                iconTint = if (isSaved) accentTint else auraColors.textPrimary,
+                iconTint = auraColors.textPrimary,
                 textColor = auraColors.textPrimary,
                 onClick = {
                     onToggleSave()

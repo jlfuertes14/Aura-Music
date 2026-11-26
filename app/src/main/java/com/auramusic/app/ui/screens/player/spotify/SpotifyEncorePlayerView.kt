@@ -108,7 +108,6 @@ import com.auramusic.app.domain.model.AuraVideoInfo
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.domain.model.PlaybackMode
 import com.auramusic.app.ui.screens.formatDuration
-import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPlayGreen
 import com.auramusic.app.ui.theme.AuraPoppinsFontFamily
 
@@ -296,7 +295,7 @@ internal fun SpotifyEncorePlayerView(
                                     .clip(RoundedCornerShape(50))
                                     .then(
                                         if (isSleepTimerActive) {
-                                            Modifier.background(AuraNeonLime.copy(alpha = 0.16f))
+                                            Modifier.background(Color.White.copy(alpha = 0.16f))
                                         } else {
                                             Modifier
                                         }
@@ -312,7 +311,7 @@ internal fun SpotifyEncorePlayerView(
                                     Icon(
                                         imageVector = Icons.Rounded.Bedtime,
                                         contentDescription = "Sleep Timer",
-                                        tint = if (isSleepTimerActive) AuraNeonLime else Color.White.copy(alpha = 0.88f),
+                                        tint = if (isSleepTimerActive) Color.White else Color.White.copy(alpha = 0.85f),
                                         modifier = Modifier.size(20.dp)
                                     )
                                     if (isSleepTimerActive) {
@@ -322,7 +321,7 @@ internal fun SpotifyEncorePlayerView(
                                         }
                                         Text(
                                             text = badgeLabel,
-                                            color = AuraNeonLime,
+                                            color = Color.White,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -565,7 +564,7 @@ internal fun SpotifyEncorePlayerView(
                                 .clickable(onClick = onTogglePlayPause),
                             contentAlignment = Alignment.Center
                         ) {
-                            if (isBuffering) {
+                            if (isBuffering && !isPlaying) {
                                 CircularProgressIndicator(
                                     color = Color.Black,
                                     strokeWidth = 3.dp,
@@ -655,7 +654,7 @@ internal fun SpotifyEncorePlayerView(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(50))
                                     .background(
-                                        if (isSpeedOrPitchModified) AuraNeonLime.copy(alpha = 0.16f)
+                                        if (isSpeedOrPitchModified) Color.White.copy(alpha = 0.16f)
                                         else Color.White.copy(alpha = 0.08f)
                                     )
                                     .clickable(onClick = onOpenSpeedPitch)
@@ -666,12 +665,12 @@ internal fun SpotifyEncorePlayerView(
                                 Icon(
                                     imageVector = Icons.Rounded.Speed,
                                     contentDescription = "Playback Speed & Pitch",
-                                    tint = if (isSpeedOrPitchModified) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                    tint = if (isSpeedOrPitchModified) Color.White else Color.White.copy(alpha = 0.85f),
                                     modifier = Modifier.size(15.dp)
                                 )
                                 Text(
                                     text = if (isSpeedOrPitchModified) speedLabel else "1x",
-                                    color = if (isSpeedOrPitchModified) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                    color = if (isSpeedOrPitchModified) Color.White else Color.White.copy(alpha = 0.85f),
                                     fontSize = 11.5.sp,
                                     fontWeight = if (isSpeedOrPitchModified) FontWeight.Bold else FontWeight.Medium
                                 )
@@ -684,7 +683,7 @@ internal fun SpotifyEncorePlayerView(
                         ) {
                             Icon(
                                 imageVector = Icons.Rounded.Info,
-                                contentDescription = "Track Info & Stats for Nerds",
+                                contentDescription = "Track Info",
                                 tint = Color.White.copy(alpha = 0.78f),
                                 modifier = Modifier.size(18.dp)
                             )
@@ -787,7 +786,7 @@ internal fun SpotifyEncorePlayerView(
                                                 text = signedOffset,
                                                 fontSize = 11.5.sp,
                                                 fontWeight = FontWeight.SemiBold,
-                                                color = if (lyricsOffsetMs != 0) AuraNeonLime else Color.White,
+                                                color = Color.White,
                                                 textAlign = TextAlign.Center,
                                                 maxLines = 1,
                                                 modifier = Modifier.widthIn(min = 52.dp)
@@ -828,22 +827,22 @@ internal fun SpotifyEncorePlayerView(
                                         }
                                     }
 
-                                    // AI Translate Lyrics Button
+                                    // Translate Lyrics Button
                                     IconButton(
                                         onClick = onTranslateLyrics,
                                         modifier = Modifier.size(34.dp)
                                     ) {
                                         if (isTranslatingLyrics) {
                                             CircularProgressIndicator(
-                                                color = AuraNeonLime,
+                                                color = Color.White,
                                                 strokeWidth = 2.dp,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         } else {
                                             Icon(
                                                 imageVector = Icons.Rounded.Translate,
-                                                contentDescription = "AI Translate Lyrics",
-                                                tint = if (translatedLyricsMap.isNotEmpty()) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                                contentDescription = "Translate Lyrics",
+                                                tint = if (translatedLyricsMap.isNotEmpty()) Color.White else Color.White.copy(alpha = 0.78f),
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -856,21 +855,21 @@ internal fun SpotifyEncorePlayerView(
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Share,
-                                            contentDescription = "Share Lyric Card",
+                                            contentDescription = "Share Lyrics",
                                             tint = Color.White.copy(alpha = 0.85f),
                                             modifier = Modifier.size(17.dp)
                                         )
                                     }
 
-                                    // Lyrics Delayer / Time Setter Toggle Button (SimpMusic)
+                                    // Lyrics Delayer / Time Setter Toggle Button
                                     IconButton(
                                         onClick = { showLyricsOffsetControl = !showLyricsOffsetControl },
                                         modifier = Modifier.size(36.dp)
                                     ) {
                                         Icon(
                                             imageVector = Icons.Rounded.Timer,
-                                            contentDescription = "Lyrics Timing Offset",
-                                            tint = if (lyricsOffsetMs != 0 || showLyricsOffsetControl) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                                            contentDescription = "Lyrics Timing",
+                                            tint = if (lyricsOffsetMs != 0 || showLyricsOffsetControl) Color.White else Color.White.copy(alpha = 0.78f),
                                             modifier = Modifier.size(19.dp)
                                         )
                                     }
@@ -993,7 +992,7 @@ internal fun SpotifyEncorePlayerView(
                                                     text = translatedCurrent,
                                                     fontSize = 13.5.sp,
                                                     fontWeight = FontWeight.SemiBold,
-                                                    color = AuraNeonLime.copy(alpha = 0.92f),
+                                                    color = Color.White.copy(alpha = 0.85f),
                                                     lineHeight = 18.sp
                                                 )
                                             }
@@ -1064,7 +1063,7 @@ private fun PlayerArtistAndDescription(
         ?: artistDetail?.bannerUrl?.takeIf(String::isNotBlank)
         ?: track.highResArtworkUrl
     val description = videoInfo?.description.orEmpty().ifBlank {
-        if (isLoading) "Loading video details…" else "Video description is not available."
+        if (isLoading) "Loading details…" else "No description available."
     }
 
     Column(
@@ -1234,12 +1233,12 @@ private fun ArtistSectionPlaybackHeader(
                 Icon(
                     imageVector = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                     contentDescription = if (isFavorite) "Remove from liked songs" else "Like song",
-                    tint = if (isFavorite) AuraNeonLime else Color.White,
+                    tint = if (isFavorite) AuraPlayGreen else Color.White,
                     modifier = Modifier.size(22.dp)
                 )
             }
             IconButton(onClick = onTogglePlayPause, modifier = Modifier.size(42.dp)) {
-                if (isBuffering) {
+                if (isBuffering && !isPlaying) {
                     CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(20.dp))
                 } else {
                     Icon(

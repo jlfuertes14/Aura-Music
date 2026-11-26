@@ -114,24 +114,17 @@ fun AuraSpeedPitchSheet(
                         Icon(
                             imageVector = Icons.Rounded.Speed,
                             contentDescription = null,
-                            tint = accentTint,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = "Speed & Pitch",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = auraColors.textPrimary,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Fine-tune tempo and key independently",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = auraColors.textSecondary
-                        )
-                    }
+                    Text(
+                        text = "Speed & Pitch",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = auraColors.textPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
@@ -144,25 +137,23 @@ fun AuraSpeedPitchSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Speed header + value badge
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = "PLAYBACK SPEED",
+                    text = "Speed",
                     color = auraColors.textSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 0.8.sp
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
                 Surface(
                     shape = CircleShape,
                     color = if (isSpeedModified) auraColors.accent else auraColors.pillInactiveBg
                 ) {
                     Text(
-                        text = String.format(Locale.US, "%.2fx", clampedSpeed),
+                        text = formatSpeedLabel(clampedSpeed),
                         color = if (isSpeedModified) auraColors.onAccent else auraColors.textPrimary,
                         fontSize = 12.5.sp,
                         fontWeight = FontWeight.Bold,
@@ -181,18 +172,13 @@ fun AuraSpeedPitchSheet(
             ) {
                 SPEED_PRESETS.forEach { preset ->
                     val isSelected = abs(clampedSpeed - preset) < 0.02f
-                    val label = if (preset == 1.0f || preset == 2.0f || preset == 0.5f || preset == 1.5f) {
-                        String.format(Locale.US, "%.1fx", preset)
-                    } else {
-                        String.format(Locale.US, "%.2fx", preset)
-                    }
                     Surface(
                         onClick = { onSpeedChange(preset) },
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) auraColors.accent else auraColors.pillInactiveBg
                     ) {
                         Text(
-                            text = label,
+                            text = formatSpeedLabel(preset),
                             color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold,
@@ -213,7 +199,7 @@ fun AuraSpeedPitchSheet(
                 },
                 valueRange = 0.25f..2.0f,
                 colors = SliderDefaults.colors(
-                    thumbColor = accentTint,
+                    thumbColor = auraColors.textPrimary,
                     activeTrackColor = accentTint,
                     inactiveTrackColor = auraColors.pillInactiveBg
                 ),
@@ -232,7 +218,6 @@ fun AuraSpeedPitchSheet(
             HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Pitch Shift section
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -242,26 +227,24 @@ fun AuraSpeedPitchSheet(
                     Icon(
                         imageVector = Icons.Rounded.GraphicEq,
                         contentDescription = null,
-                        tint = accentTint,
+                        tint = auraColors.textPrimary,
                         modifier = Modifier.size(16.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "PITCH SHIFT",
+                        text = "Pitch",
                         color = auraColors.textSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
                 val pitchLabel = when {
                     clampedPitch > 0 -> "+$clampedPitch st"
-                    clampedPitch < 0 -> "$clampedPitch st"
-                    else -> "0 st (Original)"
+                    else -> "$clampedPitch st"
                 }
                 Text(
                     text = pitchLabel,
-                    color = if (clampedPitch != 0) accentTint else auraColors.textPrimary,
+                    color = auraColors.textPrimary,
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.Bold,
                     style = TextStyle(fontFeatureSettings = "tnum")
@@ -301,7 +284,7 @@ fun AuraSpeedPitchSheet(
                     valueRange = -12f..12f,
                     steps = 23,
                     colors = SliderDefaults.colors(
-                        thumbColor = accentTint,
+                        thumbColor = auraColors.textPrimary,
                         activeTrackColor = accentTint,
                         inactiveTrackColor = auraColors.pillInactiveBg
                     ),
@@ -355,16 +338,25 @@ fun AuraSpeedPitchSheet(
                 Icon(
                     imageVector = Icons.Rounded.RestartAlt,
                     contentDescription = null,
-                    tint = if (isModified) accentTint else auraColors.textMuted,
+                    tint = if (isModified) auraColors.textPrimary else auraColors.textMuted,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Reset to 1.0x & 0 st",
+                    text = "Reset",
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.5.sp
                 )
             }
         }
+    }
+}
+
+private fun formatSpeedLabel(speed: Float): String {
+    val tenths = (speed * 10f).roundToInt() / 10f
+    return if (abs(speed - tenths) < 0.01f) {
+        String.format(Locale.US, "%.1fx", tenths)
+    } else {
+        String.format(Locale.US, "%.2fx", speed)
     }
 }

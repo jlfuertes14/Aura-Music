@@ -594,6 +594,32 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         _deepLinkExpandPlayer.value = false
     }
 
+    fun openNowPlayingFromWidget(autoPlay: Boolean = true) {
+        _deepLinkExpandPlayer.value = true
+        val app = getApplication<Application>()
+        AuraPlayerManager.initialize(app)
+        viewModelScope.launch {
+            if (AuraPlayerManager.currentTrack.value == null) {
+                AuraPlayerManager.restoreSavedPlaybackState(autoPlay = autoPlay)
+                var waitedMs = 0L
+                while (AuraPlayerManager.currentTrack.value == null && waitedMs < 800L) {
+                    kotlinx.coroutines.delay(30L)
+                    waitedMs += 30L
+                }
+            }
+            val playerReady = AuraPlayerManager.currentTrack.value != null
+            if (!playerReady) {
+                _deepLinkExpandPlayer.value = false
+                return@launch
+            }
+            val alreadyPlayingOrStarting =
+                AuraPlayerManager.isPlaying.value || AuraPlayerManager.exoPlayer?.playWhenReady == true
+            if (autoPlay && !alreadyPlayingOrStarting) {
+                AuraPlayerManager.playWithFadeIn()
+            }
+        }
+    }
+
     fun handleDeepLink(deepLink: AuraDeepLink) {
         when (deepLink) {
             is AuraDeepLink.Track -> {

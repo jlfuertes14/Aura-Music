@@ -56,7 +56,6 @@ fun AuraAddToPlaylistModal(
     onCreateNewPlaylist: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
@@ -144,7 +143,7 @@ fun AuraAddToPlaylistModal(
                     Icon(
                         imageVector = Icons.Rounded.PlaylistAdd,
                         contentDescription = "New Playlist",
-                        tint = accentTint,
+                        tint = auraColors.textPrimary,
                         modifier = Modifier.size(24.dp)
                     )
                 }
@@ -168,7 +167,7 @@ fun AuraAddToPlaylistModal(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "No playlists yet. Tap 'New Playlist' above to create one!",
+                        text = "No playlists yet",
                         color = auraColors.textSecondary,
                         fontSize = 13.sp
                     )
@@ -223,24 +222,15 @@ fun AuraAddToPlaylistModal(
                                 modifier = Modifier
                                     .size(36.dp)
                                     .clip(CircleShape)
-                                    .background(if (isAlreadyIn) auraColors.accent else auraColors.circleButtonBg),
+                                    .background(auraColors.circleButtonBg),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isAlreadyIn) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Check,
-                                        contentDescription = "Added",
-                                        tint = auraColors.onAccent,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Add,
-                                        contentDescription = "Add to Playlist",
-                                        tint = auraColors.textPrimary,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
+                                Icon(
+                                    imageVector = if (isAlreadyIn) Icons.Rounded.Check else Icons.Rounded.Add,
+                                    contentDescription = if (isAlreadyIn) "Added" else "Add to Playlist",
+                                    tint = auraColors.textPrimary,
+                                    modifier = Modifier.size(20.dp)
+                                )
                             }
                         }
                     }

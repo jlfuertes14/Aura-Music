@@ -104,7 +104,6 @@ import com.auramusic.app.ui.screens.formatDuration
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicArtworkBackdrop
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicFullScreenLyricsView
 import com.auramusic.app.ui.screens.player.applemusic.AppleMusicLyricsList
-import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPlayGreen
 import com.auramusic.app.ui.theme.AuraPoppinsFontFamily
 import com.auramusic.app.ui.theme.AuraViolet
@@ -613,8 +612,8 @@ private fun FullScreenLyricsCompactHeader(
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.Translate,
-                        contentDescription = if (showRomanized) "Romaji lyrics active (tap for original)" else "Original lyrics active (tap for romaji)",
-                        tint = if (showRomanized) AuraPlayGreen else Color.White.copy(alpha = 0.82f),
+                        contentDescription = if (showRomanized) "Show original lyrics" else "Show romanized lyrics",
+                        tint = if (showRomanized) Color.White else Color.White.copy(alpha = 0.72f),
                         modifier = Modifier.size(19.dp)
                     )
                 }
@@ -655,7 +654,7 @@ private fun FullScreenLyricsCompactHeader(
                                 text = signedOffset,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = if (lyricsOffsetMs != 0) AuraNeonLime else Color.White,
+                                color = Color.White,
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier.widthIn(min = 40.dp)
                             )
@@ -690,8 +689,8 @@ private fun FullScreenLyricsCompactHeader(
                     ) {
                         Icon(
                             imageVector = Icons.Rounded.Timer,
-                            contentDescription = "Lyrics Timing Offset",
-                            tint = if (lyricsOffsetMs != 0 || showOffsetControl) AuraNeonLime else Color.White.copy(alpha = 0.85f),
+                            contentDescription = "Lyrics Timing",
+                            tint = if (lyricsOffsetMs != 0 || showOffsetControl) Color.White else Color.White.copy(alpha = 0.72f),
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -703,7 +702,7 @@ private fun FullScreenLyricsCompactHeader(
                         .size(42.dp)
                         .graphicsLayer { alpha = compactContentProgress }
                 ) {
-                    if (isBuffering) {
+                    if (isBuffering && !isPlaying) {
                         CircularProgressIndicator(
                             color = Color.White,
                             strokeWidth = 2.dp,
@@ -1088,7 +1087,7 @@ private fun FullScreenLyricsTransportChrome(
                         .clickable(onClick = onTogglePlayPause),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (isBuffering) {
+                    if (isBuffering && !isPlaying) {
                         CircularProgressIndicator(
                             color = Color.Black,
                             strokeWidth = 2.5.dp,

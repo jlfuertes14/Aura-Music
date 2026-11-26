@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -61,17 +62,17 @@ fun formatSleepTimerStatus(
     endOfTrackEnabled: Boolean
 ): String? = when {
     remainingMinutes != null && remainingMinutes > 0 && endOfTrackEnabled ->
-        "${remainingMinutes}m • End of track"
+        "${remainingMinutes}m left · End of track"
     remainingMinutes != null && remainingMinutes > 0 ->
-        "${remainingMinutes}m remaining"
+        "${remainingMinutes}m left"
     endOfTrackEnabled ->
-        "End of current track"
+        "End of track"
     else -> null
 }
 
 /**
  * Modal bottom sheet for configuring Aura's sleep timer (presets, custom stepper,
- * end-of-current-track toggle, active countdown banner, and cancel action).
+ * end-of-track toggle, active countdown status, and turn off action).
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -84,12 +85,12 @@ fun AuraSleepTimerSheet(
     containerColor: Color = auraGlassSheetColor(LocalAuraColors.current.sheetBackground)
 ) {
     val auraColors = LocalAuraColors.current
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var customMinutes by remember(remainingMinutes) {
-        mutableIntStateOf((remainingMinutes ?: 20).coerceIn(5, 240))
+        mutableIntStateOf((remainingMinutes ?: 30).coerceIn(5, 240))
     }
-    val isTimerActive = (remainingMinutes != null && remainingMinutes > 0) || endOfTrackEnabled
+    val activeStatus = formatSleepTimerStatus(remainingMinutes, endOfTrackEnabled)
+    val isTimerActive = activeStatus != null
     val destructiveColor = if (auraColors.isDark) Color(0xFFFF6961) else Color(0xFFD92D20)
 
     ModalBottomSheet(
@@ -133,7 +134,7 @@ fun AuraSleepTimerSheet(
                         Icon(
                             imageVector = Icons.Rounded.Bedtime,
                             contentDescription = null,
-                            tint = accentTint,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -145,11 +146,14 @@ fun AuraSleepTimerSheet(
                             color = auraColors.textPrimary,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "Fade out and pause playback automatically",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = auraColors.textSecondary
-                        )
+                        if (activeStatus != null) {
+                            Text(
+                                text = activeStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = auraColors.textSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
                 IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
@@ -161,52 +165,7 @@ fun AuraSleepTimerSheet(
                 }
             }
 
-            if (isTimerActive) {
-                Spacer(modifier = Modifier.height(14.dp))
-                Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = auraColors.surfaceCard,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 14.dp, vertical = 12.dp)
-                    ) {
-                        Text(
-                            text = "Timer Active",
-                            color = accentTint,
-                            fontSize = 11.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        val bannerDetail = when {
-                            remainingMinutes != null && remainingMinutes > 0 && endOfTrackEnabled ->
-                                "Playback pauses in $remainingMinutes min or at end of current track"
-                            remainingMinutes != null && remainingMinutes > 0 ->
-                                "Playback pauses in $remainingMinutes min"
-                            else ->
-                                "Playback pauses when the current track finishes"
-                        }
-                        Text(
-                            text = bannerDetail,
-                            color = auraColors.textPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(18.dp))
-            Text(
-                text = "QUICK PRESETS",
-                color = auraColors.textSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp
-            )
-            Spacer(modifier = Modifier.height(10.dp))
 
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -237,13 +196,12 @@ fun AuraSleepTimerSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
             Text(
-                text = "CUSTOM DURATION",
+                text = "Custom",
                 color = auraColors.textSecondary,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 0.8.sp
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
             )
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
             Row(
                 modifier = Modifier
@@ -274,13 +232,13 @@ fun AuraSleepTimerSheet(
                     }
 
                     Text(
-                        text = "$customMinutes min",
+                        text = "${customMinutes}m",
                         color = auraColors.textPrimary,
                         fontSize = 15.5.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center,
                         style = TextStyle(fontFeatureSettings = "tnum"),
-                        modifier = Modifier.width(74.dp)
+                        modifier = Modifier.width(56.dp)
                     )
 
                     IconButton(
@@ -309,10 +267,11 @@ fun AuraSleepTimerSheet(
                         containerColor = auraColors.accent,
                         contentColor = auraColors.onAccent
                     ),
-                    elevation = null
+                    elevation = null,
+                    contentPadding = PaddingValues(horizontal = 18.dp, vertical = 10.dp)
                 ) {
                     Text(
-                        text = "Set ${customMinutes}m",
+                        text = "Set",
                         fontWeight = FontWeight.Bold,
                         fontSize = 13.5.sp
                     )
@@ -340,23 +299,16 @@ fun AuraSleepTimerSheet(
                     Icon(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
-                        tint = if (endOfTrackEnabled) accentTint else auraColors.textPrimary,
+                        tint = auraColors.textPrimary,
                         modifier = Modifier.size(22.dp)
                     )
                     Spacer(modifier = Modifier.width(14.dp))
-                    Column {
-                        Text(
-                            text = "End of current track",
-                            color = auraColors.textPrimary,
-                            fontSize = 14.5.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = "Stop playback when the playing song finishes",
-                            color = auraColors.textSecondary,
-                            fontSize = 11.5.sp
-                        )
-                    }
+                    Text(
+                        text = "End of track",
+                        color = auraColors.textPrimary,
+                        fontSize = 14.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
                 AuraLiquidGlassSwitch(
                     checked = endOfTrackEnabled,
@@ -383,7 +335,7 @@ fun AuraSleepTimerSheet(
                         .height(48.dp)
                 ) {
                     Text(
-                        text = "Turn Off Timer",
+                        text = "Turn off",
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )

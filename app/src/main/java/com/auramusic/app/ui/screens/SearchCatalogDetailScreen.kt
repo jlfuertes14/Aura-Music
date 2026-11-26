@@ -339,13 +339,13 @@ private fun CatalogErrorState(
                     Icon(
                         imageVector = Icons.Rounded.Refresh,
                         contentDescription = "Retry",
-                        tint = auraColors.accent,
+                        tint = auraColors.textPrimary,
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Retry",
-                        color = auraColors.accent,
+                        color = auraColors.textPrimary,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.Bold
                     )

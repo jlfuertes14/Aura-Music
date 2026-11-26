@@ -673,7 +673,7 @@ fun PlaylistDetailsScreen(
                                 Icon(
                                     imageVector = if (isDownloadPaused) Icons.Rounded.PlayArrow else Icons.Rounded.Pause,
                                     contentDescription = if (isDownloadPaused) "Resume downloads" else "Pause downloads",
-                                    tint = auraColors.accent,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }

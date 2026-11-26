@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
@@ -77,7 +78,6 @@ fun AuraTrackOptionsModal(
 ) {
     val auraColors = LocalAuraColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -149,7 +149,7 @@ fun AuraTrackOptionsModal(
             TrackOptionRow(
                 icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (isFavorite) "Remove from Liked Songs" else "Save to Liked Songs",
-                iconTint = if (isFavorite) accentTint else auraColors.textPrimary,
+                iconTint = auraColors.textPrimary,
                 onClick = onToggleFavorite
             )
 
@@ -183,14 +183,14 @@ fun AuraTrackOptionsModal(
             }
 
             TrackOptionRow(
-                icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
                 label = "Play Next",
                 iconTint = auraColors.textPrimary,
                 onClick = onPlayNext
             )
 
             TrackOptionRow(
-                icon = Icons.Rounded.PlaylistAdd,
+                icon = Icons.AutoMirrored.Rounded.QueueMusic,
                 label = "Add to Queue",
                 iconTint = auraColors.textPrimary,
                 onClick = onAddToQueue

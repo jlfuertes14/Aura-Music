@@ -37,6 +37,11 @@ import com.auramusic.app.ui.screens.AuraMainScreen
 import com.auramusic.app.ui.theme.AuraMusicTheme
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        const val EXTRA_OPEN_NOW_PLAYING = "com.auramusic.app.EXTRA_OPEN_NOW_PLAYING"
+        const val EXTRA_WIDGET_AUTO_PLAY = "com.auramusic.app.EXTRA_WIDGET_AUTO_PLAY"
+    }
+
     private val auraViewModel: AuraViewModel by viewModels()
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -78,7 +83,10 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // Check if opened from an update notification or deep link / share intent
+        val openedFromUpdate = isUpdateNotificationIntent(intent)
+        val openedFromWidget = intent?.getBooleanExtra(EXTRA_OPEN_NOW_PLAYING, false) == true
+
+        // Check if opened from an update notification, widget launch, or deep link / share intent
         handleIncomingIntent(intent)
 
         try {
@@ -87,7 +95,6 @@ class MainActivity : ComponentActivity() {
         } catch (_: Exception) {
         }
 
-        val openedFromUpdate = isUpdateNotificationIntent(intent)
         setContent {
             val liquidGlassEnabled by auraViewModel.liquidGlassEnabled.collectAsState()
             val lyricsStyle by auraViewModel.lyricsStyle.collectAsState()
@@ -106,7 +113,7 @@ class MainActivity : ComponentActivity() {
                 colorSource = themeColorSource,
                 customAccentArgb = customAccentArgb,
             ) {
-                var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate) }
+                var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate && !openedFromWidget) }
 
                 Box(modifier = Modifier.fillMaxSize()) {
                     AuraMainScreen(viewModel = auraViewModel)
@@ -157,6 +164,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_OPEN_NOW_PLAYING, false) == true) {
+            val autoPlay = intent.getBooleanExtra(EXTRA_WIDGET_AUTO_PLAY, true)
+            intent.removeExtra(EXTRA_OPEN_NOW_PLAYING)
+            intent.removeExtra(EXTRA_WIDGET_AUTO_PLAY)
+            auraViewModel.openNowPlayingFromWidget(autoPlay = autoPlay)
+        }
+
         if (intent?.getBooleanExtra("test_update", false) == true) {
             auraViewModel.triggerTestUpdateModal()
         } else if (isUpdateNotificationIntent(intent)) {

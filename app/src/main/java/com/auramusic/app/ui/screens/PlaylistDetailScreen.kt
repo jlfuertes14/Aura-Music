@@ -315,7 +315,7 @@ fun PlaylistDetailScreen(
                                     Icon(
                                         imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                         contentDescription = if (isSaved) "Saved" else "Save",
-                                        tint = if (isSaved) auraColors.accent else auraColors.textPrimary,
+                                        tint = auraColors.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
@@ -661,7 +661,7 @@ fun PlaylistDetailScreen(
                                 Icon(
                                     imageVector = if (isSaved) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                                     contentDescription = if (isSaved) "Remove from Library" else "Save to Library",
-                                    tint = if (isSaved) auraColors.accent else auraColors.textPrimary,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(22.dp)
                                 )
                             }
@@ -695,7 +695,7 @@ fun PlaylistDetailScreen(
                                     Icon(
                                         imageVector = if (isRepeatMode) Icons.Rounded.Repeat else Icons.Rounded.Shuffle,
                                         contentDescription = if (isRepeatMode) "Repeat All" else "Shuffle Playlist",
-                                        tint = if (isRepeatMode) auraColors.accent else auraColors.textPrimary,
+                                        tint = auraColors.textPrimary,
                                         modifier = Modifier.size(24.dp)
                                     )
                                 }
