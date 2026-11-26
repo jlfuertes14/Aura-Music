@@ -58,10 +58,11 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
     private fun QuickPlayContent(snapshot: WidgetSnapshot) {
         val palette = snapshot.palette
         val widgetSize = LocalSize.current
-        // Taller & wider cover art matching the exact vertical span of Title/Artist + Player Controls
-        val outerPad = 14.dp
-        val contentHeight = (widgetSize.height - (outerPad * 2)).coerceIn(104.dp, 136.dp)
-        val artWidth = (contentHeight * 1.04f).coerceAtMost((widgetSize.width * 0.40f).coerceAtLeast(104.dp))
+        // Generous top & bottom breathing room while keeping cover art aligned with title/controls
+        val horizontalPad = 16.dp
+        val verticalPad = 20.dp
+        val contentHeight = (widgetSize.height - (verticalPad * 2)).coerceIn(92.dp, 114.dp)
+        val artWidth = (contentHeight * 1.04f).coerceAtMost((widgetSize.width * 0.38f).coerceAtLeast(96.dp))
 
         Row(
             modifier = GlanceModifier
@@ -69,14 +70,14 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
                 .background(ColorProvider(palette.widgetBg))
                 .cornerRadius(24.dp)
                 .clickable(actionRunCallback<WidgetOpenPlayerAction>())
-                .padding(outerPad),
+                .padding(horizontal = horizontalPad, vertical = verticalPad),
             verticalAlignment = Alignment.Vertical.CenterVertically
         ) {
             WidgetArtworkBox(
                 artwork = snapshot.artwork,
                 width = artWidth,
                 height = contentHeight,
-                cornerRadius = 16.dp,
+                cornerRadius = 15.dp,
                 placeholderBg = palette.artSurfaceBg
             )
 
@@ -124,8 +125,8 @@ class AuraQuickPlayWidget : GlanceAppWidget() {
                         contentDescription = "Aura Music",
                         contentScale = ContentScale.Crop,
                         modifier = GlanceModifier
-                            .size(26.dp)
-                            .cornerRadius(13.dp)
+                            .size(34.dp)
+                            .cornerRadius(17.dp)
                     )
                 }
 

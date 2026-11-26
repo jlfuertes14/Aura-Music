@@ -772,8 +772,8 @@ class AuraTurntableWidget : GlanceAppWidget() {
                     contentDescription = "Aura Music",
                     contentScale = ContentScale.Crop,
                     modifier = GlanceModifier
-                        .size(22.dp)
-                        .cornerRadius(11.dp)
+                        .size(26.dp)
+                        .cornerRadius(13.dp)
                 )
             }
 
