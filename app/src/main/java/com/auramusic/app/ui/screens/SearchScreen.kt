@@ -668,14 +668,72 @@ private fun SpotifyCategoryCard(
         }
     }
 
-    Box(
-        modifier = Modifier
+    val isGlass = LocalLiquidGlassEnabled.current
+    val isDark = LocalAuraColors.current.isDark
+    val cardShape = RoundedCornerShape(if (isGlass) 16.dp else 8.dp)
+    val cardModifier = if (isGlass) {
+        val baseTint = category.backgroundColor
+        val glassBrush = if (isDark) {
+            Brush.linearGradient(
+                colors = listOf(
+                    baseTint.copy(alpha = 0.56f),
+                    baseTint.copy(alpha = 0.28f),
+                    Color.White.copy(alpha = 0.08f)
+                )
+            )
+        } else {
+            Brush.linearGradient(
+                colors = listOf(
+                    baseTint.copy(alpha = 0.68f),
+                    baseTint.copy(alpha = 0.44f),
+                    Color.White.copy(alpha = 0.36f)
+                )
+            )
+        }
+        Modifier
             .fillMaxWidth()
             .height(98.dp)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(cardShape)
+            .background(if (isDark) Color(0xFF161820).copy(alpha = 0.72f) else Color.White.copy(alpha = 0.65f))
+            .background(glassBrush)
+            .border(
+                width = 0.85.dp,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = if (isDark) 0.42f else 0.72f),
+                        baseTint.copy(alpha = if (isDark) 0.28f else 0.32f),
+                        Color.White.copy(alpha = if (isDark) 0.10f else 0.25f)
+                    )
+                ),
+                shape = cardShape
+            )
+            .clickable(onClick = onClick)
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .height(98.dp)
+            .clip(cardShape)
             .background(category.backgroundColor)
             .clickable(onClick = onClick)
-    ) {
+    }
+
+    Box(modifier = cardModifier) {
+        if (isGlass) {
+            // Subtle top-left specular glass refraction sheen
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (isDark) 0.18f else 0.30f),
+                                Color.Transparent
+                            ),
+                            radius = 260f
+                        )
+                    )
+            )
+        }
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)

@@ -4,9 +4,12 @@ import android.Manifest
 import android.app.PictureInPictureParams
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
+import android.view.ViewGroup
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -18,8 +21,10 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -27,6 +32,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
 import com.auramusic.app.core.integrations.DeepLinkParser
 import com.auramusic.app.core.media.AuraMediaService
 import com.auramusic.app.core.media.AuraPlayerManager
@@ -44,6 +54,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private val auraViewModel: AuraViewModel by viewModels()
+    private var isInPipMode by mutableStateOf(false)
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -102,34 +113,75 @@ class MainActivity : ComponentActivity() {
             val themeMode by auraViewModel.themeMode.collectAsState()
             val themeColorSource by auraViewModel.themeColorSource.collectAsState()
             val customAccentArgb by auraViewModel.customAccentArgb.collectAsState()
+            val isVideoMode by AuraPlayerManager.isVideoMode.collectAsState()
+            val isPlaying by AuraPlayerManager.isPlaying.collectAsState()
 
             LaunchedEffect(themeMode) {
                 AuraApplication.applyThemeMode(themeMode)
             }
 
-            AuraMusicTheme(
-                liquidGlassEnabled = liquidGlassEnabled,
-                lyricsStyle = lyricsStyle,
-                themeMode = themeMode,
-                colorSource = themeColorSource,
-                customAccentArgb = customAccentArgb,
-            ) {
-                var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate && !openedFromWidget) }
+            LaunchedEffect(isVideoMode, isPlaying) {
+                updatePipParams(autoEnter = isVideoMode && isPlaying)
+            }
 
-                Box(modifier = Modifier.fillMaxSize()) {
-                    AuraMainScreen(viewModel = auraViewModel)
+            if (isInPipMode) {
+                PipVideoOnlyPlayer()
+            } else {
+                AuraMusicTheme(
+                    liquidGlassEnabled = liquidGlassEnabled,
+                    lyricsStyle = lyricsStyle,
+                    themeMode = themeMode,
+                    colorSource = themeColorSource,
+                    customAccentArgb = customAccentArgb,
+                ) {
+                    var isSplashActive by rememberSaveable { mutableStateOf(!openedFromUpdate && !openedFromWidget) }
 
-                    AnimatedVisibility(
-                        visible = isSplashActive,
-                        enter = fadeIn(),
-                        exit = fadeOut(tween(380, easing = FastOutSlowInEasing))
-                    ) {
-                        AuraLaunchSplash(
-                            onDismiss = { isSplashActive = false }
-                        )
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        AuraMainScreen(viewModel = auraViewModel)
+
+                        AnimatedVisibility(
+                            visible = isSplashActive,
+                            enter = fadeIn(),
+                            exit = fadeOut(tween(380, easing = FastOutSlowInEasing))
+                        ) {
+                            AuraLaunchSplash(
+                                onDismiss = { isSplashActive = false }
+                            )
+                        }
                     }
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            isInPipMode = isInPictureInPictureMode
+        }
+    }
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        isInPipMode = isInPictureInPictureMode
+    }
+
+    private fun buildPipParams(autoEnter: Boolean): PictureInPictureParams {
+        val builder = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setAutoEnterEnabled(autoEnter)
+            builder.setSeamlessResizeEnabled(true)
+        }
+        return builder.build()
+    }
+
+    private fun updatePipParams(autoEnter: Boolean) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            runCatching { setPictureInPictureParams(buildPipParams(autoEnter)) }
         }
     }
 
@@ -143,14 +195,14 @@ class MainActivity : ComponentActivity() {
         super.onUserLeaveHint()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             AuraPlayerManager.isVideoMode.value &&
-            AuraPlayerManager.isPlaying.value
+            AuraPlayerManager.isPlaying.value &&
+            !isInPipMode
         ) {
             runCatching {
-                enterPictureInPictureMode(
-                    PictureInPictureParams.Builder()
-                        .setAspectRatio(Rational(16, 9))
-                        .build()
-                )
+                val entered = enterPictureInPictureMode(buildPipParams(autoEnter = true))
+                if (entered) {
+                    isInPipMode = true
+                }
             }
         }
     }
@@ -197,5 +249,39 @@ class MainActivity : ComponentActivity() {
                 auraViewModel.handleDeepLink(deepLink)
             }
         }
+    }
+}
+
+@androidx.annotation.OptIn(UnstableApi::class)
+@Composable
+private fun PipVideoOnlyPlayer() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    useController = false
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                    setShutterBackgroundColor(android.graphics.Color.BLACK)
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    player = AuraPlayerManager.exoPlayer
+                }
+            },
+            update = { view ->
+                if (view.player !== AuraPlayerManager.exoPlayer) {
+                    view.player = AuraPlayerManager.exoPlayer
+                }
+            },
+            onRelease = { view ->
+                view.player = null
+            },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }

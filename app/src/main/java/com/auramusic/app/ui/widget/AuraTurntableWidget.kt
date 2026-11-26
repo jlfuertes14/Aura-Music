@@ -1,59 +1,22 @@
 package com.auramusic.app.ui.widget
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
+import android.os.Build
+import android.widget.RemoteViews
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.graphics.ColorUtils
-import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.longPreferencesKey
-import androidx.glance.ColorFilter
-import androidx.glance.GlanceId
-import androidx.glance.GlanceModifier
-import androidx.glance.Image
-import androidx.glance.ImageProvider
-import androidx.glance.LocalContext
-import androidx.glance.action.Action
-import androidx.glance.action.ActionParameters
-import androidx.glance.action.clickable
-import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetManager
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.appwidget.action.actionStartActivity
-import androidx.glance.appwidget.appWidgetBackground
-import androidx.glance.appwidget.cornerRadius
-import androidx.glance.appwidget.provideContent
-import androidx.glance.appwidget.state.updateAppWidgetState
-import androidx.glance.background
-import androidx.glance.currentState
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Box
-import androidx.glance.layout.Column
-import androidx.glance.layout.ContentScale
-import androidx.glance.layout.Row
-import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.layout.fillMaxWidth
-import androidx.glance.layout.height
-import androidx.glance.layout.padding
-import androidx.glance.layout.size
-import androidx.glance.layout.width
-import androidx.glance.state.PreferencesGlanceStateDefinition
-import androidx.glance.text.FontWeight
-import androidx.glance.text.Text
-import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
 import androidx.palette.graphics.Palette
 import coil.Coil
 import coil.annotation.ExperimentalCoilApi
@@ -69,39 +32,27 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.Request
 import java.io.File
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 
-internal data class WidgetThemePalette(
-    val widgetBg: Color,
-    val fgPrimary: Color,
-    val fgSecondary: Color,
-    val playButtonBg: Color,
-    val playButtonIconTint: Color,
-    val artSurfaceBg: Color
-)
+internal const val ACTION_WIDGET_PREV = "com.auramusic.app.widget.ACTION_PREV"
+internal const val ACTION_WIDGET_PLAY_PAUSE = "com.auramusic.app.widget.ACTION_PLAY_PAUSE"
+internal const val ACTION_WIDGET_NEXT = "com.auramusic.app.widget.ACTION_NEXT"
 
-internal data class WidgetSnapshot(
+internal data class WidgetRenderState(
     val videoId: String? = null,
     val trackTitle: String = "Aura Music",
     val artistName: String = "Tap to listen",
     val isPlaying: Boolean = false,
-    val artwork: Bitmap? = null,
-    val palette: WidgetThemePalette = AuraWidgetSupport.defaultPalette(),
-    val revision: Long = 0L
+    val roundedArtwork: Bitmap? = null,
+    val bgArgb: Int = AuraWidgetSupport.FALLBACK_BG_ARGB
 )
 
 object AuraWidgetUpdater {
     private val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val revisionCounter = AtomicLong(1L)
-    private val REVISION_KEY = longPreferencesKey("aura_widget_rev")
 
     @Volatile
     private var artworkFetchJob: Job? = null
@@ -127,99 +78,68 @@ object AuraWidgetUpdater {
         val vid = track?.videoId
         val sig = "${vid.orEmpty()}|$isPlaying"
         val now = System.currentTimeMillis()
-        if (!force && sig == lastPushSignature && (now - lastPushTimeMs) < 120L) {
+        if (!force && sig == lastPushSignature && (now - lastPushTimeMs) < 100L) {
             return
         }
         lastPushSignature = sig
         lastPushTimeMs = now
-        // 1. Emit immediate RAM-backed snapshot so active Glance sessions recompose in <10ms
-        val immediate = AuraWidgetSupport.publishImmediateSnapshot(
-            track = track,
-            isPlaying = isPlaying,
-            revision = revisionCounter.incrementAndGet()
-        )
-        updateScope.launch {
-            pushStateAndUpdateWidgets(appContext, immediate.revision)
-        }
 
-        // 2. If artwork or palette isn't in RAM yet (or track was null), resolve in background and push
+        // 1. Push immediate RAM-backed RemoteViews (<10ms) so Play/Pause & Next/Prev feel instant
+        val immediate = AuraWidgetSupport.buildImmediateState(track, isPlaying)
+        pushAllNativeWidgets(appContext, immediate)
+
+        // 2. If artwork or palette isn't cached in RAM yet (or track was null), resolve & re-push
         if (track == null || (vid != null && !AuraWidgetSupport.hasCachedArtwork(vid))) {
             artworkFetchJob?.cancel()
             artworkFetchJob = updateScope.launch {
                 val resolvedTrack = track ?: AuraWidgetSupport.resolveDisplayTrack(appContext)
-                val latestPlaying = AuraPlayerManager.isPlaying.value
-                val loaded = AuraWidgetSupport.buildFullSnapshot(
+                val full = AuraWidgetSupport.buildFullState(
                     context = appContext,
                     track = resolvedTrack,
-                    isPlaying = latestPlaying,
-                    revision = revisionCounter.incrementAndGet()
+                    isPlaying = AuraPlayerManager.isPlaying.value
                 )
-                AuraWidgetSupport.setSnapshot(loaded)
-                pushStateAndUpdateWidgets(appContext, loaded.revision)
+                pushAllNativeWidgets(appContext, full)
             }
         }
     }
 
-    internal suspend fun pushImmediateActionState(
-        context: Context,
-        track: AuraTrack?,
-        isPlaying: Boolean
-    ) {
+    internal fun pushAllNativeWidgets(context: Context, state: WidgetRenderState) {
         val appContext = context.applicationContext
-        val immediate = AuraWidgetSupport.publishImmediateSnapshot(
-            track = track,
-            isPlaying = isPlaying,
-            revision = revisionCounter.incrementAndGet()
+        val manager = AppWidgetManager.getInstance(appContext)
+
+        val quickIds = manager.getAppWidgetIds(
+            ComponentName(appContext, AuraQuickPlayWidgetReceiver::class.java)
         )
-        pushStateAndUpdateWidgets(appContext, immediate.revision)
-
-        val vid = track?.videoId
-        if (track != null && vid != null && !AuraWidgetSupport.hasCachedArtwork(vid)) {
-            artworkFetchJob?.cancel()
-            artworkFetchJob = updateScope.launch {
-                val loaded = AuraWidgetSupport.buildFullSnapshot(
-                    context = appContext,
-                    track = track,
-                    isPlaying = AuraPlayerManager.isPlaying.value,
-                    revision = revisionCounter.incrementAndGet()
-                )
-                AuraWidgetSupport.setSnapshot(loaded)
-                pushStateAndUpdateWidgets(appContext, loaded.revision)
-            }
+        if (quickIds.isNotEmpty()) {
+            val quickViews = AuraWidgetSupport.buildRemoteViews(
+                context = appContext,
+                layoutRes = R.layout.widget_aura_quickplay,
+                receiverClass = AuraQuickPlayWidgetReceiver::class.java,
+                state = state
+            )
+            manager.updateAppWidget(quickIds, quickViews)
         }
-    }
 
-    private suspend fun pushStateAndUpdateWidgets(appContext: Context, revision: Long) {
-        runCatching {
-            val manager = GlanceAppWidgetManager(appContext)
-            val quickIds = manager.getGlanceIds(AuraQuickPlayWidget::class.java)
-            val quickWidget = AuraQuickPlayWidget()
-            for (gid in quickIds) {
-                runCatching {
-                    updateAppWidgetState(appContext, PreferencesGlanceStateDefinition, gid) { prefs ->
-                        prefs.toMutablePreferences().apply { this[REVISION_KEY] = revision }
-                    }
-                    quickWidget.update(appContext, gid)
-                }
-            }
-            val turntableIds = manager.getGlanceIds(AuraTurntableWidget::class.java)
-            val turntableWidget = AuraTurntableWidget()
-            for (gid in turntableIds) {
-                runCatching {
-                    updateAppWidgetState(appContext, PreferencesGlanceStateDefinition, gid) { prefs ->
-                        prefs.toMutablePreferences().apply { this[REVISION_KEY] = revision }
-                    }
-                    turntableWidget.update(appContext, gid)
-                }
-            }
+        val turntableIds = manager.getAppWidgetIds(
+            ComponentName(appContext, AuraTurntableWidgetReceiver::class.java)
+        )
+        if (turntableIds.isNotEmpty()) {
+            val turntableViews = AuraWidgetSupport.buildRemoteViews(
+                context = appContext,
+                layoutRes = R.layout.widget_aura_turntable,
+                receiverClass = AuraTurntableWidgetReceiver::class.java,
+                state = state
+            )
+            manager.updateAppWidget(turntableIds, turntableViews)
         }
     }
 }
 
 internal object AuraWidgetSupport {
-    private const val FALLBACK_BG_ARGB = 0xFF222831.toInt()
+    const val FALLBACK_BG_ARGB = 0xFF222831.toInt()
     private const val PURE_WHITE_ARGB = 0xFFFFFFFF.toInt()
     private const val WIDGET_ART_PX = 280
+    private const val WIDGET_ART_RADIUS_PX = 42f
     private const val MAX_ART_CACHE = 12
     private const val MAX_PALETTE_CACHE = 24
 
@@ -229,16 +149,14 @@ internal object AuraWidgetSupport {
             return size > MAX_ART_CACHE
         }
     }
-    private val paletteCache = object : LinkedHashMap<String, WidgetThemePalette>(32, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, WidgetThemePalette>?): Boolean {
+    private val bgColorCache = object : LinkedHashMap<String, Int>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean {
             return size > MAX_PALETTE_CACHE
         }
     }
 
-    private val _snapshotFlow = MutableStateFlow(WidgetSnapshot())
-    val snapshotFlow: StateFlow<WidgetSnapshot> = _snapshotFlow.asStateFlow()
-
-    fun defaultPalette(): WidgetThemePalette = buildWhiteContrastPalette(FALLBACK_BG_ARGB)
+    @Volatile
+    private var lastState: WidgetRenderState = WidgetRenderState()
 
     fun hasCachedArtwork(videoId: String): Boolean = synchronized(cacheLock) {
         val bmp = artworkCache[videoId]
@@ -249,101 +167,210 @@ internal object AuraWidgetSupport {
         artworkCache[videoId]?.takeIf { !it.isRecycled }
     }
 
-    private fun getCachedPalette(videoId: String): WidgetThemePalette? = synchronized(cacheLock) {
-        paletteCache[videoId]
+    private fun getCachedBgColor(videoId: String): Int? = synchronized(cacheLock) {
+        bgColorCache[videoId]
     }
 
-    private fun putCached(videoId: String, bitmap: Bitmap?, palette: WidgetThemePalette) {
+    private fun putCached(videoId: String, roundedBitmap: Bitmap?, bgArgb: Int) {
         synchronized(cacheLock) {
-            if (bitmap != null && !bitmap.isRecycled) {
-                artworkCache[videoId] = bitmap
+            if (roundedBitmap != null && !roundedBitmap.isRecycled) {
+                artworkCache[videoId] = roundedBitmap
             }
-            paletteCache[videoId] = palette
+            bgColorCache[videoId] = bgArgb
         }
     }
 
-    fun setSnapshot(snapshot: WidgetSnapshot) {
-        _snapshotFlow.value = snapshot
-    }
-
-    fun publishImmediateSnapshot(
-        track: AuraTrack?,
-        isPlaying: Boolean,
-        revision: Long
-    ): WidgetSnapshot {
-        val current = _snapshotFlow.value
+    fun buildImmediateState(track: AuraTrack?, isPlaying: Boolean): WidgetRenderState {
+        val prev = lastState
         val vid = track?.videoId
-        val cachedArt = when {
-            vid != null -> getCachedArtwork(vid) ?: if (current.videoId == vid) current.artwork else null
-            else -> null
+        val art = when {
+            vid != null -> getCachedArtwork(vid) ?: if (prev.videoId == vid) prev.roundedArtwork else null
+            else -> prev.roundedArtwork
         }
-        val cachedPalette = when {
-            vid != null -> getCachedPalette(vid)
-                ?: if (current.videoId == vid) current.palette else defaultPalette()
-            else -> defaultPalette()
+        val bg = when {
+            vid != null -> getCachedBgColor(vid) ?: if (prev.videoId == vid) prev.bgArgb else FALLBACK_BG_ARGB
+            else -> prev.bgArgb
         }
-        val next = WidgetSnapshot(
-            videoId = vid,
-            trackTitle = track?.title?.ifBlank { "Aura Music" } ?: current.trackTitle,
-            artistName = track?.artist?.ifBlank { "Tap to listen" } ?: current.artistName,
+        val state = WidgetRenderState(
+            videoId = vid ?: prev.videoId,
+            trackTitle = track?.title?.ifBlank { "Aura Music" } ?: prev.trackTitle,
+            artistName = track?.artist?.ifBlank { "Tap to listen" } ?: prev.artistName,
             isPlaying = isPlaying,
-            artwork = cachedArt,
-            palette = cachedPalette,
-            revision = revision
+            roundedArtwork = art,
+            bgArgb = bg
         )
-        _snapshotFlow.value = next
-        return next
+        lastState = state
+        return state
     }
 
-    suspend fun hydrateInitialSnapshot(context: Context): WidgetSnapshot {
-        val track = resolveDisplayTrack(context)
-        val isPlaying = AuraPlayerManager.isPlaying.value
-        val current = _snapshotFlow.value
-        val vid = track?.videoId
-        if (vid != null && current.videoId == vid && current.artwork != null && !current.artwork.isRecycled) {
-            val synced = current.copy(isPlaying = isPlaying)
-            _snapshotFlow.value = synced
-            return synced
-        }
-        val built = buildFullSnapshot(
-            context = context,
-            track = track,
-            isPlaying = isPlaying,
-            revision = current.revision + 1L
-        )
-        _snapshotFlow.value = built
-        return built
-    }
-
-    suspend fun buildFullSnapshot(
+    suspend fun buildFullState(
         context: Context,
         track: AuraTrack?,
-        isPlaying: Boolean,
-        revision: Long
-    ): WidgetSnapshot {
+        isPlaying: Boolean
+    ): WidgetRenderState {
         val vid = track?.videoId
-        val artwork = if (vid != null) {
-            getCachedArtwork(vid) ?: loadWidgetArtworkBitmap(context, track)
+        val rawAndRounded = if (vid != null) {
+            val cached = getCachedArtwork(vid)
+            if (cached != null) {
+                null to cached
+            } else {
+                val raw = loadWidgetArtworkBitmap(context, track)
+                val rounded = raw?.let { createRoundedSquareBitmap(it, WIDGET_ART_RADIUS_PX) }
+                raw to rounded
+            }
         } else {
-            null
+            null to null
         }
-        val palette = if (vid != null) {
-            getCachedPalette(vid) ?: extractWidgetPalette(context, track, artwork)
+
+        val bgArgb = if (vid != null) {
+            getCachedBgColor(vid) ?: extractDarkWhiteContrastBg(context, track, rawAndRounded.first ?: rawAndRounded.second)
         } else {
-            defaultPalette()
+            FALLBACK_BG_ARGB
         }
+
         if (vid != null) {
-            putCached(vid, artwork, palette)
+            putCached(vid, rawAndRounded.second, bgArgb)
         }
-        return WidgetSnapshot(
+
+        val state = WidgetRenderState(
             videoId = vid,
             trackTitle = track?.title?.ifBlank { "Aura Music" } ?: "Aura Music",
             artistName = track?.artist?.ifBlank { "Tap to listen" } ?: "Tap to listen",
             isPlaying = isPlaying,
-            artwork = artwork,
-            palette = palette,
-            revision = revision
+            roundedArtwork = rawAndRounded.second,
+            bgArgb = bgArgb
         )
+        lastState = state
+        return state
+    }
+
+    fun buildRemoteViews(
+        context: Context,
+        layoutRes: Int,
+        receiverClass: Class<out AppWidgetProvider>,
+        state: WidgetRenderState
+    ): RemoteViews {
+        val views = RemoteViews(context.packageName, layoutRes)
+
+        // 1. Dynamic artwork-extracted background tinted onto @android:id/background so
+        //    Android 12+ & Xiaomi HyperOS preserve the rounded outline for expand/collapse morphs.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            views.setColorStateList(
+                android.R.id.background,
+                "setBackgroundTintList",
+                ColorStateList.valueOf(state.bgArgb)
+            )
+        } else {
+            views.setInt(android.R.id.background, "setBackgroundColor", state.bgArgb)
+        }
+
+        // 2. Title & Artist (pure white always)
+        views.setTextViewText(R.id.widget_title, state.trackTitle)
+        views.setTextViewText(R.id.widget_artist, state.artistName)
+
+        // 3. Pre-rounded high-res artwork (fallback to actual Aura app icon)
+        val bmp = state.roundedArtwork
+        if (bmp != null && !bmp.isRecycled) {
+            views.setImageViewBitmap(R.id.widget_artwork, bmp)
+        } else {
+            views.setImageViewResource(R.id.widget_artwork, R.drawable.aura_app_icon_round)
+        }
+
+        // 4. Play/Pause icon & widget-background-tinted glyph inside white circle
+        views.setImageViewResource(
+            R.id.widget_play_pause_icon,
+            if (state.isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play
+        )
+        views.setInt(R.id.widget_play_pause_icon, "setColorFilter", state.bgArgb)
+
+        // 5. Direct Activity PendingIntent on @android:id/background (NO Glance trampoline!)
+        //    This enables native HyperOS & Android 12+ Spotify-style widget expand/collapse animations.
+        //    Auto-play is FALSE so tapping the widget opens the player without starting playback.
+        val openIntent = Intent(context, MainActivity::class.java).apply {
+            action = MainActivity.ACTION_OPEN_FROM_WIDGET
+            putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
+            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
+            addFlags(
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            )
+        }
+        val openPi = PendingIntent.getActivity(
+            context,
+            1001,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        views.setOnClickPendingIntent(android.R.id.background, openPi)
+
+        // 6. Direct Broadcast PendingIntents for instant transport controls
+        views.setOnClickPendingIntent(
+            R.id.widget_btn_prev,
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PREV, 2001)
+        )
+        views.setOnClickPendingIntent(
+            R.id.widget_btn_play_pause,
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_PLAY_PAUSE, 2002)
+        )
+        views.setOnClickPendingIntent(
+            R.id.widget_btn_next,
+            createActionBroadcast(context, receiverClass, ACTION_WIDGET_NEXT, 2003)
+        )
+
+        return views
+    }
+
+    private fun createActionBroadcast(
+        context: Context,
+        receiverClass: Class<out AppWidgetProvider>,
+        action: String,
+        requestCode: Int
+    ): PendingIntent {
+        val intent = Intent(context, receiverClass).apply {
+            this.action = action
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+    }
+
+    suspend fun handleTransportAction(context: Context, action: String) {
+        val appCtx = context.applicationContext
+        val restoredFromColdStart = ensurePlayerReadyAndRestored(
+            context = appCtx,
+            autoPlayOnRestore = true
+        )
+        when (action) {
+            ACTION_WIDGET_PLAY_PAUSE -> {
+                val (track, nowPlaying) = withContext(Dispatchers.Main) {
+                    val playingAfter = if (restoredFromColdStart) {
+                        true
+                    } else {
+                        AuraPlayerManager.togglePlayPauseImmediate()
+                    }
+                    AuraPlayerManager.currentTrack.value to playingAfter
+                }
+                AuraWidgetUpdater.notifyPlayerStateChanged(appCtx, track, nowPlaying, force = true)
+            }
+            ACTION_WIDGET_PREV -> {
+                val track = withContext(Dispatchers.Main) {
+                    AuraPlayerManager.skipToPrevious()
+                    AuraPlayerManager.currentTrack.value
+                }
+                AuraWidgetUpdater.notifyPlayerStateChanged(appCtx, track, isPlaying = true, force = true)
+            }
+            ACTION_WIDGET_NEXT -> {
+                val track = withContext(Dispatchers.Main) {
+                    AuraPlayerManager.skipToNext()
+                    AuraPlayerManager.currentTrack.value
+                }
+                AuraWidgetUpdater.notifyPlayerStateChanged(appCtx, track, isPlaying = true, force = true)
+            }
+        }
     }
 
     suspend fun resolveDisplayTrack(context: Context): AuraTrack? {
@@ -362,7 +389,7 @@ internal object AuraWidgetSupport {
     }
 
     @OptIn(ExperimentalCoilApi::class)
-    suspend fun loadWidgetArtworkBitmap(context: Context, track: AuraTrack?): Bitmap? {
+    private suspend fun loadWidgetArtworkBitmap(context: Context, track: AuraTrack?): Bitmap? {
         if (track == null) return null
         val appCtx = context.applicationContext
         return withContext(Dispatchers.IO) {
@@ -402,14 +429,12 @@ internal object AuraWidgetSupport {
         }
     }
 
-    suspend fun extractWidgetPalette(
+    private suspend fun extractDarkWhiteContrastBg(
         context: Context,
         track: AuraTrack?,
         artwork: Bitmap?
-    ): WidgetThemePalette {
-        if (track == null) {
-            return defaultPalette()
-        }
+    ): Int {
+        if (track == null) return FALLBACK_BG_ARGB
 
         val paletteColorInt = withContext(Dispatchers.Default) {
             artwork?.let(::pickDominantAuraColor)
@@ -420,20 +445,18 @@ internal object AuraWidgetSupport {
                     ?.primary
                     ?.toArgb()
             }.getOrNull()
-        } ?: return defaultPalette()
+        } ?: return FALLBACK_BG_ARGB
 
         val hsl = FloatArray(3)
         ColorUtils.colorToHSL(paletteColorInt, hsl)
-        // Rich Spotify-style muted backdrop ALWAYS tuned dark enough for crisp pure-white text & icons
         hsl[1] = hsl[1].coerceIn(0.14f, 0.56f)
         hsl[2] = hsl[2].coerceIn(0.20f, 0.36f)
         var bgArgb = ColorUtils.HSLToColor(hsl)
-        // Guarantee WCAG >= 4.5:1 contrast against pure white (#FFFFFF) — never flip text to black
         while (ColorUtils.calculateContrast(PURE_WHITE_ARGB, bgArgb) < 4.5 && hsl[2] > 0.14f) {
             hsl[2] = (hsl[2] - 0.03f).coerceAtLeast(0.14f)
             bgArgb = ColorUtils.HSLToColor(hsl)
         }
-        return buildWhiteContrastPalette(bgArgb)
+        return bgArgb
     }
 
     private fun pickDominantAuraColor(bitmap: Bitmap): Int? {
@@ -460,19 +483,6 @@ internal object AuraWidgetSupport {
         return bestSwatch?.rgb
     }
 
-    private fun buildWhiteContrastPalette(widgetBgArgb: Int): WidgetThemePalette {
-        val widgetBg = Color(widgetBgArgb)
-        val artSurfaceArgb = ColorUtils.blendARGB(widgetBgArgb, PURE_WHITE_ARGB, 0.08f)
-        return WidgetThemePalette(
-            widgetBg = widgetBg,
-            fgPrimary = Color.White,
-            fgSecondary = Color.White.copy(alpha = 0.78f),
-            playButtonBg = Color.White,
-            playButtonIconTint = widgetBg,
-            artSurfaceBg = Color(artSurfaceArgb)
-        )
-    }
-
     private fun decodeScaledBitmap(bytes: ByteArray, targetSizePx: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
@@ -493,25 +503,30 @@ internal object AuraWidgetSupport {
         }
     }
 
-    /**
-     * Direct Activity PendingIntent action (instead of a broadcast ActionCallback) so Android 12+
-     * launchers attach the native Spotify-style widget expand-down launch animation and
-     * roll-up collapse animation back to the widget bounds when returning Home.
-     * Does NOT auto-play; only opens the current track in the full-screen player.
-     */
-    fun openPlayerActivityAction(context: Context): Action {
-        val intent = Intent(context.applicationContext, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_OPEN_FROM_WIDGET
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
-            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
+    private fun createRoundedSquareBitmap(source: Bitmap, radiusPx: Float): Bitmap {
+        val size = WIDGET_ART_PX
+        val output = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(output)
+        val path = Path().apply {
+            addRoundRect(RectF(0f, 0f, size.toFloat(), size.toFloat()), radiusPx, radiusPx, Path.Direction.CW)
         }
-        return actionStartActivity(intent)
+        canvas.clipPath(path)
+
+        // Center-crop source into square output
+        val srcW = source.width.toFloat().coerceAtLeast(1f)
+        val srcH = source.height.toFloat().coerceAtLeast(1f)
+        val scale = maxOf(size / srcW, size / srcH)
+        val scaledW = srcW * scale
+        val scaledH = srcH * scale
+        val left = (size - scaledW) / 2f
+        val top = (size - scaledH) / 2f
+        val dst = RectF(left, top, left + scaledW, top + scaledH)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+        canvas.drawBitmap(source, null, dst, paint)
+        return output
     }
 
-    suspend fun ensurePlayerReadyAndRestored(
+    private suspend fun ensurePlayerReadyAndRestored(
         context: Context,
         autoPlayOnRestore: Boolean
     ): Boolean {
@@ -534,291 +549,36 @@ internal object AuraWidgetSupport {
     }
 }
 
-class WidgetOpenPlayerAction : ActionCallback {
-    override suspend fun onAction(
+abstract class BaseAuraWidgetProvider : AppWidgetProvider() {
+    companion object {
+        private val actionScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    }
+
+    override fun onUpdate(
         context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray
     ) {
-        val intent = Intent(context, MainActivity::class.java).apply {
-            action = MainActivity.ACTION_OPEN_FROM_WIDGET
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
-            putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
-        }
-        context.startActivity(intent)
+        AuraWidgetUpdater.updateAll(context)
     }
-}
 
-class WidgetPreviousAction : ActionCallback {
-    override suspend fun onAction(
-        context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
-    ) {
-        AuraWidgetSupport.ensurePlayerReadyAndRestored(context, autoPlayOnRestore = true)
-        val newTrack = withContext(Dispatchers.Main) {
-            AuraPlayerManager.skipToPrevious()
-            AuraPlayerManager.currentTrack.value
-        }
-        AuraWidgetUpdater.pushImmediateActionState(
-            context = context,
-            track = newTrack,
-            isPlaying = true
-        )
-    }
-}
-
-class WidgetPlayPauseAction : ActionCallback {
-    override suspend fun onAction(
-        context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
-    ) {
-        val restoredFromColdStart = AuraWidgetSupport.ensurePlayerReadyAndRestored(
-            context = context,
-            autoPlayOnRestore = true
-        )
-        val (track, nowPlaying) = withContext(Dispatchers.Main) {
-            val playingAfter = if (restoredFromColdStart) {
-                true
-            } else {
-                AuraPlayerManager.togglePlayPauseImmediate()
-            }
-            AuraPlayerManager.currentTrack.value to playingAfter
-        }
-        AuraWidgetUpdater.pushImmediateActionState(
-            context = context,
-            track = track,
-            isPlaying = nowPlaying
-        )
-    }
-}
-
-class WidgetNextAction : ActionCallback {
-    override suspend fun onAction(
-        context: Context,
-        glanceId: GlanceId,
-        parameters: ActionParameters
-    ) {
-        AuraWidgetSupport.ensurePlayerReadyAndRestored(context, autoPlayOnRestore = true)
-        val newTrack = withContext(Dispatchers.Main) {
-            AuraPlayerManager.skipToNext()
-            AuraPlayerManager.currentTrack.value
-        }
-        AuraWidgetUpdater.pushImmediateActionState(
-            context = context,
-            track = newTrack,
-            isPlaying = true
-        )
-    }
-}
-
-@Composable
-internal fun WidgetArtworkBox(
-    artwork: Bitmap?,
-    width: Dp,
-    height: Dp,
-    cornerRadius: Dp,
-    placeholderBg: Color,
-    onClick: Action
-) {
-    Box(
-        modifier = GlanceModifier
-            .width(width)
-            .height(height)
-            .cornerRadius(cornerRadius)
-            .background(ColorProvider(placeholderBg))
-            .clickable(onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        val artProvider = if (artwork != null && !artwork.isRecycled) {
-            ImageProvider(artwork)
-        } else {
-            ImageProvider(R.drawable.aura_app_icon_round)
-        }
-        Image(
-            provider = artProvider,
-            contentDescription = "Album artwork",
-            contentScale = ContentScale.Crop,
-            modifier = GlanceModifier
-                .width(width)
-                .height(height)
-                .cornerRadius(cornerRadius)
-        )
-    }
-}
-
-@Composable
-internal fun SpotifyTransportRow(
-    isPlaying: Boolean,
-    palette: WidgetThemePalette,
-    compact: Boolean
-) {
-    // Equal-sized visual & touch footprint for Previous, Play/Pause, and Next;
-    // flush start/end alignment so Previous lines up cleanly under Song Title/Artist
-    val controlSize = if (compact) 36.dp else 42.dp
-    val skipIconSize = if (compact) 26.dp else 32.dp
-    val playIconSize = if (compact) 20.dp else 24.dp
-
-    Row(
-        modifier = GlanceModifier
-            .fillMaxWidth()
-            .height(controlSize),
-        verticalAlignment = Alignment.Vertical.CenterVertically
-    ) {
-        // Previous button flush left to align with Song Title & Artist
-        Box(
-            modifier = GlanceModifier
-                .width(controlSize)
-                .height(controlSize)
-                .cornerRadius(controlSize / 2)
-                .clickable(actionRunCallback<WidgetPreviousAction>()),
-            contentAlignment = Alignment.CenterStart
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        val action = intent.action ?: return
+        if (action == ACTION_WIDGET_PREV ||
+            action == ACTION_WIDGET_PLAY_PAUSE ||
+            action == ACTION_WIDGET_NEXT
         ) {
-            Image(
-                provider = ImageProvider(R.drawable.ic_widget_prev),
-                contentDescription = "Previous track",
-                colorFilter = ColorFilter.tint(ColorProvider(Color.White)),
-                modifier = GlanceModifier.size(skipIconSize)
-            )
-        }
-
-        Spacer(modifier = GlanceModifier.defaultWeight())
-
-        // Solid White Circular Play/Pause button (same diameter as Prev/Next boxes)
-        Box(
-            modifier = GlanceModifier
-                .size(controlSize)
-                .cornerRadius(controlSize / 2)
-                .background(ColorProvider(palette.playButtonBg))
-                .clickable(actionRunCallback<WidgetPlayPauseAction>()),
-            contentAlignment = Alignment.Center
-        ) {
-            Image(
-                provider = ImageProvider(
-                    if (isPlaying) R.drawable.ic_widget_pause else R.drawable.ic_widget_play
-                ),
-                contentDescription = if (isPlaying) "Pause" else "Play",
-                colorFilter = ColorFilter.tint(ColorProvider(palette.playButtonIconTint)),
-                modifier = GlanceModifier.size(playIconSize)
-            )
-        }
-
-        Spacer(modifier = GlanceModifier.defaultWeight())
-
-        // Next button flush right to align with Aura App Logo
-        Box(
-            modifier = GlanceModifier
-                .width(controlSize)
-                .height(controlSize)
-                .cornerRadius(controlSize / 2)
-                .clickable(actionRunCallback<WidgetNextAction>()),
-            contentAlignment = Alignment.CenterEnd
-        ) {
-            Image(
-                provider = ImageProvider(R.drawable.ic_widget_next),
-                contentDescription = "Next track",
-                colorFilter = ColorFilter.tint(ColorProvider(Color.White)),
-                modifier = GlanceModifier.size(skipIconSize)
-            )
-        }
-    }
-}
-
-class AuraTurntableWidget : GlanceAppWidget() {
-    override val stateDefinition = PreferencesGlanceStateDefinition
-    override val sizeMode: SizeMode = SizeMode.Exact
-
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        AuraWidgetSupport.hydrateInitialSnapshot(context)
-
-        provideContent {
-            // Read Glance state key so session updates also trigger recomposition
-            currentState<Preferences>()
-            val snapshot by AuraWidgetSupport.snapshotFlow.collectAsState()
-            TurntableContent(snapshot = snapshot)
-        }
-    }
-
-    @Composable
-    private fun TurntableContent(snapshot: WidgetSnapshot) {
-        val context = LocalContext.current
-        val openPlayerAction = AuraWidgetSupport.openPlayerActivityAction(context)
-        val palette = snapshot.palette
-        Column(
-            modifier = GlanceModifier
-                .fillMaxSize()
-                .appWidgetBackground()
-                .background(ColorProvider(palette.widgetBg))
-                .cornerRadius(22.dp)
-                .clickable(openPlayerAction)
-                .padding(12.dp),
-            verticalAlignment = Alignment.Vertical.CenterVertically
-        ) {
-            Row(
-                modifier = GlanceModifier
-                    .fillMaxWidth()
-                    .clickable(openPlayerAction),
-                verticalAlignment = Alignment.Vertical.Top
-            ) {
-                WidgetArtworkBox(
-                    artwork = snapshot.artwork,
-                    width = 50.dp,
-                    height = 50.dp,
-                    cornerRadius = 11.dp,
-                    placeholderBg = palette.artSurfaceBg,
-                    onClick = openPlayerAction
-                )
-
-                Spacer(modifier = GlanceModifier.width(8.dp))
-
-                Column(modifier = GlanceModifier.defaultWeight()) {
-                    Text(
-                        text = snapshot.trackTitle,
-                        maxLines = 1,
-                        style = TextStyle(
-                            color = ColorProvider(Color.White),
-                            fontSize = 13.5.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    )
-                    Spacer(modifier = GlanceModifier.height(2.dp))
-                    Text(
-                        text = snapshot.artistName,
-                        maxLines = 1,
-                        style = TextStyle(
-                            color = ColorProvider(Color.White.copy(alpha = 0.78f)),
-                            fontSize = 11.5.sp
-                        )
-                    )
+            val pendingResult = goAsync()
+            actionScope.launch {
+                try {
+                    AuraWidgetSupport.handleTransportAction(context, action)
+                } finally {
+                    pendingResult.finish()
                 }
-
-                Spacer(modifier = GlanceModifier.width(6.dp))
-
-                Image(
-                    provider = ImageProvider(R.drawable.aura_app_icon_round),
-                    contentDescription = "Aura Music",
-                    contentScale = ContentScale.Crop,
-                    modifier = GlanceModifier
-                        .size(26.dp)
-                        .cornerRadius(13.dp)
-                )
             }
-
-            Spacer(modifier = GlanceModifier.defaultWeight())
-
-            SpotifyTransportRow(
-                isPlaying = snapshot.isPlaying,
-                palette = palette,
-                compact = true
-            )
         }
     }
 }
 
-class AuraTurntableWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = AuraTurntableWidget()
-}
+class AuraTurntableWidgetReceiver : BaseAuraWidgetProvider()
