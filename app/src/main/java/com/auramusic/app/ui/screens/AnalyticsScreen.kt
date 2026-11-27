@@ -8,7 +8,12 @@ import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.DashPathEffect
+import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path as AndroidPath
+import android.graphics.RadialGradient
+import android.graphics.RectF
+import android.graphics.Shader
 import android.graphics.Typeface
 import android.os.Build
 import android.view.View
@@ -55,6 +60,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Album
 import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Equalizer
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Schedule
@@ -86,6 +92,7 @@ import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -101,6 +108,7 @@ import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
+import com.auramusic.app.ui.components.AuraImageShareHelper
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
@@ -157,6 +165,9 @@ fun AnalyticsScreen(
 
     var showWrapped by remember { mutableStateOf(false) }
     var isSharingReceipt by remember { mutableStateOf(false) }
+    var isSavingReceipt by remember { mutableStateOf(false) }
+    var isSharingStats by remember { mutableStateOf(false) }
+    var isSavingStats by remember { mutableStateOf(false) }
 
     BackHandler(enabled = !showWrapped) { onBack() }
 
@@ -168,7 +179,7 @@ fun AnalyticsScreen(
     }
 
     val shareReceipt: () -> Unit = {
-        if (!isSharingReceipt) {
+        if (!isSharingReceipt && !isSavingReceipt) {
             isSharingReceipt = true
             coroutineScope.launch {
                 val result = shareListeningReceiptPng(context, snapshot)
@@ -177,6 +188,61 @@ fun AnalyticsScreen(
                     Toast.makeText(
                         context,
                         "Unable to share receipt: ${err.message ?: "unknown error"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val saveReceipt: () -> Unit = {
+        if (!isSavingReceipt && !isSharingReceipt) {
+            isSavingReceipt = true
+            coroutineScope.launch {
+                val result = saveListeningReceiptPng(context, snapshot)
+                isSavingReceipt = false
+                result.onSuccess { folder ->
+                    Toast.makeText(context, "Saved receipt to $folder", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(
+                        context,
+                        "Unable to save receipt: ${err.message ?: "unknown error"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val shareStatsCard: () -> Unit = {
+        if (!isSharingStats && !isSavingStats) {
+            isSharingStats = true
+            coroutineScope.launch {
+                val result = shareWrappedStatsPng(context, snapshot, auraColors.accent)
+                isSharingStats = false
+                result.onFailure { err ->
+                    Toast.makeText(
+                        context,
+                        "Unable to share stats: ${err.message ?: "unknown error"}",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+    }
+
+    val saveStatsCard: () -> Unit = {
+        if (!isSavingStats && !isSharingStats) {
+            isSavingStats = true
+            coroutineScope.launch {
+                val result = saveWrappedStatsPng(context, snapshot, auraColors.accent)
+                isSavingStats = false
+                result.onSuccess { folder ->
+                    Toast.makeText(context, "Saved stats card to $folder", Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    Toast.makeText(
+                        context,
+                        "Unable to save stats: ${err.message ?: "unknown error"}",
                         Toast.LENGTH_SHORT
                     ).show()
                 }
@@ -536,7 +602,9 @@ fun AnalyticsScreen(
                             onAccentColor = auraColors.onAccent,
                             isGlass = isGlass,
                             isSharing = isSharingReceipt,
-                            onShareReceipt = shareReceipt
+                            isSaving = isSavingReceipt,
+                            onShareReceipt = shareReceipt,
+                            onSaveReceipt = saveReceipt
                         )
                     }
                 }
@@ -564,7 +632,11 @@ fun AnalyticsScreen(
                 onAccentColor = auraColors.onAccent,
                 isGlass = isGlass,
                 restoreDarkSystemBars = auraColors.isDark,
+                isSharingStats = isSharingStats,
+                isSavingStats = isSavingStats,
                 onPlayTrack = onPlayTrack,
+                onShareStatsCard = shareStatsCard,
+                onSaveStatsCard = saveStatsCard,
                 onShareReceipt = shareReceipt,
                 onDismiss = { showWrapped = false }
             )
@@ -1195,7 +1267,9 @@ private fun ThermalReceiptCard(
     onAccentColor: Color,
     isGlass: Boolean,
     isSharing: Boolean,
-    onShareReceipt: () -> Unit
+    isSaving: Boolean,
+    onShareReceipt: () -> Unit,
+    onSaveReceipt: () -> Unit
 ) {
     val paperBg = if (isGlass) Color(0xFFF9F8F4).copy(alpha = 0.92f) else Color(0xFFF9F8F4)
     val inkDark = Color(0xFF111216)
@@ -1393,47 +1467,98 @@ private fun ThermalReceiptCard(
         Spacer(modifier = Modifier.height(16.dp))
 
         val buttonInk = accentColor.contrastInk()
-        Button(
-            onClick = onShareReceipt,
-            enabled = !isSharing,
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = accentColor,
-                contentColor = buttonInk,
-                disabledContainerColor = accentColor.copy(alpha = 0.6f),
-                disabledContentColor = buttonInk.copy(alpha = 0.7f)
-            ),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(46.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (isSharing) {
-                CircularProgressIndicator(
-                    color = buttonInk,
-                    strokeWidth = 2.dp,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Rendering PNG…",
-                    color = buttonInk,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Rounded.Share,
-                    contentDescription = null,
-                    tint = buttonInk,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Share Receipt",
-                    color = buttonInk,
-                    fontSize = 13.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            Button(
+                onClick = onSaveReceipt,
+                enabled = !isSaving && !isSharing,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = inkDark.copy(alpha = 0.08f),
+                    contentColor = inkDark,
+                    disabledContainerColor = inkDark.copy(alpha = 0.05f),
+                    disabledContentColor = inkMuted
+                ),
+                elevation = null,
+                modifier = Modifier
+                    .weight(0.95f)
+                    .height(46.dp)
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        color = inkDark,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Saving…",
+                        color = inkDark,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Download,
+                        contentDescription = null,
+                        tint = inkDark,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Save",
+                        color = inkDark,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+
+            Button(
+                onClick = onShareReceipt,
+                enabled = !isSharing && !isSaving,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = accentColor,
+                    contentColor = buttonInk,
+                    disabledContainerColor = accentColor.copy(alpha = 0.6f),
+                    disabledContentColor = buttonInk.copy(alpha = 0.7f)
+                ),
+                elevation = null,
+                modifier = Modifier
+                    .weight(1.45f)
+                    .height(46.dp)
+            ) {
+                if (isSharing) {
+                    CircularProgressIndicator(
+                        color = buttonInk,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Sharing…",
+                        color = buttonInk,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Share,
+                        contentDescription = null,
+                        tint = buttonInk,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Share Receipt",
+                        color = buttonInk,
+                        fontSize = 13.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -1463,7 +1588,11 @@ private fun AuraWrappedOverlay(
     onAccentColor: Color,
     isGlass: Boolean,
     restoreDarkSystemBars: Boolean,
+    isSharingStats: Boolean,
+    isSavingStats: Boolean,
     onPlayTrack: (AuraTrack) -> Unit,
+    onShareStatsCard: () -> Unit,
+    onSaveStatsCard: () -> Unit,
     onShareReceipt: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1544,6 +1673,10 @@ private fun AuraWrappedOverlay(
                     gradient = gradient,
                     accentColor = accentColor,
                     onAccentColor = accentColor.contrastInk(),
+                    isSharingStats = isSharingStats,
+                    isSavingStats = isSavingStats,
+                    onShareStatsCard = onShareStatsCard,
+                    onSaveStatsCard = onSaveStatsCard,
                     onShareReceipt = onShareReceipt,
                     onDone = onDismiss
                 )
@@ -2153,6 +2286,10 @@ private fun WrappedShareSlide(
     gradient: List<Color>,
     accentColor: Color,
     onAccentColor: Color,
+    isSharingStats: Boolean,
+    isSavingStats: Boolean,
+    onShareStatsCard: () -> Unit,
+    onSaveStatsCard: () -> Unit,
     onShareReceipt: () -> Unit,
     onDone: () -> Unit
 ) {
@@ -2161,11 +2298,11 @@ private fun WrappedShareSlide(
 
     WrappedSlideLayout(
         pageIndex = 4,
-        tag = "RECEIPT",
+        tag = "SHARE",
         gradient = gradient,
         accentColor = accentColor
     ) { ink, _ ->
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (topTrack != null && topTrack.highResArtworkUrl.isNotBlank()) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -2218,44 +2355,118 @@ private fun WrappedShareSlide(
             )
             Spacer(modifier = Modifier.height(6.dp))
             Button(
-                onClick = onShareReceipt,
+                onClick = onShareStatsCard,
+                enabled = !isSharingStats && !isSavingStats,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = accentColor,
-                    contentColor = shareInk
+                    contentColor = shareInk,
+                    disabledContainerColor = accentColor.copy(alpha = 0.6f),
+                    disabledContentColor = shareInk.copy(alpha = 0.7f)
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp)
             ) {
-                Icon(
-                    imageVector = Icons.Rounded.Share,
-                    contentDescription = null,
-                    tint = shareInk,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = "Share Receipt",
-                    color = shareInk,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.5.sp
-                )
+                if (isSharingStats) {
+                    CircularProgressIndicator(
+                        color = shareInk,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Rendering…",
+                        color = shareInk,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.5.sp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.Share,
+                        contentDescription = null,
+                        tint = shareInk,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Share Stats Card",
+                        color = shareInk,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.5.sp
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = onSaveStatsCard,
+                    enabled = !isSavingStats && !isSharingStats,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ink.copy(alpha = 0.14f),
+                        contentColor = ink
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                ) {
+                    if (isSavingStats) {
+                        CircularProgressIndicator(
+                            color = ink,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Saving…", color = ink, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = null,
+                            tint = ink,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save Image", color = ink, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                    }
+                }
+                Button(
+                    onClick = onShareReceipt,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ink.copy(alpha = 0.14f),
+                        contentColor = ink
+                    ),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Share,
+                        contentDescription = null,
+                        tint = ink,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Receipt", color = ink, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                }
             }
             Button(
                 onClick = onDone,
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = ink.copy(alpha = 0.14f),
-                    contentColor = ink
+                    containerColor = Color.Transparent,
+                    contentColor = ink.copy(alpha = 0.85f)
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(44.dp)
             ) {
                 Text(
                     text = "Done",
-                    color = ink,
+                    color = ink.copy(alpha = 0.85f),
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.5.sp
                 )
@@ -2288,50 +2499,328 @@ private suspend fun shareListeningReceiptPng(
     context: Context,
     snapshot: AnalyticsSnapshot
 ): Result<Unit> = runCatching {
-    val pngFile = withContext(Dispatchers.IO) {
-        val bitmap = renderReceiptBitmap(snapshot)
-        try {
-            val preferredDir = File(context.cacheDir, "shared_receipts").apply { mkdirs() }
-            val preferredFile = File(preferredDir, "aura_listening_receipt.png")
-            FileOutputStream(preferredFile).use { out ->
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-            }
-            val uri = runCatching {
-                FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", preferredFile)
-            }.getOrNull()
-            if (uri != null) {
-                preferredFile
-            } else {
-                val fallbackDir = File(context.cacheDir, "updates").apply { mkdirs() }
-                val fallbackFile = File(fallbackDir, "aura_listening_receipt.png")
-                FileOutputStream(fallbackFile).use { out ->
-                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
-                }
-                fallbackFile
-            }
-        } finally {
-            bitmap.recycle()
+    val bitmap = withContext(Dispatchers.Default) { renderReceiptBitmap(snapshot) }
+    try {
+        AuraImageShareHelper.shareBitmapAsPng(
+            context = context,
+            bitmap = bitmap,
+            cacheSubDir = "shared_receipts",
+            fileName = "aura_listening_receipt.png",
+            chooserTitle = "Share Aura Receipt"
+        ).getOrThrow()
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+private suspend fun saveListeningReceiptPng(
+    context: Context,
+    snapshot: AnalyticsSnapshot
+): Result<String> = runCatching {
+    val bitmap = withContext(Dispatchers.Default) { renderReceiptBitmap(snapshot) }
+    try {
+        AuraImageShareHelper.saveBitmapToGallery(
+            context = context,
+            bitmap = bitmap,
+            filePrefix = "aura_receipt"
+        ).getOrThrow()
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+private suspend fun shareWrappedStatsPng(
+    context: Context,
+    snapshot: AnalyticsSnapshot,
+    accentColor: Color
+): Result<Unit> = runCatching {
+    val topArtUrl = snapshot.topTracks.firstOrNull()?.first?.highResArtworkUrl
+    val topArtwork = AuraImageShareHelper.loadArtworkBitmap(context, topArtUrl, sizePx = 420)
+    val bitmap = withContext(Dispatchers.Default) {
+        renderWrappedStatsBitmap(context, snapshot, accentColor, topArtwork)
+    }
+    try {
+        AuraImageShareHelper.shareBitmapAsPng(
+            context = context,
+            bitmap = bitmap,
+            cacheSubDir = "shared_receipts",
+            fileName = "aura_wrapped_stats.png",
+            chooserTitle = "Share Aura Stats"
+        ).getOrThrow()
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+private suspend fun saveWrappedStatsPng(
+    context: Context,
+    snapshot: AnalyticsSnapshot,
+    accentColor: Color
+): Result<String> = runCatching {
+    val topArtUrl = snapshot.topTracks.firstOrNull()?.first?.highResArtworkUrl
+    val topArtwork = AuraImageShareHelper.loadArtworkBitmap(context, topArtUrl, sizePx = 420)
+    val bitmap = withContext(Dispatchers.Default) {
+        renderWrappedStatsBitmap(context, snapshot, accentColor, topArtwork)
+    }
+    try {
+        AuraImageShareHelper.saveBitmapToGallery(
+            context = context,
+            bitmap = bitmap,
+            filePrefix = "aura_stats"
+        ).getOrThrow()
+    } finally {
+        bitmap.recycle()
+    }
+}
+
+/**
+ * Renders a 1080x1350 visual Spotify-Wrapped-inspired Stats Card PNG featuring sweeping
+ * graphic ribbons, top track artwork, key metrics, Top 3 songs, and Aura Music branding.
+ */
+private fun renderWrappedStatsBitmap(
+    context: Context,
+    snapshot: AnalyticsSnapshot,
+    accentColor: Color,
+    topTrackArtwork: Bitmap?
+): Bitmap {
+    val width = 1080
+    val height = 1350
+    val w = width.toFloat()
+    val h = height.toFloat()
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = AndroidCanvas(bitmap)
+
+    val vibrantAccent = if (accentColor.luminance() > 0.35f) accentColor.toArgb() else AuraNeonLime.toArgb()
+    val white = AndroidColor.WHITE
+    val mutedWhite = AndroidColor.argb(190, 255, 255, 255)
+    val subtleWhite = AndroidColor.argb(135, 255, 255, 255)
+
+    // 1. Deep Wrapped gradient backdrop
+    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = LinearGradient(
+            0f, 0f, w * 0.6f, h,
+            intArrayOf(
+                AndroidColor.parseColor("#1D0F42"),
+                AndroidColor.parseColor("#13102B"),
+                AndroidColor.parseColor("#0A0B14")
+            ),
+            floatArrayOf(0f, 0.52f, 1f),
+            Shader.TileMode.CLAMP
+        )
+    }
+    canvas.drawRect(0f, 0f, w, h, bgPaint)
+
+    // 2. Ambient Spotify-Wrapped-style radial glows & sweeping graphic ribbons
+    val glowTop = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(
+            w * 0.88f, h * 0.16f, w * 0.75f,
+            AndroidColor.argb(130, 124, 58, 237),
+            AndroidColor.TRANSPARENT,
+            Shader.TileMode.CLAMP
+        )
+    }
+    canvas.drawCircle(w * 0.88f, h * 0.16f, w * 0.75f, glowTop)
+
+    val glowBottom = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        shader = RadialGradient(
+            w * 0.16f, h * 0.86f, w * 0.65f,
+            AndroidColor.argb(66, AndroidColor.red(vibrantAccent), AndroidColor.green(vibrantAccent), AndroidColor.blue(vibrantAccent)),
+            AndroidColor.TRANSPARENT,
+            Shader.TileMode.CLAMP
+        )
+    }
+    canvas.drawCircle(w * 0.16f, h * 0.86f, w * 0.65f, glowBottom)
+
+    val ribbonPath = AndroidPath().apply {
+        moveTo(-60f, h * 0.44f)
+        cubicTo(w * 0.28f, h * 0.30f, w * 0.68f, h * 0.56f, w + 60f, h * 0.36f)
+    }
+    canvas.drawPath(
+        ribbonPath,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 36f
+            strokeCap = Paint.Cap.ROUND
+            color = AndroidColor.argb(46, AndroidColor.red(vibrantAccent), AndroidColor.green(vibrantAccent), AndroidColor.blue(vibrantAccent))
+        }
+    )
+
+    val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        color = AndroidColor.argb(30, 255, 255, 255)
+    }
+    canvas.drawCircle(w * 0.92f, h * 0.14f, 220f, ringPaint)
+    canvas.drawCircle(w * 0.92f, h * 0.14f, 300f, ringPaint)
+
+    val padX = 80f
+    val rightX = w - padX
+
+    // 3. Header tag & Range badge
+    val tagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = vibrantAccent
+        textSize = 28f
+        letterSpacing = 0.18f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    canvas.drawText("AURA WRAPPED  •  ${snapshot.range.label.uppercase(Locale.US)}", padX, 118f, tagPaint)
+
+    // 4. Hero Minutes & Plays
+    val heroNumPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 112f
+        letterSpacing = -0.03f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val heroLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = mutedWhite
+        textSize = 30f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+    canvas.drawText(formatIntStat(snapshot.totalMinutes), padX, 254f, heroNumPaint)
+    canvas.drawText(
+        "minutes listened  ·  ${formatIntStat(snapshot.totalPlays)} plays  ·  ${formatIntStat(snapshot.uniqueArtists)} artists",
+        padX,
+        308f,
+        heroLabelPaint
+    )
+
+    // 5. Top Track Spotlight Card (with rounded cover art)
+    val topTrack = snapshot.topTracks.firstOrNull()?.first
+    val topArtist = snapshot.topArtists.firstOrNull()
+    val spotTop = 368f
+    val spotHeight = 228f
+    val spotRect = RectF(padX, spotTop, rightX, spotTop + spotHeight)
+    canvas.drawRoundRect(
+        spotRect,
+        34f,
+        34f,
+        Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(30, 255, 255, 255) }
+    )
+
+    val artSize = 164f
+    val artRect = RectF(padX + 32f, spotTop + 32f, padX + 32f + artSize, spotTop + 32f + artSize)
+    val artClip = AndroidPath().apply { addRoundRect(artRect, 24f, 24f, AndroidPath.Direction.CW) }
+    canvas.save()
+    canvas.clipPath(artClip)
+    if (topTrackArtwork != null && !topTrackArtwork.isRecycled) {
+        val srcW = topTrackArtwork.width.toFloat().coerceAtLeast(1f)
+        val srcH = topTrackArtwork.height.toFloat().coerceAtLeast(1f)
+        val scale = maxOf(artSize / srcW, artSize / srcH)
+        val sw = srcW * scale
+        val sh = srcH * scale
+        val dst = RectF(
+            artRect.left + (artSize - sw) / 2f,
+            artRect.top + (artSize - sh) / 2f,
+            artRect.left + (artSize + sw) / 2f,
+            artRect.top + (artSize + sh) / 2f
+        )
+        canvas.drawBitmap(topTrackArtwork, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+    } else {
+        canvas.drawRect(artRect, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = AndroidColor.argb(56, 255, 255, 255) })
+    }
+    canvas.restore()
+
+    val spotTextX = artRect.right + 32f
+    val spotTextMaxW = rightX - 32f - spotTextX
+    val spotTagPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = vibrantAccent
+        textSize = 23f
+        letterSpacing = 0.14f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val spotTitlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 42f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val spotSubPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = mutedWhite
+        textSize = 30f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+    canvas.drawText("TOP ARTIST", spotTextX, spotTop + 78f, spotTagPaint)
+    val spotlightArtist = topArtist?.first ?: topTrack?.artist ?: "Aura Listener"
+    canvas.drawText(ellipsizeText(spotlightArtist, spotTitlePaint, spotTextMaxW), spotTextX, spotTop + 134f, spotTitlePaint)
+    val spotSub = if (topArtist != null) {
+        "${topArtist.second} plays  ·  Peak ${snapshot.peakHourLabel.ifBlank { "—" }}"
+    } else {
+        "Peak ${snapshot.peakHourLabel.ifBlank { "—" }}"
+    }
+    canvas.drawText(ellipsizeText(spotSub, spotSubPaint, spotTextMaxW), spotTextX, spotTop + 182f, spotSubPaint)
+
+    // 6. Top 5 Songs List
+    var listY = spotTop + spotHeight + 84f
+    val sectionLabelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = subtleWhite
+        textSize = 25f
+        letterSpacing = 0.14f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    canvas.drawText("TOP SONGS", padX, listY, sectionLabelPaint)
+    listY += 58f
+
+    val rankPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = vibrantAccent
+        textSize = 34f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val songPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 34f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val songArtistPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = mutedWhite
+        textSize = 26f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+    val playsRightPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = subtleWhite
+        textSize = 28f
+        textAlign = Paint.Align.RIGHT
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+
+    val topSongs = snapshot.topTracks.take(4)
+    if (topSongs.isEmpty()) {
+        canvas.drawText("Play a few songs to populate your stats", padX, listY, songArtistPaint)
+    } else {
+        topSongs.forEachIndexed { idx, (track, plays) ->
+            canvas.drawText("${idx + 1}", padX, listY, rankPaint)
+            val titleX = padX + 54f
+            val titleMaxW = rightX - titleX - 110f
+            canvas.drawText(ellipsizeText(track.title, songPaint, titleMaxW), titleX, listY, songPaint)
+            canvas.drawText("${plays}x", rightX, listY, playsRightPaint)
+            canvas.drawText(ellipsizeText(track.artist, songArtistPaint, titleMaxW), titleX, listY + 36f, songArtistPaint)
+            listY += 108f
         }
     }
 
-    val contentUri = FileProvider.getUriForFile(
-        context,
-        "${context.packageName}.fileprovider",
-        pngFile
-    )
-    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-        type = "image/png"
-        putExtra(Intent.EXTRA_STREAM, contentUri)
-        putExtra(
-            Intent.EXTRA_TEXT,
-            "My Aura Music ${snapshot.range.label} Listening Receipt (${snapshot.totalMinutes} min)"
-        )
-        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    // 7. Bottom Footer: Real Aura Music circular app logo + "Aura Music" wordmark
+    val logoSize = 64f
+    val footerTop = h - 76f - logoSize
+    val logoRect = RectF(padX, footerTop, padX + logoSize, footerTop + logoSize)
+    val logoBitmap = AuraImageShareHelper.decodeAuraRoundLogo(context)
+    if (logoBitmap != null && !logoBitmap.isRecycled) {
+        val logoClip = AndroidPath().apply { addOval(logoRect, AndroidPath.Direction.CW) }
+        canvas.save()
+        canvas.clipPath(logoClip)
+        canvas.drawBitmap(logoBitmap, null, logoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        canvas.restore()
+        logoBitmap.recycle()
     }
-    val chooser = Intent.createChooser(shareIntent, "Share Aura Receipt").apply {
-        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = white
+        textSize = 36f
+        letterSpacing = -0.02f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     }
-    context.startActivity(chooser)
+    val fm = brandPaint.fontMetrics
+    val baselineY = logoRect.centerY() - (fm.ascent + fm.descent) / 2f
+    canvas.drawText("Aura Music", logoRect.right + 18f, baselineY, brandPaint)
+
+    return bitmap
 }
 
 private fun renderReceiptBitmap(snapshot: AnalyticsSnapshot): Bitmap {

@@ -1,15 +1,12 @@
 package com.auramusic.app.ui.components
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
-import android.graphics.Shader
 import android.graphics.Typeface
-import android.graphics.drawable.BitmapDrawable
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
@@ -17,6 +14,7 @@ import android.widget.Toast
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FormatQuote
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Share
@@ -60,11 +59,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -73,38 +72,36 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
-import coil.Coil
+import androidx.core.graphics.ColorUtils
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
-import coil.request.SuccessResult
+import com.auramusic.app.R
 import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.LyricsData
-import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
 
 private enum class LyricCardTheme(val label: String) {
-    ARTWORK_GRADIENT("Artwork"),
+    ALBUM_PRIMARY("Album"),
+    ALBUM_SECONDARY("Accent"),
+    SLATE_BLUE("Slate"),
     DEEP_OBSIDIAN("Dark"),
-    WARM_CREAM("Cream"),
-    FROSTED_ACCENT("Accent")
+    WARM_CREAM("Light")
 }
 
 private const val MAX_SELECTED_LYRIC_LINES = 6
 private const val CARD_WIDTH_PX = 1080
-private const val CARD_HEIGHT_PX = 1350
+private const val CARD_MIN_HEIGHT_PX = 1080
+private const val CARD_MAX_HEIGHT_PX = 1350
 private val CardEase = CubicBezierEasing(0.23f, 1f, 0.32f, 1f)
 
 /**
- * Bottom sheet allowing users to pick up to 6 consecutive lyric lines, choose one of 4
- * visual card themes, preview the card, and export a 1080x1350 PNG via [FileProvider].
+ * Spotify-style Lyrics Share Sheet:
+ * Pick up to 6 consecutive lyric lines, pick a clean solid color swatch (auto-contrast ink),
+ * preview the rounded Spotify-inspired card with Aura Music's app logo, and Share or Save PNG.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -131,14 +128,15 @@ fun AuraShareLyricsSheet(
         val initialEnd = minOf(3, selectableLines.lastIndex)
         mutableStateOf<IntRange?>(if (selectableLines.isNotEmpty()) 0..initialEnd else null)
     }
-    var selectedTheme by remember { mutableStateOf(LyricCardTheme.ARTWORK_GRADIENT) }
+    var selectedTheme by remember { mutableStateOf(LyricCardTheme.ALBUM_PRIMARY) }
     var isSharing by remember { mutableStateOf(false) }
+    var isSaving by remember { mutableStateOf(false) }
     var artworkBitmap by remember(track.highResArtworkUrl) { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(track.highResArtworkUrl) {
         val url = track.highResArtworkUrl
         if (url.isNotBlank()) {
-            artworkBitmap = loadBitmapForShareCard(context, url)
+            artworkBitmap = AuraImageShareHelper.loadArtworkBitmap(context, url, sizePx = 320)
         }
     }
 
@@ -222,19 +220,19 @@ fun AuraShareLyricsSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            LyricCardPreview(
+            SpotifyStyleLyricCardPreview(
                 track = track,
                 selectedLines = selectedLines,
                 theme = selectedTheme,
                 palette = palette
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
-            // 4 compact theme dots (borderless selection ring)
+            // 5 clean Spotify-style color swatch dots
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterHorizontally),
+                horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 LyricCardTheme.entries.forEach { theme ->
@@ -271,7 +269,7 @@ fun AuraShareLyricsSheet(
                                     modifier = Modifier
                                         .size(26.dp)
                                         .clip(CircleShape)
-                                        .background(themeSwatchColor(theme, palette))
+                                        .background(resolveCardBackgroundColor(theme, palette))
                                 )
                             }
                         }
@@ -285,7 +283,7 @@ fun AuraShareLyricsSheet(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(140.dp),
+                        .height(130.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -298,7 +296,7 @@ fun AuraShareLyricsSheet(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(min = 120.dp, max = 210.dp),
+                        .heightIn(min = 110.dp, max = 196.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     itemsIndexed(selectableLines) { idx, lineText ->
@@ -311,7 +309,7 @@ fun AuraShareLyricsSheet(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .heightIn(min = 48.dp)
+                                .heightIn(min = 46.dp)
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(rowBg)
                                 .clickable {
@@ -321,7 +319,7 @@ fun AuraShareLyricsSheet(
                                         maxLines = MAX_SELECTED_LYRIC_LINES
                                     )
                                 }
-                                .padding(horizontal = 14.dp, vertical = 11.dp),
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
@@ -347,62 +345,146 @@ fun AuraShareLyricsSheet(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            Button(
-                onClick = {
-                    if (selectedLines.isEmpty() || isSharing) return@Button
-                    isSharing = true
-                    scope.launch {
-                        val shareResult = withContext(Dispatchers.IO) {
-                            exportAndPrepareShareFile(
-                                context = context,
-                                track = track,
-                                lines = selectedLines,
-                                theme = selectedTheme,
-                                palette = palette,
-                                artworkBitmap = artworkBitmap
-                            )
-                        }
-                        isSharing = false
-                        shareResult.onSuccess { outFile ->
-                            launchShareIntent(context, outFile, track)
-                        }.onFailure { err ->
-                            Toast.makeText(
-                                context,
-                                "Unable to share: ${err.message ?: "unknown error"}",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                },
-                enabled = selectedLines.isNotEmpty() && !isSharing,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = auraColors.accent,
-                    contentColor = auraColors.onAccent,
-                    disabledContainerColor = auraColors.pillInactiveBg,
-                    disabledContentColor = auraColors.textMuted
-                ),
-                elevation = null,
-                shape = RoundedCornerShape(14.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp)
+            // Save Image + Share Image action bar
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                if (isSharing) {
-                    CircularProgressIndicator(
-                        color = auraColors.onAccent,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Text("Sharing…", fontWeight = FontWeight.Bold)
-                } else {
-                    Icon(
-                        imageVector = Icons.Rounded.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Share", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Button(
+                    onClick = {
+                        if (selectedLines.isEmpty() || isSaving || isSharing) return@Button
+                        isSaving = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                val bmp = renderSpotifyLyricCardBitmap(
+                                    context = context,
+                                    track = track,
+                                    lines = selectedLines,
+                                    theme = selectedTheme,
+                                    palette = palette,
+                                    artworkBitmap = artworkBitmap
+                                )
+                                try {
+                                    AuraImageShareHelper.saveBitmapToGallery(
+                                        context = context,
+                                        bitmap = bmp,
+                                        filePrefix = "aura_lyrics"
+                                    )
+                                } finally {
+                                    bmp.recycle()
+                                }
+                            }
+                            isSaving = false
+                            result.onSuccess { folder ->
+                                Toast.makeText(context, "Saved to $folder", Toast.LENGTH_SHORT).show()
+                            }.onFailure { err ->
+                                Toast.makeText(
+                                    context,
+                                    "Unable to save: ${err.message ?: "unknown error"}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
+                    enabled = selectedLines.isNotEmpty() && !isSaving && !isSharing,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = auraColors.surfaceCard,
+                        contentColor = auraColors.textPrimary,
+                        disabledContainerColor = auraColors.pillInactiveBg,
+                        disabledContentColor = auraColors.textMuted
+                    ),
+                    elevation = null,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                ) {
+                    if (isSaving) {
+                        CircularProgressIndicator(
+                            color = auraColors.textPrimary,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Saving…", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Save", fontWeight = FontWeight.SemiBold, fontSize = 14.5.sp)
+                    }
+                }
+
+                Button(
+                    onClick = {
+                        if (selectedLines.isEmpty() || isSharing || isSaving) return@Button
+                        isSharing = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                val bmp = renderSpotifyLyricCardBitmap(
+                                    context = context,
+                                    track = track,
+                                    lines = selectedLines,
+                                    theme = selectedTheme,
+                                    palette = palette,
+                                    artworkBitmap = artworkBitmap
+                                )
+                                try {
+                                    AuraImageShareHelper.shareBitmapAsPng(
+                                        context = context,
+                                        bitmap = bmp,
+                                        cacheSubDir = "shared_lyrics",
+                                        fileName = "aura_lyrics.png",
+                                        chooserTitle = "Share Lyrics"
+                                    )
+                                } finally {
+                                    bmp.recycle()
+                                }
+                            }
+                            isSharing = false
+                            result.onFailure { err ->
+                                Toast.makeText(
+                                    context,
+                                    "Unable to share: ${err.message ?: "unknown error"}",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            }
+                        }
+                    },
+                    enabled = selectedLines.isNotEmpty() && !isSharing && !isSaving,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = auraColors.accent,
+                        contentColor = auraColors.onAccent,
+                        disabledContainerColor = auraColors.pillInactiveBg,
+                        disabledContentColor = auraColors.textMuted
+                    ),
+                    elevation = null,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .weight(1.35f)
+                        .height(50.dp)
+                ) {
+                    if (isSharing) {
+                        CircularProgressIndicator(
+                            color = auraColors.onAccent,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Sharing…", color = auraColors.onAccent, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Share,
+                            contentDescription = null,
+                            tint = auraColors.onAccent,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Share", color = auraColors.onAccent, fontWeight = FontWeight.Bold, fontSize = 14.5.sp)
+                    }
                 }
             }
         }
@@ -410,37 +492,42 @@ fun AuraShareLyricsSheet(
 }
 
 @Composable
-private fun LyricCardPreview(
+private fun SpotifyStyleLyricCardPreview(
     track: AuraTrack,
     selectedLines: List<String>,
     theme: LyricCardTheme,
     palette: AuraPalette
 ) {
-    val bgBrush = remember(theme, palette) { previewBrush(theme, palette) }
-    val textColor = if (theme == LyricCardTheme.WARM_CREAM) Color(0xFF1A1815) else Color.White
-    val mutedColor = textColor.copy(alpha = 0.68f)
+    val bgColor by animateColorAsState(
+        targetValue = resolveCardBackgroundColor(theme, palette),
+        animationSpec = tween(durationMillis = 220, easing = CardEase),
+        label = "lyricCardBg"
+    )
+    val inkColor = remember(bgColor) { resolveCardInkColor(bgColor) }
+    val subInkColor = inkColor.copy(alpha = 0.84f)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(bgBrush)
-            .padding(18.dp)
+            .clip(RoundedCornerShape(22.dp))
+            .background(bgColor)
+            .padding(horizontal = 20.dp, vertical = 20.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            // Top Header: Rounded square artwork + Bold title & "Song · Artist"
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(palette.primary.copy(alpha = 0.35f)),
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(inkColor.copy(alpha = 0.14f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.MusicNote,
                         contentDescription = null,
-                        tint = textColor.copy(alpha = 0.7f),
-                        modifier = Modifier.size(22.dp)
+                        tint = inkColor.copy(alpha = 0.7f),
+                        modifier = Modifier.size(20.dp)
                     )
                     if (track.highResArtworkUrl.isNotBlank()) {
                         AsyncImage(
@@ -455,24 +542,27 @@ private fun LyricCardPreview(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = track.title,
-                        color = textColor,
-                        fontSize = 14.sp,
+                        color = inkColor,
+                        fontSize = 14.5.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(modifier = Modifier.height(1.dp))
                     Text(
-                        text = track.artist,
-                        color = mutedColor,
-                        fontSize = 12.sp,
+                        text = "Song · ${track.artist}",
+                        color = subInkColor,
+                        fontSize = 12.5.sp,
+                        fontWeight = FontWeight.Normal,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
             }
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(18.dp))
 
+            // Bold Spotify-style editorial lyric block (flush-left, tight leading, zero clutter)
             val displayText = if (selectedLines.isEmpty()) {
                 "Tap lines below"
             } else {
@@ -480,36 +570,34 @@ private fun LyricCardPreview(
             }
             Text(
                 text = displayText,
-                color = if (selectedLines.isEmpty()) mutedColor else textColor,
-                fontSize = 15.sp,
-                lineHeight = 21.sp,
-                fontWeight = FontWeight.SemiBold,
+                color = if (selectedLines.isEmpty()) subInkColor else inkColor,
+                fontSize = 20.sp,
+                lineHeight = 25.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = (-0.3).sp,
                 maxLines = 6,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "AURA MUSIC",
-                    color = mutedColor,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.6.sp
-                )
-                Box(
+            // Bottom Footer: Aura App Logo + "Aura Music" wordmark (exact Spotify footer placement)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Image(
+                    painter = painterResource(id = R.drawable.aura_app_icon_round),
+                    contentDescription = "Aura Music",
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .width(28.dp)
-                        .height(3.dp)
-                        .clip(RoundedCornerShape(2.dp))
-                        .background(
-                            if (theme == LyricCardTheme.WARM_CREAM) Color(0xFF4D6B00) else AuraNeonLime
-                        )
+                        .size(26.dp)
+                        .clip(CircleShape)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Aura Music",
+                    color = inkColor,
+                    fontSize = 14.5.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.2).sp
                 )
             }
         }
@@ -539,287 +627,202 @@ private fun toggleConsecutiveSelection(
     }
 }
 
-private fun themeSwatchColor(theme: LyricCardTheme, palette: AuraPalette): Color = when (theme) {
-    LyricCardTheme.ARTWORK_GRADIENT -> palette.primary
-    LyricCardTheme.DEEP_OBSIDIAN -> Color(0xFF161820)
-    LyricCardTheme.WARM_CREAM -> Color(0xFFF5EEDC)
-    LyricCardTheme.FROSTED_ACCENT -> palette.secondary
+private fun resolveCardBackgroundColor(theme: LyricCardTheme, palette: AuraPalette): Color = when (theme) {
+    LyricCardTheme.ALBUM_PRIMARY -> refineSpotifyCardTone(palette.primary.toArgb())
+    LyricCardTheme.ALBUM_SECONDARY -> refineSpotifyCardTone(palette.secondary.toArgb())
+    LyricCardTheme.SLATE_BLUE -> Color(0xFF5D7FA3)
+    LyricCardTheme.DEEP_OBSIDIAN -> Color(0xFF1A1C22)
+    LyricCardTheme.WARM_CREAM -> Color(0xFFF3EFE6)
 }
 
-private fun previewBrush(theme: LyricCardTheme, palette: AuraPalette): Brush = when (theme) {
-    LyricCardTheme.ARTWORK_GRADIENT -> Brush.linearGradient(
-        listOf(palette.backgroundTop, palette.primary.copy(alpha = 0.78f), palette.backgroundBottom)
-    )
-    LyricCardTheme.DEEP_OBSIDIAN -> Brush.linearGradient(
-        listOf(Color(0xFF101218), Color(0xFF1B1E28))
-    )
-    LyricCardTheme.WARM_CREAM -> Brush.linearGradient(
-        listOf(Color(0xFFF9F3E8), Color(0xFFECE2CE))
-    )
-    LyricCardTheme.FROSTED_ACCENT -> Brush.linearGradient(
-        listOf(palette.primary.copy(alpha = 0.85f), palette.secondary.copy(alpha = 0.78f))
-    )
+/**
+ * Normalizes an extracted album palette color into a rich, saturated Spotify lyric-card tone
+ * (never washed-out gray, never neon-blinding, always crisp with white or black ink).
+ */
+private fun refineSpotifyCardTone(rawArgb: Int): Color {
+    val hsl = FloatArray(3)
+    ColorUtils.colorToHSL(rawArgb, hsl)
+    hsl[1] = hsl[1].coerceIn(0.28f, 0.72f)
+    hsl[2] = hsl[2].coerceIn(0.24f, 0.54f)
+    return Color(ColorUtils.HSLToColor(hsl))
 }
 
-private suspend fun loadBitmapForShareCard(context: Context, url: String): Bitmap? =
-    withContext(Dispatchers.IO) {
-        try {
-            val loader = Coil.imageLoader(context)
-            val request = ImageRequest.Builder(context)
-                .data(url)
-                .allowHardware(false)
-                .size(256)
-                .build()
-            val result = loader.execute(request) as? SuccessResult ?: return@withContext null
-            (result.drawable as? BitmapDrawable)?.bitmap
-        } catch (_: Exception) {
-            null
-        }
-    }
+private fun resolveCardInkColor(bgColor: Color): Color {
+    val bgArgb = bgColor.toArgb()
+    val whiteContrast = ColorUtils.calculateContrast(0xFFFFFFFF.toInt(), bgArgb)
+    val darkContrast = ColorUtils.calculateContrast(0xFF111216.toInt(), bgArgb)
+    return if (whiteContrast >= darkContrast) Color.White else Color(0xFF111216)
+}
 
-private fun exportAndPrepareShareFile(
+/**
+ * Renders a high-resolution Spotify-style Lyric Card PNG (1080px wide, clean rounded card,
+ * top-left artwork + title + "Song · Artist", bold tight-tracked lyric block, and bottom-left
+ * Aura Music circular app logo + "Aura Music" wordmark).
+ */
+private fun renderSpotifyLyricCardBitmap(
     context: Context,
     track: AuraTrack,
     lines: List<String>,
     theme: LyricCardTheme,
     palette: AuraPalette,
     artworkBitmap: Bitmap?
-): Result<File> = runCatching {
-    val cardBitmap = renderHighResLyricCardBitmap(
-        track = track,
-        lines = lines,
-        theme = theme,
-        palette = palette,
-        artworkBitmap = artworkBitmap
-    )
-    try {
-        val dir = File(context.cacheDir, "shared_lyrics").apply { mkdirs() }
-        val outFile = File(dir, "aura_lyrics.png")
-        FileOutputStream(outFile).use { stream ->
-            cardBitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
-            stream.flush()
-        }
-        outFile
-    } finally {
-        cardBitmap.recycle()
-    }
-}
-
-private fun launchShareIntent(context: Context, file: File, track: AuraTrack) {
-    try {
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, "${track.title} — ${track.artist}")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        val chooser = Intent.createChooser(shareIntent, "Share Lyrics").apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        context.startActivity(chooser)
-    } catch (e: Exception) {
-        Toast.makeText(
-            context,
-            "Could not launch share sheet: ${e.message ?: "FileProvider error"}",
-            Toast.LENGTH_SHORT
-        ).show()
-    }
-}
-
-private fun renderHighResLyricCardBitmap(
-    track: AuraTrack,
-    lines: List<String>,
-    theme: LyricCardTheme,
-    palette: AuraPalette,
-    artworkBitmap: Bitmap?
 ): Bitmap {
-    val bitmap = Bitmap.createBitmap(CARD_WIDTH_PX, CARD_HEIGHT_PX, Bitmap.Config.ARGB_8888)
-    val canvas = Canvas(bitmap)
+    val bgColor = resolveCardBackgroundColor(theme, palette)
+    val bgArgb = bgColor.toArgb()
+    val inkColor = resolveCardInkColor(bgColor)
+    val inkArgb = inkColor.toArgb()
+    val subInkArgb = ColorUtils.setAlphaComponent(inkArgb, (255 * 0.84f).toInt())
+
     val w = CARD_WIDTH_PX.toFloat()
-    val h = CARD_HEIGHT_PX.toFloat()
+    val padX = 76f
+    val padTop = 76f
+    val padBottom = 76f
+    val contentWidth = (w - padX * 2f).toInt()
+    val artSize = 114f
+    val headerToLyricsGap = 78f
+    val lyricsToFooterGap = 86f
+    val logoSize = 68f
 
-    val isCream = theme == LyricCardTheme.WARM_CREAM
-    val primaryTextColor = if (isCream) 0xFF1A1815.toInt() else 0xFFFFFFFF.toInt()
-    val secondaryTextColor = if (isCream) 0xB31A1815.toInt() else 0xB8FFFFFF.toInt()
-    val accentColor = if (isCream) 0xFF4D6B00.toInt() else AuraNeonLime.toArgb()
+    val bodyText = lines.joinToString("\n")
+    val maxLyricHeight = CARD_MAX_HEIGHT_PX - (padTop + artSize + headerToLyricsGap + lyricsToFooterGap + logoSize + padBottom)
 
-    // 1. Background fill
-    val (bgStart, bgMid, bgEnd) = when (theme) {
-        LyricCardTheme.ARTWORK_GRADIENT -> Triple(
-            palette.backgroundTop.toArgb(),
-            palette.primary.toArgb(),
-            palette.backgroundBottom.toArgb()
-        )
-        LyricCardTheme.DEEP_OBSIDIAN -> Triple(
-            0xFF0E1016.toInt(),
-            0xFF161922.toInt(),
-            0xFF0B0C10.toInt()
-        )
-        LyricCardTheme.WARM_CREAM -> Triple(
-            0xFFFAF4E8.toInt(),
-            0xFFF3EAD8.toInt(),
-            0xFFE9DEC7.toInt()
-        )
-        LyricCardTheme.FROSTED_ACCENT -> Triple(
-            palette.primary.toArgb(),
-            palette.secondary.toArgb(),
-            palette.backgroundBottom.toArgb()
-        )
+    var lyricSize = when {
+        lines.size <= 2 && bodyText.length < 70 -> 78f
+        lines.size <= 4 && bodyText.length < 150 -> 68f
+        else -> 58f
     }
-
-    val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        shader = LinearGradient(
-            0f, 0f, w, h,
-            intArrayOf(bgStart, bgMid, bgEnd),
-            floatArrayOf(0f, 0.55f, 1f),
-            Shader.TileMode.CLAMP
-        )
-    }
-    canvas.drawRect(0f, 0f, w, h, bgPaint)
-
-    // 2. Inner glass panel frame
-    val outerPad = 56f
-    val panelRect = RectF(outerPad, outerPad, w - outerPad, h - outerPad)
-    val panelFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = when (theme) {
-            LyricCardTheme.WARM_CREAM -> 0x66FFFFFF
-            LyricCardTheme.FROSTED_ACCENT -> 0x33FFFFFF
-            else -> 0x4D0D0F15
-        }
-    }
-    canvas.drawRoundRect(panelRect, 48f, 48f, panelFillPaint)
-
-    // 3. Header: Artwork tile (or tinted placeholder) + Track Title & Artist
-    val contentLeft = 112f
-    val contentRight = w - 112f
-    val artSize = 136f
-    val artTop = 116f
-    val artRect = RectF(contentLeft, artTop, contentLeft + artSize, artTop + artSize)
-
-    val artClipPath = android.graphics.Path().apply {
-        addRoundRect(artRect, 26f, 26f, android.graphics.Path.Direction.CW)
-    }
-    canvas.save()
-    canvas.clipPath(artClipPath)
-    if (artworkBitmap != null && !artworkBitmap.isRecycled) {
-        canvas.drawBitmap(artworkBitmap, null, artRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-    } else {
-        val placeholderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            shader = LinearGradient(
-                artRect.left, artRect.top, artRect.right, artRect.bottom,
-                palette.primary.toArgb(), palette.secondary.toArgb(),
-                Shader.TileMode.CLAMP
-            )
-        }
-        canvas.drawRect(artRect, placeholderPaint)
-        val notePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = 0xE6FFFFFF.toInt()
-            textSize = 62f
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        canvas.drawText("♪", artRect.centerX(), artRect.centerY() + 20f, notePaint)
-    }
-    canvas.restore()
-
-    val metaLeft = contentLeft + artSize + 34f
-    val metaMaxWidth = (contentRight - metaLeft).toInt().coerceAtLeast(100)
-    val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = primaryTextColor
-        textSize = 40f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-    }
-    val artistPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = secondaryTextColor
-        textSize = 30f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.NORMAL)
-    }
-    val titleLayout = StaticLayout.Builder
-        .obtain(track.title, 0, track.title.length, titlePaint, metaMaxWidth)
-        .setMaxLines(2)
-        .setEllipsize(android.text.TextUtils.TruncateAt.END)
-        .build()
-    canvas.save()
-    canvas.translate(metaLeft, artTop + 14f)
-    titleLayout.draw(canvas)
-    canvas.translate(0f, titleLayout.height.toFloat() + 10f)
-    val artistLayout = StaticLayout.Builder
-        .obtain(track.artist, 0, track.artist.length, artistPaint, metaMaxWidth)
-        .setMaxLines(1)
-        .setEllipsize(android.text.TextUtils.TruncateAt.END)
-        .build()
-    artistLayout.draw(canvas)
-    canvas.restore()
-
-    // 4. Quoted Lyric Lines body
-    val lyricTop = artTop + artSize + 84f
-    val lyricBottomLimit = h - 220f
-    val availableHeight = (lyricBottomLimit - lyricTop).coerceAtLeast(200f)
-    val bodyText = lines.joinToString("\n\n")
-    val bodyWidth = (contentRight - contentLeft).toInt()
-
-    val quoteMarkPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = accentColor
-        textSize = 96f
-        typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
-    }
-    canvas.drawText("“", contentLeft - 6f, lyricTop + 46f, quoteMarkPaint)
-
-    val startTextSize = when {
-        lines.size <= 2 && bodyText.length < 90 -> 60f
-        lines.size <= 4 && bodyText.length < 180 -> 50f
-        else -> 42f
-    }
-    var currentSize = startTextSize
     var bodyLayout: StaticLayout
     while (true) {
         val lyricPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = primaryTextColor
-            textSize = currentSize
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            color = inkArgb
+            textSize = lyricSize
+            letterSpacing = -0.025f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
         }
         bodyLayout = StaticLayout.Builder
-            .obtain(bodyText, 0, bodyText.length, lyricPaint, bodyWidth)
+            .obtain(bodyText, 0, bodyText.length, lyricPaint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(10f, 1.12f)
+            .setLineSpacing(6f, 1.12f)
             .build()
-        if (bodyLayout.height <= availableHeight - 70f || currentSize <= 28f) {
+        if (bodyLayout.height <= maxLyricHeight || lyricSize <= 38f) {
             break
         }
-        currentSize -= 3f
+        lyricSize -= 3f
     }
 
+    val naturalHeight = (padTop + artSize + headerToLyricsGap + bodyLayout.height + lyricsToFooterGap + logoSize + padBottom).toInt()
+    val totalHeight = naturalHeight.coerceIn(CARD_MIN_HEIGHT_PX, CARD_MAX_HEIGHT_PX)
+    val h = totalHeight.toFloat()
+
+    val bitmap = Bitmap.createBitmap(CARD_WIDTH_PX, totalHeight, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+
+    // 1. Clean Spotify-style rounded card background
+    val cardRadius = 60f
+    val cardRect = RectF(0f, 0f, w, h)
+    val cardPath = Path().apply {
+        addRoundRect(cardRect, cardRadius, cardRadius, Path.Direction.CW)
+    }
     canvas.save()
-    canvas.translate(contentLeft, lyricTop + 72f)
+    canvas.clipPath(cardPath)
+    canvas.drawColor(bgArgb)
+
+    // 2. Top Header: Rounded square artwork + Track Title + "Song · Artist"
+    val artRect = RectF(padX, padTop, padX + artSize, padTop + artSize)
+    val artPath = Path().apply {
+        addRoundRect(artRect, 20f, 20f, Path.Direction.CW)
+    }
+    canvas.save()
+    canvas.clipPath(artPath)
+    if (artworkBitmap != null && !artworkBitmap.isRecycled) {
+        val srcW = artworkBitmap.width.toFloat().coerceAtLeast(1f)
+        val srcH = artworkBitmap.height.toFloat().coerceAtLeast(1f)
+        val scale = maxOf(artSize / srcW, artSize / srcH)
+        val scaledW = srcW * scale
+        val scaledH = srcH * scale
+        val dst = RectF(
+            artRect.left + (artSize - scaledW) / 2f,
+            artRect.top + (artSize - scaledH) / 2f,
+            artRect.left + (artSize + scaledW) / 2f,
+            artRect.top + (artSize + scaledH) / 2f
+        )
+        canvas.drawBitmap(artworkBitmap, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+    } else {
+        canvas.drawRect(artRect, Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = ColorUtils.setAlphaComponent(inkArgb, 38)
+        })
+    }
+    canvas.restore()
+
+    val metaLeft = padX + artSize + 32f
+    val metaWidth = (w - padX - metaLeft).toInt().coerceAtLeast(120)
+    val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = inkArgb
+        textSize = 40f
+        letterSpacing = -0.015f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+    }
+    val artistPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = subInkArgb
+        textSize = 33f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+    }
+    val titleLayout = StaticLayout.Builder
+        .obtain(track.title, 0, track.title.length, titlePaint, metaWidth)
+        .setMaxLines(1)
+        .setEllipsize(android.text.TextUtils.TruncateAt.END)
+        .build()
+    val artistText = "Song · ${track.artist}"
+    val artistLayout = StaticLayout.Builder
+        .obtain(artistText, 0, artistText.length, artistPaint, metaWidth)
+        .setMaxLines(1)
+        .setEllipsize(android.text.TextUtils.TruncateAt.END)
+        .build()
+    val totalMetaH = titleLayout.height + 8f + artistLayout.height
+    val metaTop = padTop + (artSize - totalMetaH) / 2f
+    canvas.save()
+    canvas.translate(metaLeft, metaTop)
+    titleLayout.draw(canvas)
+    canvas.translate(0f, titleLayout.height + 8f)
+    artistLayout.draw(canvas)
+    canvas.restore()
+
+    // 3. Bold Spotify-style Lyrics Body (vertically balanced between header and footer)
+    val bodyAreaTop = padTop + artSize + headerToLyricsGap
+    val footerTop = h - padBottom - logoSize
+    val bodyAreaBottom = footerTop - lyricsToFooterGap
+    val extraSpace = (bodyAreaBottom - bodyAreaTop - bodyLayout.height).coerceAtLeast(0f)
+    val bodyDrawY = bodyAreaTop + extraSpace * 0.36f
+
+    canvas.save()
+    canvas.translate(padX, bodyDrawY)
     bodyLayout.draw(canvas)
     canvas.restore()
 
-    // 5. Subtle "AURA MUSIC" Footer
-    val footerY = h - 124f
-    val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = if (isCream) 0x26000000 else 0x2EFFFFFF
-        strokeWidth = 2f
+    // 4. Bottom-left Footer: Real Aura Music circular app logo + "Aura Music" wordmark
+    val logoRect = RectF(padX, footerTop, padX + logoSize, footerTop + logoSize)
+    val logoBitmap = AuraImageShareHelper.decodeAuraRoundLogo(context)
+    if (logoBitmap != null && !logoBitmap.isRecycled) {
+        val logoClip = Path().apply {
+            addOval(logoRect, Path.Direction.CW)
+        }
+        canvas.save()
+        canvas.clipPath(logoClip)
+        canvas.drawBitmap(logoBitmap, null, logoRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        canvas.restore()
+        logoBitmap.recycle()
     }
-    canvas.drawLine(contentLeft, footerY - 46f, contentRight, footerY - 46f, dividerPaint)
 
-    val accentPillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = accentColor }
-    canvas.drawRoundRect(
-        RectF(contentLeft, footerY - 14f, contentLeft + 18f, footerY + 4f),
-        9f, 9f, accentPillPaint
-    )
-
-    val footerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = secondaryTextColor
-        textSize = 26f
-        letterSpacing = 0.16f
-        typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+    val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = inkArgb
+        textSize = 40f
+        letterSpacing = -0.02f
+        typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
     }
-    canvas.drawText("AURA MUSIC", contentLeft + 34f, footerY + 4f, footerPaint)
+    val brandFm = brandPaint.fontMetrics
+    val brandBaselineY = logoRect.centerY() - (brandFm.ascent + brandFm.descent) / 2f
+    canvas.drawText("Aura Music", logoRect.right + 20f, brandBaselineY, brandPaint)
 
+    canvas.restore()
     return bitmap
 }
