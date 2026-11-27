@@ -187,8 +187,8 @@ fun AuraUpdateModal(
 
                 Spacer(modifier = Modifier.height(6.dp))
 
-                val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.2" }
-                val cleanRemote = release.version.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.3" }
+                val cleanCurrent = currentVersion.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.3" }
+                val cleanRemote = release.version.trim().removePrefix("v").removePrefix("V").ifBlank { "1.5.4" }
 
                 Row(
                     modifier = Modifier.padding(top = 6.dp),

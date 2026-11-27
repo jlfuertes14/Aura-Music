@@ -414,7 +414,7 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             null
         }
     }
-    val appVersionName = packageInfo?.versionName ?: "1.5.3"
+    val appVersionName = packageInfo?.versionName ?: "1.5.4"
 
     LazyColumn(
         modifier = Modifier
