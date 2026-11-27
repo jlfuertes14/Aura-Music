@@ -245,6 +245,9 @@ private fun formatGlobalOffsetLabel(offsetMs: Int): String {
     return "$sign${absMs / 1000}.${(absMs % 1000) / 100}s"
 }
 
+// Feature flag: keep Accounts & Integrations UI disabled until next version integration.
+private const val ENABLE_ACCOUNTS_SETTINGS = false
+
 @OptIn(coil.annotation.ExperimentalCoilApi::class, ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(viewModel: AuraViewModel) {
@@ -1111,66 +1114,68 @@ fun SettingsScreen(viewModel: AuraViewModel) {
             Spacer(modifier = Modifier.height(26.dp))
         }
 
-        // 9b. Accounts & Integrations
-        item {
-            SettingsCategoryHeader(title = "Accounts")
-            Spacer(modifier = Modifier.height(8.dp))
+        // 9b. Accounts & Integrations (deferred to next release)
+        if (ENABLE_ACCOUNTS_SETTINGS) {
+            item {
+                SettingsCategoryHeader(title = "Accounts")
+                Spacer(modifier = Modifier.height(8.dp))
 
-            SettingsSectionCard(containerColor = sectionCardColor) {
-                ModernClickableRow(
-                    icon = Icons.Rounded.AccountCircle,
-                    title = "YouTube Account",
-                    subtitle = if (ytmCookie.isNotBlank()) "Connected" else "Not connected",
-                    onClick = { showYtmCookieDialog = true },
-                    trailingContent = { SettingsChevron() }
-                )
+                SettingsSectionCard(containerColor = sectionCardColor) {
+                    ModernClickableRow(
+                        icon = Icons.Rounded.AccountCircle,
+                        title = "YouTube Account",
+                        subtitle = if (ytmCookie.isNotBlank()) "Connected" else "Not connected",
+                        onClick = { showYtmCookieDialog = true },
+                        trailingContent = { SettingsChevron() }
+                    )
 
-                SettingsDivider()
+                    SettingsDivider()
 
-                ModernSwitchRow(
-                    icon = Icons.Rounded.Radio,
-                    title = "Last.fm",
-                    subtitle = if (lastfmEnabled) "Active" else "Off",
-                    checked = lastfmEnabled,
-                    onCheckedChange = { viewModel.setLastfmEnabled(it) }
-                )
+                    ModernSwitchRow(
+                        icon = Icons.Rounded.Radio,
+                        title = "Last.fm",
+                        subtitle = if (lastfmEnabled) "Active" else "Off",
+                        checked = lastfmEnabled,
+                        onCheckedChange = { viewModel.setLastfmEnabled(it) }
+                    )
 
-                SettingsDivider()
+                    SettingsDivider()
 
-                ModernClickableRow(
-                    icon = Icons.Rounded.MusicNote,
-                    title = "Last.fm Account",
-                    subtitle = if (lastfmSessionKey.isNotBlank() && lastfmApiKey.isNotBlank()) {
-                        "Connected"
-                    } else {
-                        "Not connected"
-                    },
-                    onClick = { showLastfmDialog = true },
-                    trailingContent = { SettingsChevron() }
-                )
+                    ModernClickableRow(
+                        icon = Icons.Rounded.MusicNote,
+                        title = "Last.fm Account",
+                        subtitle = if (lastfmSessionKey.isNotBlank() && lastfmApiKey.isNotBlank()) {
+                            "Connected"
+                        } else {
+                            "Not connected"
+                        },
+                        onClick = { showLastfmDialog = true },
+                        trailingContent = { SettingsChevron() }
+                    )
 
-                SettingsDivider()
+                    SettingsDivider()
 
-                ModernSwitchRow(
-                    icon = Icons.Rounded.HeadsetMic,
-                    title = "Discord",
-                    subtitle = if (discordRpcEnabled) "Active" else "Off",
-                    checked = discordRpcEnabled,
-                    onCheckedChange = { viewModel.setDiscordRpcEnabled(it) }
-                )
+                    ModernSwitchRow(
+                        icon = Icons.Rounded.HeadsetMic,
+                        title = "Discord",
+                        subtitle = if (discordRpcEnabled) "Active" else "Off",
+                        checked = discordRpcEnabled,
+                        onCheckedChange = { viewModel.setDiscordRpcEnabled(it) }
+                    )
 
-                SettingsDivider()
+                    SettingsDivider()
 
-                ModernClickableRow(
-                    icon = Icons.Rounded.Key,
-                    title = "Discord Token",
-                    subtitle = if (discordToken.isNotBlank()) "Connected" else "Not connected",
-                    onClick = { showDiscordDialog = true },
-                    trailingContent = { SettingsChevron() }
-                )
+                    ModernClickableRow(
+                        icon = Icons.Rounded.Key,
+                        title = "Discord Token",
+                        subtitle = if (discordToken.isNotBlank()) "Connected" else "Not connected",
+                        onClick = { showDiscordDialog = true },
+                        trailingContent = { SettingsChevron() }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(26.dp))
             }
-
-            Spacer(modifier = Modifier.height(26.dp))
         }
 
         // 10. Updates & Notifications
