@@ -609,12 +609,11 @@ fun AuraNowPlayingSheet(
             if (isGlass) base.copy(alpha = 0.88f) else base
         }
 
-        // 3-Dot Options Bottom Sheet Modal
+        // 3-Dot Options Bottom Sheet Modal (streamlined to essential non-redundant song actions)
         if (isOptionsModalVisible) {
             AuraNowPlayingOptionsSheet(
                 track = track,
                 currentStyle = currentStyle,
-                isFavorite = isFavorite,
                 isVideoMode = isVideoMode,
                 modalContainerColor = modalContainerColor,
                 onDismiss = { isOptionsModalVisible = false },
@@ -627,46 +626,19 @@ fun AuraNowPlayingSheet(
                     onLoadLivePerformances()
                     isLivePerformancesModalVisible = true
                 },
-                onToggleTheme = {
-                    isOptionsModalVisible = false
-                    onToggleStyle()
-                },
-                mainLyricsProvider = mainLyricsProvider,
-                onSwitchLyricsProvider = { nextProvider ->
-                    isOptionsModalVisible = false
-                    onSwitchLyricsProvider(nextProvider)
-                    Toast.makeText(context, "Lyrics provider switched to $nextProvider", Toast.LENGTH_SHORT).show()
-                },
                 onGoToArtist = {
                     isOptionsModalVisible = false
                     onCollapse()
                     onOpenArtist(track.artist)
                 },
-                onToggleFavorite = {
-                    onToggleFavorite()
-                    isOptionsModalVisible = false
-                },
                 onAddToPlaylist = {
                     isOptionsModalVisible = false
                     isAddToPlaylistModalVisible = true
-                },
-                onPlayNext = {
-                    AuraPlayerManager.playNext(track)
-                    isOptionsModalVisible = false
-                },
-                onAddToQueue = {
-                    AuraPlayerManager.enqueueTrack(track)
-                    isOptionsModalVisible = false
                 },
                 isDownloaded = isDownloaded,
                 isDownloading = isDownloading,
                 onDownloadTrack = onDownloadTrack?.let { callback -> { isOptionsModalVisible = false; callback(track) } },
                 onRemoveDownload = onRemoveDownload?.let { callback -> { isOptionsModalVisible = false; callback(track) } },
-                sleepTimerStatus = sleepTimerStatus,
-                onOpenSleepTimer = {
-                    isOptionsModalVisible = false
-                    isSleepTimerSheetVisible = true
-                },
                 playbackSpeed = playbackSpeed,
                 playbackPitchSemitones = playbackPitchSemitones,
                 onOpenSpeedPitch = {
@@ -678,17 +650,7 @@ fun AuraNowPlayingSheet(
                     onRefreshOutputDevices()
                     isOutputSheetVisible = true
                 },
-                onOpenTrackInfo = {
-                    isOptionsModalVisible = false
-                    isTrackInfoSheetVisible = true
-                },
                 lyricsAvailable = lyricsAvailable,
-                hasTranslatedLyrics = translatedLyricsMap.isNotEmpty(),
-                isTranslatingLyrics = isTranslatingLyrics,
-                onTranslateLyrics = {
-                    isOptionsModalVisible = false
-                    onTranslateLyrics()
-                },
                 onShareLyricsCard = {
                     isOptionsModalVisible = false
                     if (lyricsAvailable) {
@@ -839,38 +801,26 @@ fun AuraNowPlayingSheet(
 private fun AuraNowPlayingOptionsSheet(
     track: AuraTrack,
     currentStyle: NowPlayingStyle,
-    isFavorite: Boolean,
     isVideoMode: Boolean,
     modalContainerColor: Color,
     onDismiss: () -> Unit,
     onToggleVideoMode: () -> Unit,
     onOpenLivePerformances: () -> Unit,
-    onToggleTheme: () -> Unit,
-    mainLyricsProvider: String,
-    onSwitchLyricsProvider: (String) -> Unit,
     onGoToArtist: () -> Unit,
-    onToggleFavorite: () -> Unit,
     onAddToPlaylist: () -> Unit,
-    onPlayNext: () -> Unit,
-    onAddToQueue: () -> Unit,
     isDownloaded: Boolean,
     isDownloading: Boolean,
     onDownloadTrack: (() -> Unit)?,
     onRemoveDownload: (() -> Unit)?,
-    sleepTimerStatus: String?,
-    onOpenSleepTimer: () -> Unit,
     playbackSpeed: Float,
     playbackPitchSemitones: Int,
     onOpenSpeedPitch: () -> Unit,
     onOpenOutputRouter: () -> Unit,
-    onOpenTrackInfo: () -> Unit,
     lyricsAvailable: Boolean,
-    hasTranslatedLyrics: Boolean,
-    isTranslatingLyrics: Boolean,
-    onTranslateLyrics: () -> Unit,
     onShareLyricsCard: () -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val isSpotifyStyle = currentStyle == NowPlayingStyle.SPOTIFY
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
@@ -929,54 +879,10 @@ private fun AuraNowPlayingOptionsSheet(
             HorizontalDivider(color = Color.White.copy(alpha = 0.08f), thickness = 0.5.dp)
             Spacer(modifier = Modifier.height(8.dp))
 
-            val speedPitchLabel = if (playbackSpeed != 1.0f || playbackPitchSemitones != 0) {
-                val speedTxt = String.format(Locale.US, "%.2fx", playbackSpeed)
-                val pitchTxt = if (playbackPitchSemitones == 0) "" else " · ${if (playbackPitchSemitones > 0) "+$playbackPitchSemitones" else "$playbackPitchSemitones"}st"
-                "Speed & Pitch ($speedTxt$pitchTxt)"
-            } else {
-                "Speed & Pitch"
-            }
             OptionsSheetRow(
-                icon = Icons.Rounded.Speed,
-                label = speedPitchLabel,
-                accentTint = playbackSpeed != 1.0f || playbackPitchSemitones != 0,
-                onClick = onOpenSpeedPitch
-            )
-            OptionsSheetRow(
-                icon = Icons.Rounded.SpeakerGroup,
-                label = "Audio Output",
-                onClick = onOpenOutputRouter
-            )
-            OptionsSheetRow(
-                icon = Icons.Rounded.Info,
-                label = "Track Info",
-                onClick = onOpenTrackInfo
-            )
-            if (lyricsAvailable) {
-                OptionsSheetRow(
-                    icon = Icons.Rounded.Translate,
-                    label = when {
-                        isTranslatingLyrics -> "Translating…"
-                        hasTranslatedLyrics -> "Hide Translation"
-                        else -> "Translate Lyrics"
-                    },
-                    accentTint = hasTranslatedLyrics,
-                    onClick = onTranslateLyrics
-                )
-                OptionsSheetRow(
-                    icon = Icons.Rounded.Share,
-                    label = "Share Lyrics",
-                    onClick = onShareLyricsCard
-                )
-            }
-
-            HorizontalDivider(color = Color.White.copy(alpha = 0.06f), thickness = 0.5.dp)
-            Spacer(modifier = Modifier.height(4.dp))
-
-            OptionsSheetRow(
-                icon = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
-                label = if (isVideoMode) "Switch to Audio" else "Watch Video",
-                onClick = onToggleVideoMode
+                icon = Icons.Rounded.PlaylistAdd,
+                label = "Add to Playlist",
+                onClick = onAddToPlaylist
             )
 
             if (isDownloaded && onRemoveDownload != null) {
@@ -996,59 +902,54 @@ private fun AuraNowPlayingOptionsSheet(
             }
 
             OptionsSheetRow(
+                icon = Icons.Rounded.Person,
+                label = "View Artist",
+                onClick = onGoToArtist
+            )
+
+            if (isSpotifyStyle) {
+                OptionsSheetRow(
+                    icon = if (isVideoMode) Icons.Rounded.Audiotrack else Icons.Rounded.Videocam,
+                    label = if (isVideoMode) "Switch to Audio" else "Watch Video",
+                    onClick = onToggleVideoMode
+                )
+            }
+
+            OptionsSheetRow(
                 icon = Icons.Rounded.LiveTv,
                 label = "More Videos",
                 onClick = onOpenLivePerformances
             )
 
-            val nextThemeLabel = if (currentStyle == NowPlayingStyle.SPOTIFY) "Liquid Glass" else "Default"
-            OptionsSheetRow(
-                icon = Icons.Rounded.Palette,
-                label = "Switch to $nextThemeLabel",
-                onClick = onToggleTheme
-            )
+            // Apple Music style keeps Speed & Pitch and Audio Output here (Spotify Encore shows them inline)
+            if (!isSpotifyStyle) {
+                val speedPitchLabel = if (playbackSpeed != 1.0f || playbackPitchSemitones != 0) {
+                    val speedTxt = String.format(Locale.US, "%.2fx", playbackSpeed)
+                    val pitchTxt = if (playbackPitchSemitones == 0) "" else " · ${if (playbackPitchSemitones > 0) "+$playbackPitchSemitones" else "$playbackPitchSemitones"}st"
+                    "Speed & Pitch ($speedTxt$pitchTxt)"
+                } else {
+                    "Speed & Pitch"
+                }
+                OptionsSheetRow(
+                    icon = Icons.Rounded.Speed,
+                    label = speedPitchLabel,
+                    accentTint = playbackSpeed != 1.0f || playbackPitchSemitones != 0,
+                    onClick = onOpenSpeedPitch
+                )
+                OptionsSheetRow(
+                    icon = Icons.Rounded.SpeakerGroup,
+                    label = "Audio Output",
+                    onClick = onOpenOutputRouter
+                )
+            }
 
-            val providers = listOf("SimpMusic", "BetterLyrics", "LRCLIB", "YouTube")
-            val curIdx = providers.indexOfFirst { it.equals(mainLyricsProvider, ignoreCase = true) }
-            val nextLyricsProvider = providers[(curIdx + 1).mod(providers.size)]
-            OptionsSheetRow(
-                icon = Icons.Rounded.Lyrics,
-                label = "Lyrics Source: $mainLyricsProvider",
-                onClick = { onSwitchLyricsProvider(nextLyricsProvider) }
-            )
-
-            OptionsSheetRow(
-                icon = Icons.Rounded.Bedtime,
-                label = if (sleepTimerStatus != null) "Sleep Timer ($sleepTimerStatus)" else "Sleep Timer",
-                accentTint = sleepTimerStatus != null,
-                onClick = onOpenSleepTimer
-            )
-
-            OptionsSheetRow(
-                icon = Icons.Rounded.Person,
-                label = "View Artist",
-                onClick = onGoToArtist
-            )
-            OptionsSheetRow(
-                icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
-                label = if (isFavorite) "Remove from Liked" else "Like Song",
-                onClick = onToggleFavorite
-            )
-            OptionsSheetRow(
-                icon = Icons.Rounded.PlaylistAdd,
-                label = "Add to Playlist",
-                onClick = onAddToPlaylist
-            )
-            OptionsSheetRow(
-                icon = Icons.AutoMirrored.Rounded.QueueMusic,
-                label = "Play Next",
-                onClick = onPlayNext
-            )
-            OptionsSheetRow(
-                icon = Icons.Rounded.PlaylistAdd,
-                label = "Add to Queue",
-                onClick = onAddToQueue
-            )
+            if (lyricsAvailable) {
+                OptionsSheetRow(
+                    icon = Icons.Rounded.Share,
+                    label = "Share Lyrics",
+                    onClick = onShareLyricsCard
+                )
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
         }
