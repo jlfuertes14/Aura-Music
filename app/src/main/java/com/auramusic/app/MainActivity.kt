@@ -140,7 +140,10 @@ class MainActivity : ComponentActivity() {
 
                 CompositionLocalProvider(LocalIsInPipMode provides isInPipMode) {
                     Box(modifier = Modifier.fillMaxSize()) {
-                        AuraMainScreen(viewModel = auraViewModel)
+                        AuraMainScreen(
+                            viewModel = auraViewModel,
+                            isSplashActive = isSplashActive
+                        )
 
                         if (isInPipMode) {
                             PipVideoOnlyPlayer()

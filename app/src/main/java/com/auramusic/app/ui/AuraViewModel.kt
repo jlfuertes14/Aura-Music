@@ -122,6 +122,9 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
     private val _deepLinkExpandPlayer = MutableStateFlow(false)
     val deepLinkExpandPlayer: StateFlow<Boolean> = _deepLinkExpandPlayer.asStateFlow()
 
+    private val _showStarPrompt = MutableStateFlow(false)
+    val showStarPrompt: StateFlow<Boolean> = _showStarPrompt.asStateFlow()
+
     init {
         library = LibraryCoordinator(
             application = application,
@@ -178,8 +181,46 @@ class AuraViewModel(application: Application) : AndroidViewModel(application) {
         discovery.refreshHome()
         refreshAnalytics()
         refreshCachedTracks()
+        evaluateStarPromptOnLaunch(application)
         // Pre-warm the default seed track so first tap is instant
         SimpMusicExtractorEngine.prefetchStream(SimpMusicExtractorEngine.DEFAULT_SEED_TRACKS.first().videoId)
+    }
+
+    private fun evaluateStarPromptOnLaunch(application: Application) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val prefs = com.auramusic.app.data.prefs.AuraPreferencesStore.getInstance(application)
+            val hasStarred = prefs.getBoolean(
+                com.auramusic.app.data.prefs.AuraPreferencesStore.Keys.HAS_STARRED_REPO,
+                false
+            )
+            if (hasStarred) return@launch
+            val nextOpenCount = prefs.getInt(
+                com.auramusic.app.data.prefs.AuraPreferencesStore.Keys.STAR_PROMPT_OPEN_COUNT,
+                0
+            ) + 1
+            prefs.putInt(
+                com.auramusic.app.data.prefs.AuraPreferencesStore.Keys.STAR_PROMPT_OPEN_COUNT,
+                nextOpenCount
+            )
+            if (nextOpenCount == 1 || (nextOpenCount % 5 == 0 && nextOpenCount <= 50)) {
+                _showStarPrompt.value = true
+            }
+        }
+    }
+
+    fun dismissStarPromptLater() {
+        _showStarPrompt.value = false
+    }
+
+    fun markRepoStarred() {
+        _showStarPrompt.value = false
+        val app = getApplication<Application>()
+        viewModelScope.launch(Dispatchers.IO) {
+            com.auramusic.app.data.prefs.AuraPreferencesStore.getInstance(app).putBoolean(
+                com.auramusic.app.data.prefs.AuraPreferencesStore.Keys.HAS_STARRED_REPO,
+                true
+            )
+        }
     }
 
     // Home Charts & Moods

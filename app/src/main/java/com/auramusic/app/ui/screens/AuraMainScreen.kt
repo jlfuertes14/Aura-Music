@@ -138,6 +138,7 @@ import com.auramusic.app.domain.model.ArtistCarouselItem
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.DetailScreenEntry
+import com.auramusic.app.ui.components.AuraStarPromptDialog
 import com.auramusic.app.ui.components.AuraUpdateModal
 import com.auramusic.app.ui.screens.player.applemusic.appleMusicVerticalFadeEdges
 import com.auramusic.app.ui.screens.player.applemusic.prewarmAppleMusicArtwork
@@ -188,7 +189,10 @@ private class NonUniformScaledRoundedShape(
 }
 
 @Composable
-fun AuraMainScreen(viewModel: AuraViewModel) {
+fun AuraMainScreen(
+    viewModel: AuraViewModel,
+    isSplashActive: Boolean = false
+) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var isPlayerExpanded by rememberSaveable { mutableStateOf(false) }
     var isPlayerCollapseTransition by remember { mutableStateOf(false) }
@@ -1335,6 +1339,24 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             onUpdateNow = { release -> viewModel.downloadAndInstallUpdate(release) },
             onInstallNow = { release -> viewModel.installDownloadedApk(release) }
         )
+
+        // SimpMusic-style GitHub Star Reminder Dialog on App Open
+        val showStarPrompt by viewModel.showStarPrompt.collectAsState()
+        var isStarPromptReady by remember { mutableStateOf(false) }
+        LaunchedEffect(showStarPrompt, isSplashActive, isUpdateModalVisible, isPlayerExpanded) {
+            if (showStarPrompt && !isSplashActive && !isUpdateModalVisible && !isPlayerExpanded) {
+                kotlinx.coroutines.delay(420L)
+                isStarPromptReady = true
+            } else {
+                isStarPromptReady = false
+            }
+        }
+        if (isStarPromptReady && showStarPrompt && !isUpdateModalVisible) {
+            AuraStarPromptDialog(
+                onDismissLater = { viewModel.dismissStarPromptLater() },
+                onGiveStar = { viewModel.markRepoStarred() }
+            )
+        }
     }
     }
 }

@@ -67,6 +67,8 @@ class AuraPreferencesStore private constructor(context: Context) {
         val SPOTIFY_RESOLVED_CACHE_JSON = stringPreferencesKey("spotify_resolved_cache_json")
         val SAVED_QUEUE_INDEX = intPreferencesKey("saved_queue_index")
         val SAVED_QUEUE_POSITION_MS = longPreferencesKey("saved_queue_position_ms")
+        val HAS_STARRED_REPO = booleanPreferencesKey("has_starred_repo")
+        val STAR_PROMPT_OPEN_COUNT = intPreferencesKey("star_prompt_open_count")
     }
 
     private val dataStore = context.applicationContext.auraPreferencesDataStore
