@@ -24,11 +24,13 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,6 +45,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -100,6 +103,8 @@ import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
+import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.contrastInk
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -144,8 +149,11 @@ fun AnalyticsScreen(
     onBack: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
+    val isGlass = LocalLiquidGlassEnabled.current
+    val isDark = auraColors.isDark
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val statsListState = rememberLazyListState()
 
     var showWrapped by remember { mutableStateOf(false) }
     var isSharingReceipt by remember { mutableStateOf(false) }
@@ -181,267 +189,371 @@ fun AnalyticsScreen(
             .fillMaxSize()
             .background(auraColors.background)
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-        ) {
-            // Top Editorial Header
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(auraColors.circleButtonBg)
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        contentDescription = "Back",
-                        tint = auraColors.textPrimary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Text(
-                    text = "Stats",
-                    color = auraColors.textPrimary,
-                    fontSize = 22.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = (-0.4).sp
+        // Subtle ambient luminous bloom behind Stats panels when Liquid Glass theme is active
+        if (isGlass) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            auraColors.accent.copy(alpha = if (isDark) 0.14f else 0.13f),
+                            Color.Transparent
+                        ),
+                        center = Offset(w * 0.90f, h * 0.12f),
+                        radius = w * 0.85f
+                    ),
+                    radius = w * 0.85f,
+                    center = Offset(w * 0.90f, h * 0.12f)
+                )
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(
+                            Color(0xFF7C3AED).copy(alpha = if (isDark) 0.14f else 0.10f),
+                            Color.Transparent
+                        ),
+                        center = Offset(w * 0.12f, h * 0.44f),
+                        radius = w * 0.80f
+                    ),
+                    radius = w * 0.80f,
+                    center = Offset(w * 0.12f, h * 0.44f)
                 )
             }
+        }
 
-            // Borderless Horizontal Range Pills
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 20.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.padding(bottom = 14.dp)
+        // 1. Stats Screen (slides out to the left when Wrapped opens, slides back in from the left on close)
+        AnimatedVisibility(
+            visible = !showWrapped,
+            enter = slideInHorizontally(
+                initialOffsetX = { fullWidth -> -fullWidth },
+                animationSpec = tween(durationMillis = 280, easing = WrappedSlideEasing)
+            ) + fadeIn(animationSpec = tween(durationMillis = 200, easing = WrappedSlideEasing)),
+            exit = slideOutHorizontally(
+                targetOffsetX = { fullWidth -> -fullWidth },
+                animationSpec = tween(durationMillis = 260, easing = WrappedSlideEasing)
+            ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = WrappedSlideEasing)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .statusBarsPadding()
             ) {
-                items(AnalyticsRange.entries) { range ->
-                    val isSelected = range == selectedRange
-                    Box(
+                // Top Editorial Header
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = onBack,
                         modifier = Modifier
-                            .clip(CircleShape)
-                            .background(
-                                if (isSelected) auraColors.accent else auraColors.pillInactiveBg
+                            .size(44.dp)
+                            .auraGlassSurface(
+                                shape = CircleShape,
+                                selected = false,
+                                fallbackColor = auraColors.circleButtonBg,
+                                glassAlpha = 0.12f,
+                                borderTopAlpha = 0.34f,
+                                borderBottomAlpha = 0.08f
                             )
-                            .clickable { onSelectRange(range) }
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
                     ) {
-                        Text(
-                            text = range.label,
-                            color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Back",
+                            tint = auraColors.textPrimary,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                }
-            }
-
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 120.dp)
-            ) {
-                // 1. Open Editorial Hero Stat Strip (Zero boxed cards)
-                item {
-                    EditorialHeroStatStrip(
-                        snapshot = snapshot,
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary,
-                        textMuted = auraColors.textMuted,
-                        dividerColor = auraColors.divider
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        text = "Stats",
+                        color = auraColors.textPrimary,
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = (-0.4).sp
                     )
                 }
 
-                // 2. Borderless Aura Wrapped Banner
-                item {
-                    Spacer(modifier = Modifier.height(20.dp))
-                    WrappedEditorialBanner(
-                        rangeLabel = selectedRange.label,
-                        accentColor = auraColors.accent,
-                        onAccentColor = auraColors.onAccent,
-                        onOpenWrapped = { showWrapped = true }
-                    )
-                    Spacer(modifier = Modifier.height(26.dp))
+                // Horizontal Range Pills (frosted Liquid Glass capsules when glass theme is selected)
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(bottom = 14.dp)
+                ) {
+                    items(AnalyticsRange.entries) { range ->
+                        val isSelected = range == selectedRange
+                        Box(
+                            modifier = Modifier
+                                .then(
+                                    if (isSelected) {
+                                        Modifier
+                                            .clip(CircleShape)
+                                            .background(auraColors.accent)
+                                            .then(
+                                                if (isGlass) {
+                                                    Modifier.border(
+                                                        width = 0.8.dp,
+                                                        brush = Brush.verticalGradient(
+                                                            colors = listOf(
+                                                                Color.White.copy(alpha = 0.55f),
+                                                                Color.Transparent
+                                                            )
+                                                        ),
+                                                        shape = CircleShape
+                                                    )
+                                                } else {
+                                                    Modifier
+                                                }
+                                            )
+                                    } else {
+                                        Modifier.auraGlassSurface(
+                                            shape = CircleShape,
+                                            selected = false,
+                                            fallbackColor = auraColors.pillInactiveBg
+                                        )
+                                    }
+                                )
+                                .clickable { onSelectRange(range) }
+                                .padding(horizontal = 16.dp, vertical = 8.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = range.label,
+                                color = if (isSelected) auraColors.onAccent else auraColors.pillInactiveText,
+                                fontSize = 13.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold
+                            )
+                        }
+                    }
                 }
 
-                // 3. Borderless 24-Hour Listening Clock directly on canvas
-                item {
-                    ListeningClockSection(
-                        hourlyCounts = snapshot.hourlyCounts,
-                        peakHourLabel = snapshot.peakHourLabel,
-                        accentColor = auraColors.accent,
-                        readableAccentText = readableAccentText,
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary,
-                        textMuted = auraColors.textMuted,
-                        dividerColor = auraColors.divider
-                    )
-                    Spacer(modifier = Modifier.height(24.dp))
-                    HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-
-                // 4. Borderless Top Songs
-                item {
-                    SectionHeader(
-                        title = "Top Songs",
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (snapshot.topTracks.isEmpty()) {
-                        EmptyInsightNote(
-                            text = "Play a few songs to see your stats",
-                            color = auraColors.textMuted
-                        )
-                    } else {
-                        val tracks = snapshot.topTracks.take(10)
-                        tracks.forEachIndexed { index, (track, plays) ->
-                            EditorialTrackRow(
-                                rank = index + 1,
-                                track = track,
-                                plays = plays,
-                                accentText = readableAccentText,
-                                placeholderColor = auraColors.surfaceCard,
+                LazyColumn(
+                    state = statsListState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 120.dp)
+                ) {
+                    // 1. Hero Stat Strip (borderless in Default; frosted Liquid Glass card in Liquid Glass)
+                    item {
+                        StatsGlassSection(isGlass = isGlass, isDark = isDark) {
+                            EditorialHeroStatStrip(
+                                snapshot = snapshot,
                                 textPrimary = auraColors.textPrimary,
                                 textSecondary = auraColors.textSecondary,
                                 textMuted = auraColors.textMuted,
-                                onClick = { onPlayTrack(track) }
+                                dividerColor = auraColors.divider,
+                                showOuterDivider = !isGlass
                             )
-                            if (index < tracks.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(start = 88.dp),
-                                    thickness = 0.5.dp,
-                                    color = auraColors.divider
+                        }
+                    }
+
+                    // 2. Aura Wrapped Banner
+                    item {
+                        Spacer(modifier = Modifier.height(if (isGlass) 14.dp else 20.dp))
+                        WrappedEditorialBanner(
+                            rangeLabel = selectedRange.label,
+                            accentColor = auraColors.accent,
+                            onAccentColor = auraColors.onAccent,
+                            isGlass = isGlass,
+                            isDark = isDark,
+                            onOpenWrapped = { showWrapped = true }
+                        )
+                        Spacer(modifier = Modifier.height(if (isGlass) 16.dp else 26.dp))
+                    }
+
+                    // 3. 24-Hour Listening Clock
+                    item {
+                        StatsGlassSection(isGlass = isGlass, isDark = isDark) {
+                            ListeningClockSection(
+                                hourlyCounts = snapshot.hourlyCounts,
+                                peakHourLabel = snapshot.peakHourLabel,
+                                accentColor = auraColors.accent,
+                                readableAccentText = readableAccentText,
+                                textPrimary = auraColors.textPrimary,
+                                textSecondary = auraColors.textSecondary,
+                                textMuted = auraColors.textMuted,
+                                dividerColor = auraColors.divider
+                            )
+                        }
+                        if (isGlass) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                        } else {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
+                            Spacer(modifier = Modifier.height(24.dp))
+                        }
+                    }
+
+                    // 4. Top Songs
+                    item {
+                        StatsGlassSection(isGlass = isGlass, isDark = isDark) {
+                            SectionHeader(
+                                title = "Top Songs",
+                                textPrimary = auraColors.textPrimary,
+                                textSecondary = auraColors.textSecondary
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (snapshot.topTracks.isEmpty()) {
+                                EmptyInsightNote(
+                                    text = "Play a few songs to see your stats",
+                                    color = auraColors.textMuted
                                 )
+                            } else {
+                                val tracks = snapshot.topTracks.take(10)
+                                tracks.forEachIndexed { index, (track, plays) ->
+                                    EditorialTrackRow(
+                                        rank = index + 1,
+                                        track = track,
+                                        plays = plays,
+                                        accentText = readableAccentText,
+                                        placeholderColor = auraColors.surfaceCard,
+                                        textPrimary = auraColors.textPrimary,
+                                        textSecondary = auraColors.textSecondary,
+                                        textMuted = auraColors.textMuted,
+                                        onClick = { onPlayTrack(track) }
+                                    )
+                                    if (index < tracks.lastIndex) {
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(start = 88.dp),
+                                            thickness = 0.5.dp,
+                                            color = auraColors.divider
+                                        )
+                                    }
+                                }
                             }
+                        }
+
+                        if (isGlass) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                        } else {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
+                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-
-                // 5. Borderless Top Artists
-                item {
-                    val maxArtistPlays = snapshot.topArtists.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
-                    SectionHeader(
-                        title = "Top Artists",
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (snapshot.topArtists.isEmpty()) {
-                        EmptyInsightNote(
-                            text = "Play a few songs to see your stats",
-                            color = auraColors.textMuted
-                        )
-                    } else {
-                        val artists = snapshot.topArtists.take(8)
-                        artists.forEachIndexed { index, (artist, plays) ->
-                            EditorialRankedBarRow(
-                                rank = index + 1,
-                                label = artist,
-                                countLabel = "$plays ${if (plays == 1) "play" else "plays"}",
-                                fraction = (plays.toFloat() / maxArtistPlays).coerceIn(0.06f, 1f),
-                                barColor = auraColors.accent,
-                                trackBg = auraColors.textMuted.copy(alpha = 0.16f),
-                                rankColor = if (index < 3) readableAccentText else auraColors.textMuted,
+                    // 5. Top Artists
+                    item {
+                        val maxArtistPlays = snapshot.topArtists.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
+                        StatsGlassSection(isGlass = isGlass, isDark = isDark) {
+                            SectionHeader(
+                                title = "Top Artists",
                                 textPrimary = auraColors.textPrimary,
-                                textMuted = auraColors.textMuted
+                                textSecondary = auraColors.textSecondary
                             )
-                            if (index < artists.lastIndex) {
-                                Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (snapshot.topArtists.isEmpty()) {
+                                EmptyInsightNote(
+                                    text = "Play a few songs to see your stats",
+                                    color = auraColors.textMuted
+                                )
+                            } else {
+                                val artists = snapshot.topArtists.take(8)
+                                artists.forEachIndexed { index, (artist, plays) ->
+                                    EditorialRankedBarRow(
+                                        rank = index + 1,
+                                        label = artist,
+                                        countLabel = "$plays ${if (plays == 1) "play" else "plays"}",
+                                        fraction = (plays.toFloat() / maxArtistPlays).coerceIn(0.06f, 1f),
+                                        barColor = auraColors.accent,
+                                        trackBg = auraColors.textMuted.copy(alpha = 0.16f),
+                                        rankColor = if (index < 3) readableAccentText else auraColors.textMuted,
+                                        textPrimary = auraColors.textPrimary,
+                                        textMuted = auraColors.textMuted
+                                    )
+                                    if (index < artists.lastIndex) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                    }
+                                }
                             }
+                        }
+
+                        if (isGlass) {
+                            Spacer(modifier = Modifier.height(16.dp))
+                        } else {
+                            Spacer(modifier = Modifier.height(24.dp))
+                            HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
+                            Spacer(modifier = Modifier.height(24.dp))
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(24.dp))
-                    HorizontalDivider(thickness = 0.5.dp, color = auraColors.divider)
-                    Spacer(modifier = Modifier.height(24.dp))
-                }
-
-                // 6. Borderless Top Genres
-                item {
-                    val maxGenrePlays = snapshot.topGenres.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
-                    SectionHeader(
-                        title = "Top Genres",
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    if (snapshot.topGenres.isEmpty()) {
-                        EmptyInsightNote(
-                            text = "Play a few songs to see your stats",
-                            color = auraColors.textMuted
-                        )
-                    } else {
-                        val genres = snapshot.topGenres.take(6)
-                        genres.forEachIndexed { index, (genre, plays) ->
-                            EditorialRankedBarRow(
-                                rank = index + 1,
-                                label = genre,
-                                countLabel = "$plays ${if (plays == 1) "play" else "plays"}",
-                                fraction = (plays.toFloat() / maxGenrePlays).coerceIn(0.06f, 1f),
-                                barColor = auraColors.accent.copy(alpha = 0.85f),
-                                trackBg = auraColors.textMuted.copy(alpha = 0.16f),
-                                rankColor = if (index < 3) readableAccentText else auraColors.textMuted,
+                    // 6. Top Genres
+                    item {
+                        val maxGenrePlays = snapshot.topGenres.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
+                        StatsGlassSection(isGlass = isGlass, isDark = isDark) {
+                            SectionHeader(
+                                title = "Top Genres",
                                 textPrimary = auraColors.textPrimary,
-                                textMuted = auraColors.textMuted
+                                textSecondary = auraColors.textSecondary
                             )
-                            if (index < genres.lastIndex) {
-                                Spacer(modifier = Modifier.height(6.dp))
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            if (snapshot.topGenres.isEmpty()) {
+                                EmptyInsightNote(
+                                    text = "Play a few songs to see your stats",
+                                    color = auraColors.textMuted
+                                )
+                            } else {
+                                val genres = snapshot.topGenres.take(6)
+                                genres.forEachIndexed { index, (genre, plays) ->
+                                    EditorialRankedBarRow(
+                                        rank = index + 1,
+                                        label = genre,
+                                        countLabel = "$plays ${if (plays == 1) "play" else "plays"}",
+                                        fraction = (plays.toFloat() / maxGenrePlays).coerceIn(0.06f, 1f),
+                                        barColor = auraColors.accent.copy(alpha = 0.85f),
+                                        trackBg = auraColors.textMuted.copy(alpha = 0.16f),
+                                        rankColor = if (index < 3) readableAccentText else auraColors.textMuted,
+                                        textPrimary = auraColors.textPrimary,
+                                        textMuted = auraColors.textMuted
+                                    )
+                                    if (index < genres.lastIndex) {
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                    }
+                                }
                             }
                         }
+
+                        Spacer(modifier = Modifier.height(if (isGlass) 20.dp else 28.dp))
                     }
 
-                    Spacer(modifier = Modifier.height(28.dp))
-                }
-
-                // 7. Thermal Listening Receipt (Zero border strokes, primary Share button uses accent + onAccent)
-                item {
-                    SectionHeader(
-                        title = "Receipt",
-                        textPrimary = auraColors.textPrimary,
-                        textSecondary = auraColors.textSecondary
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    ThermalReceiptCard(
-                        snapshot = snapshot,
-                        accentColor = auraColors.accent,
-                        onAccentColor = auraColors.onAccent,
-                        isSharing = isSharingReceipt,
-                        onShareReceipt = shareReceipt
-                    )
+                    // 7. Thermal Listening Receipt
+                    item {
+                        SectionHeader(
+                            title = "Receipt",
+                            textPrimary = auraColors.textPrimary,
+                            textSecondary = auraColors.textSecondary
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        ThermalReceiptCard(
+                            snapshot = snapshot,
+                            accentColor = auraColors.accent,
+                            onAccentColor = auraColors.onAccent,
+                            isGlass = isGlass,
+                            isSharing = isSharingReceipt,
+                            onShareReceipt = shareReceipt
+                        )
+                    }
                 }
             }
         }
 
-        // Aura Wrapped Full-Bleed Z-Index Overlay (blocks all touches to underlying Stats screen)
+        // 2. Aura Wrapped Full-Bleed Z-Index Overlay (slides in from right -> left; slides back out to right on close)
         AnimatedVisibility(
             visible = showWrapped,
             enter = slideInHorizontally(
                 initialOffsetX = { it },
-                animationSpec = tween(durationMillis = 270, easing = WrappedSlideEasing)
-            ) + fadeIn(animationSpec = tween(durationMillis = 200)),
+                animationSpec = tween(durationMillis = 280, easing = WrappedSlideEasing)
+            ) + fadeIn(animationSpec = tween(durationMillis = 200, easing = WrappedSlideEasing)),
             exit = slideOutHorizontally(
                 targetOffsetX = { it },
-                animationSpec = tween(durationMillis = 270, easing = WrappedSlideEasing)
-            ) + fadeOut(animationSpec = tween(durationMillis = 180)),
+                animationSpec = tween(durationMillis = 260, easing = WrappedSlideEasing)
+            ) + fadeOut(animationSpec = tween(durationMillis = 180, easing = WrappedSlideEasing)),
             modifier = Modifier
                 .fillMaxSize()
                 .zIndex(50f)
@@ -450,6 +562,7 @@ fun AnalyticsScreen(
                 snapshot = snapshot,
                 accentColor = auraColors.accent,
                 onAccentColor = auraColors.onAccent,
+                isGlass = isGlass,
                 restoreDarkSystemBars = auraColors.isDark,
                 onPlayTrack = onPlayTrack,
                 onShareReceipt = shareReceipt,
@@ -460,12 +573,86 @@ fun AnalyticsScreen(
 }
 
 @Composable
+private fun StatsGlassSection(
+    isGlass: Boolean,
+    isDark: Boolean,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    if (!isGlass) {
+        Column(modifier = Modifier.fillMaxWidth(), content = content)
+        return
+    }
+    val shape = RoundedCornerShape(22.dp)
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(
+                Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.11f),
+                            Color.White.copy(alpha = 0.05f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.86f),
+                            Color(0xFFF2F4F9).copy(alpha = 0.70f)
+                        )
+                    }
+                )
+            )
+            .border(
+                width = 0.85.dp,
+                brush = Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.34f),
+                            Color.White.copy(alpha = 0.12f),
+                            Color.White.copy(alpha = 0.06f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.94f),
+                            Color.White.copy(alpha = 0.48f),
+                            Color.Black.copy(alpha = 0.07f)
+                        )
+                    }
+                ),
+                shape = shape
+            )
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(
+                    Brush.radialGradient(
+                        colors = listOf(
+                            Color.White.copy(alpha = if (isDark) 0.12f else 0.42f),
+                            Color.Transparent
+                        ),
+                        center = Offset(56f, 26f),
+                        radius = 340f
+                    )
+                )
+        )
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+            content = content
+        )
+    }
+}
+
+@Composable
 private fun EditorialHeroStatStrip(
     snapshot: AnalyticsSnapshot,
     textPrimary: Color,
     textSecondary: Color,
     textMuted: Color,
-    dividerColor: Color
+    dividerColor: Color,
+    showOuterDivider: Boolean = true
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(
@@ -577,8 +764,10 @@ private fun EditorialHeroStatStrip(
             }
         }
 
-        Spacer(modifier = Modifier.height(12.dp))
-        HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
+        if (showOuterDivider) {
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(thickness = 0.5.dp, color = dividerColor)
+        }
     }
 }
 
@@ -587,60 +776,111 @@ private fun WrappedEditorialBanner(
     rangeLabel: String,
     accentColor: Color,
     onAccentColor: Color,
+    isGlass: Boolean,
+    isDark: Boolean,
     onOpenWrapped: () -> Unit
 ) {
     val bannerTop = Color(0xFF231842)
     val bannerBottom = Color(0xFF151926)
     val bannerInk = bannerTop.contrastInk()
-    val bannerAccent = if (accentColor.luminance() > 0.35f) accentColor else AuraNeonLime
+    val bannerShape = RoundedCornerShape(if (isGlass) 22.dp else 16.dp)
 
-    Row(
-        modifier = Modifier
+    val containerModifier = if (isGlass) {
+        Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(bannerShape)
+            .background(if (isDark) Color(0xFF161326).copy(alpha = 0.72f) else Color(0xFF231842).copy(alpha = 0.86f))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Color(0xFF5B35C9).copy(alpha = if (isDark) 0.54f else 0.62f),
+                        Color(0xFF241749).copy(alpha = if (isDark) 0.44f else 0.58f),
+                        Color(0xFF12182B).copy(alpha = if (isDark) 0.60f else 0.68f)
+                    )
+                )
+            )
+            .border(
+                width = 0.85.dp,
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.46f),
+                        Color(0xFF9F7AEA).copy(alpha = 0.28f),
+                        Color.White.copy(alpha = 0.10f)
+                    )
+                ),
+                shape = bannerShape
+            )
+            .clickable { onOpenWrapped() }
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .clip(bannerShape)
             .background(Brush.linearGradient(colors = listOf(bannerTop, bannerBottom)))
             .clickable { onOpenWrapped() }
-            .padding(horizontal = 18.dp, vertical = 18.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = "Wrapped",
-                color = bannerInk,
-                fontSize = 19.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = (-0.2).sp
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "$rangeLabel summary",
-                color = bannerInk.copy(alpha = 0.72f),
-                fontSize = 12.5.sp
+    }
+
+    Box(modifier = containerModifier) {
+        if (isGlass) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.20f),
+                                Color.Transparent
+                            ),
+                            center = Offset(52f, 24f),
+                            radius = 300f
+                        )
+                    )
             )
         }
-        Spacer(modifier = Modifier.width(12.dp))
         Row(
             modifier = Modifier
-                .clip(CircleShape)
-                .background(accentColor)
-                .clickable { onOpenWrapped() }
-                .padding(horizontal = 14.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 18.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            Icon(
-                imageVector = Icons.Rounded.BarChart,
-                contentDescription = null,
-                tint = onAccentColor,
-                modifier = Modifier.size(16.dp)
-            )
-            Spacer(modifier = Modifier.width(5.dp))
-            Text(
-                text = "Open",
-                color = onAccentColor,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "Wrapped",
+                    color = bannerInk,
+                    fontSize = 19.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = (-0.2).sp
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "$rangeLabel summary",
+                    color = bannerInk.copy(alpha = 0.72f),
+                    fontSize = 12.5.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Row(
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(accentColor)
+                    .clickable { onOpenWrapped() }
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.BarChart,
+                    contentDescription = null,
+                    tint = onAccentColor,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(modifier = Modifier.width(5.dp))
+                Text(
+                    text = "Open",
+                    color = onAccentColor,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -953,22 +1193,40 @@ private fun ThermalReceiptCard(
     snapshot: AnalyticsSnapshot,
     accentColor: Color,
     onAccentColor: Color,
+    isGlass: Boolean,
     isSharing: Boolean,
     onShareReceipt: () -> Unit
 ) {
-    val paperBg = Color(0xFFF9F8F4)
+    val paperBg = if (isGlass) Color(0xFFF9F8F4).copy(alpha = 0.92f) else Color(0xFFF9F8F4)
     val inkDark = Color(0xFF111216)
     val inkMuted = Color(0xFF5A5D66)
     val dateStamp = remember {
         SimpleDateFormat("MMM dd, yyyy • HH:mm", Locale.US).format(Date())
     }
     val receiptRows = remember(snapshot.topTracks) { snapshot.topTracks.take(10) }
+    val receiptShape = RoundedCornerShape(if (isGlass) 22.dp else 16.dp)
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(receiptShape)
             .background(paperBg)
+            .then(
+                if (isGlass) {
+                    Modifier.border(
+                        width = 0.9.dp,
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = 0.95f),
+                                Color.White.copy(alpha = 0.35f)
+                            )
+                        ),
+                        shape = receiptShape
+                    )
+                } else {
+                    Modifier
+                }
+            )
             .padding(20.dp)
     ) {
         Row(
@@ -1203,6 +1461,7 @@ private fun AuraWrappedOverlay(
     snapshot: AnalyticsSnapshot,
     accentColor: Color,
     onAccentColor: Color,
+    isGlass: Boolean,
     restoreDarkSystemBars: Boolean,
     onPlayTrack: (AuraTrack) -> Unit,
     onShareReceipt: () -> Unit,
@@ -1319,7 +1578,23 @@ private fun AuraWrappedOverlay(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(CircleShape)
-                    .background(Color.Black.copy(alpha = 0.34f))
+                    .background(Color.Black.copy(alpha = if (isGlass) 0.24f else 0.34f))
+                    .then(
+                        if (isGlass) {
+                            Modifier.border(
+                                width = 0.8.dp,
+                                brush = Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.White.copy(alpha = 0.45f),
+                                        Color.White.copy(alpha = 0.10f)
+                                    )
+                                ),
+                                shape = CircleShape
+                            )
+                        } else {
+                            Modifier
+                        }
+                    )
             ) {
                 Icon(
                     imageVector = Icons.Rounded.Close,

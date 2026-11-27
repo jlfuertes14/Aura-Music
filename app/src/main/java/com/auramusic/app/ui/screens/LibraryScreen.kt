@@ -17,6 +17,7 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -318,8 +319,11 @@ fun LibraryScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(if (isGlass) 16.dp else 14.dp))
-                    .background(auraColors.surfaceCard)
+                    .auraGlassSurface(
+                        shape = RoundedCornerShape(if (isGlass) 18.dp else 14.dp),
+                        selected = false,
+                        fallbackColor = auraColors.surfaceCard
+                    )
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
                     Row(
@@ -560,50 +564,114 @@ fun LibraryScreen(
                                 )
                                 Spacer(Modifier.height(10.dp))
                                 // Stats & Wrapped Card
-                                Row(
+                                val isGlass = LocalLiquidGlassEnabled.current
+                                val isDark = auraColors.isDark
+                                val statsCardShape = RoundedCornerShape(20.dp)
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(auraColors.surfaceCard)
+                                        .then(
+                                            if (isGlass) {
+                                                Modifier
+                                                    .clip(statsCardShape)
+                                                    .background(
+                                                        Brush.verticalGradient(
+                                                            colors = if (isDark) {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.12f),
+                                                                    Color.White.copy(alpha = 0.055f)
+                                                                )
+                                                            } else {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.86f),
+                                                                    Color(0xFFF1F3F8).copy(alpha = 0.68f)
+                                                                )
+                                                            }
+                                                        )
+                                                    )
+                                                    .border(
+                                                        width = 0.85.dp,
+                                                        brush = Brush.verticalGradient(
+                                                            colors = if (isDark) {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.34f),
+                                                                    Color.White.copy(alpha = 0.08f)
+                                                                )
+                                                            } else {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.92f),
+                                                                    Color.Black.copy(alpha = 0.07f)
+                                                                )
+                                                            }
+                                                        ),
+                                                        shape = statsCardShape
+                                                    )
+                                            } else {
+                                                Modifier
+                                                    .clip(statsCardShape)
+                                                    .background(auraColors.surfaceCard)
+                                            }
+                                        )
                                         .clickable(onClick = onOpenAnalytics)
-                                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
+                                    if (isGlass) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        colors = listOf(
+                                                            Color.White.copy(alpha = if (isDark) 0.13f else 0.44f),
+                                                            Color.Transparent
+                                                        ),
+                                                        center = Offset(48f, 20f),
+                                                        radius = 280f
+                                                    )
+                                                )
+                                        )
+                                    }
                                     Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 14.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
+                                        horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.BarChart,
+                                                contentDescription = null,
+                                                tint = auraColors.textPrimary,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                            Spacer(Modifier.width(12.dp))
+                                            Column {
+                                                Text(
+                                                    text = "Stats",
+                                                    color = auraColors.textPrimary,
+                                                    fontSize = 14.5.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays",
+                                                    color = auraColors.textSecondary,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
                                         Icon(
-                                            imageVector = Icons.Rounded.BarChart,
-                                            contentDescription = null,
-                                            tint = auraColors.textPrimary,
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                            contentDescription = "Open Stats",
+                                            tint = auraColors.textSecondary,
                                             modifier = Modifier.size(22.dp)
                                         )
-                                        Spacer(Modifier.width(12.dp))
-                                        Column {
-                                            Text(
-                                                text = "Stats",
-                                                color = auraColors.textPrimary,
-                                                fontSize = 14.5.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Spacer(Modifier.height(2.dp))
-                                            Text(
-                                                text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays",
-                                                color = auraColors.textSecondary,
-                                                fontSize = 12.sp,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                        }
                                     }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
-                                        contentDescription = "Open Stats",
-                                        tint = auraColors.textSecondary,
-                                        modifier = Modifier.size(22.dp)
-                                    )
                                 }
                                 Spacer(Modifier.height(18.dp))
                                 Text("Recently added", color = auraColors.textPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
@@ -1039,56 +1107,122 @@ private fun LibraryOverviewTile(
     onClick: () -> Unit
 ) {
     val auraColors = LocalAuraColors.current
-    Box(
-        modifier = modifier
-            .clip(RoundedCornerShape(20.dp))
+    val isGlass = LocalLiquidGlassEnabled.current
+    val isDark = auraColors.isDark
+    val tileShape = RoundedCornerShape(20.dp)
+
+    val tileModifier = if (isGlass) {
+        modifier
+            .clip(tileShape)
+            .background(
+                Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.13f),
+                            Color.White.copy(alpha = 0.055f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.88f),
+                            Color(0xFFF0F2F8).copy(alpha = 0.68f)
+                        )
+                    }
+                )
+            )
+            .border(
+                width = 0.85.dp,
+                brush = Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.36f),
+                            Color.White.copy(alpha = 0.14f),
+                            Color.White.copy(alpha = 0.07f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.94f),
+                            Color.White.copy(alpha = 0.45f),
+                            Color.Black.copy(alpha = 0.08f)
+                        )
+                    }
+                ),
+                shape = tileShape
+            )
+            .clickable(onClick = onClick)
+    } else {
+        modifier
+            .clip(tileShape)
             .background(auraColors.surfaceCard)
             .clickable(onClick = onClick)
-            .padding(14.dp)
-    ) {
-        if (tracks.isEmpty()) {
-            EmptyArtworkFanStack(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-            )
-        } else if (tracks.size == 1) {
-            AsyncImage(
-                model = tracks.first().highResArtworkUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-                    .size(54.dp)
-                    .clip(RoundedCornerShape(9.dp))
-            )
-        } else {
+    }
+
+    Box(modifier = tileModifier) {
+        if (isGlass) {
+            // Subtle top-left specular glass refraction sheen matching Liquid Glass theme
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-                    .size(width = 82.dp, height = 60.dp)
-            ) {
-                tracks.take(3).forEachIndexed { index, track ->
-                    AsyncImage(
-                        model = track.highResArtworkUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .offset(x = ((index - 1) * 20).dp)
-                            .rotate((index - 1) * 18f)
-                            .zIndex(index.toFloat())
-                            .size(width = 44.dp, height = 52.dp)
-                            .clip(RoundedCornerShape(9.dp))
+                    .matchParentSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (isDark) 0.16f else 0.48f),
+                                Color.Transparent
+                            ),
+                            center = Offset(40f, 24f),
+                            radius = 260f
+                        )
                     )
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp)
+        ) {
+            if (tracks.isEmpty()) {
+                EmptyArtworkFanStack(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                )
+            } else if (tracks.size == 1) {
+                AsyncImage(
+                    model = tracks.first().highResArtworkUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                        .size(width = 82.dp, height = 60.dp)
+                ) {
+                    tracks.take(3).forEachIndexed { index, track ->
+                        AsyncImage(
+                            model = track.highResArtworkUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(x = ((index - 1) * 20).dp)
+                                .rotate((index - 1) * 18f)
+                                .zIndex(index.toFloat())
+                                .size(width = 44.dp, height = 52.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                        )
+                    }
                 }
             }
-        }
-        Column(modifier = Modifier.align(Alignment.BottomStart)) {
-            Text(title, color = auraColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = auraColors.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(modifier = Modifier.align(Alignment.BottomStart)) {
+                Text(title, color = auraColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = auraColors.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }

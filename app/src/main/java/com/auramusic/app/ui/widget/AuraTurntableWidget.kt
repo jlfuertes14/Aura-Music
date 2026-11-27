@@ -252,16 +252,15 @@ internal object AuraWidgetSupport {
     ): RemoteViews {
         val views = RemoteViews(context.packageName, layoutRes)
 
-        // 1. Dynamic artwork-extracted background tinted onto @android:id/background so
-        //    Android 12+ & Xiaomi HyperOS preserve the rounded outline for expand/collapse morphs.
+        // 1. Dynamic artwork-extracted background tinted onto rounded widget container.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             views.setColorStateList(
-                android.R.id.background,
+                R.id.widget_root,
                 "setBackgroundTintList",
                 ColorStateList.valueOf(state.bgArgb)
             )
         } else {
-            views.setInt(android.R.id.background, "setBackgroundColor", state.bgArgb)
+            views.setInt(R.id.widget_root, "setBackgroundColor", state.bgArgb)
         }
 
         // 2. Title & Artist (pure white always)
@@ -283,17 +282,16 @@ internal object AuraWidgetSupport {
         )
         views.setInt(R.id.widget_play_pause_icon, "setColorFilter", state.bgArgb)
 
-        // 5. Direct Activity PendingIntent on @android:id/background (NO Glance trampoline!)
-        //    This enables native HyperOS & Android 12+ Spotify-style widget expand/collapse animations.
+        // 5. Launch via AuraWidgetLaunchActivity so HyperOS & Android 12+ open the player
+        //    cleanly without widget expand/collapse morph animations.
         //    Auto-play is FALSE so tapping the widget opens the player without starting playback.
-        val openIntent = Intent(context, MainActivity::class.java).apply {
+        val openIntent = Intent(context, AuraWidgetLaunchActivity::class.java).apply {
             action = MainActivity.ACTION_OPEN_FROM_WIDGET
             putExtra(MainActivity.EXTRA_OPEN_NOW_PLAYING, true)
             putExtra(MainActivity.EXTRA_WIDGET_AUTO_PLAY, false)
             addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or
-                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    Intent.FLAG_ACTIVITY_NO_ANIMATION
             )
         }
         val requestBase = if (receiverClass == AuraQuickPlayWidgetReceiver::class.java) 1000 else 2000
@@ -303,7 +301,7 @@ internal object AuraWidgetSupport {
             openIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        views.setOnClickPendingIntent(android.R.id.background, openPi)
+        views.setOnClickPendingIntent(R.id.widget_root, openPi)
 
         // 6. Direct Broadcast PendingIntents for instant transport controls
         views.setOnClickPendingIntent(
