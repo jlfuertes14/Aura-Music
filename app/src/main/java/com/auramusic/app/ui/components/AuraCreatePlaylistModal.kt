@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
@@ -47,8 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.SpotifyCard
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
@@ -61,20 +59,21 @@ fun AuraCreateOrImportModal(
     onCreatePlaylist: () -> Unit,
     onImportSpotify: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -87,14 +86,14 @@ fun AuraCreateOrImportModal(
         ) {
             Text(
                 text = "New Playlist",
-                color = Color.White,
+                color = auraColors.textPrimary,
                 fontWeight = FontWeight.Bold,
                 fontSize = 17.sp,
                 modifier = Modifier.padding(bottom = 14.dp)
             )
 
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = auraColors.divider,
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 10.dp)
             )
@@ -102,14 +101,14 @@ fun AuraCreateOrImportModal(
             TrackOptionRow(
                 icon = Icons.Rounded.PlaylistAdd,
                 label = "Create a playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onCreatePlaylist
             )
 
             TrackOptionRow(
                 icon = Icons.Rounded.Link,
                 label = "Import Playlist from Spotify",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onImportSpotify
             )
         }
@@ -125,6 +124,8 @@ fun AuraCreatePlaylistModal(
     onDismiss: () -> Unit,
     onCreate: (title: String, description: String, coverUri: String) -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var title by remember { mutableStateOf("") }
     var description by remember { mutableStateOf("") }
@@ -141,15 +142,15 @@ fun AuraCreatePlaylistModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -168,15 +169,15 @@ fun AuraCreatePlaylistModal(
             ) {
                 Text(
                     text = "Create Playlist",
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp
                 )
-                IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
                     Icon(
                         imageVector = Icons.Rounded.Close,
                         contentDescription = "Close",
-                        tint = Color.White.copy(alpha = 0.7f),
+                        tint = auraColors.textSecondary,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -195,7 +196,7 @@ fun AuraCreatePlaylistModal(
                     modifier = Modifier
                         .size(110.dp)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(SpotifyCard)
+                        .background(auraColors.surfaceCard)
                         .clickable { mediaPickerLauncher.launch("image/*") },
                     contentAlignment = Alignment.Center
                 ) {
@@ -214,32 +215,31 @@ fun AuraCreatePlaylistModal(
                             Icon(
                                 imageVector = Icons.Rounded.AddPhotoAlternate,
                                 contentDescription = "Pick Cover",
-                                tint = Color.White.copy(alpha = 0.7f),
+                                tint = auraColors.textSecondary,
                                 modifier = Modifier.size(32.dp)
                             )
                             Text(
                                 text = "Add Cover",
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = Color.White.copy(alpha = 0.7f)
+                                color = auraColors.textSecondary
                             )
                         }
                     }
                 }
 
-                // Right: Stacked Title & Description Fields (No border width or border color)
+                // Right: Stacked Title & Description Fields (Borderless)
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Playlist Title Field (Borderless)
                     TextField(
                         value = title,
                         onValueChange = { title = it },
                         placeholder = {
                             Text(
                                 text = "Playlist Title",
-                                color = Color.White.copy(alpha = 0.40f),
+                                color = auraColors.textMuted,
                                 fontSize = 14.sp
                             )
                         },
@@ -247,25 +247,24 @@ fun AuraCreatePlaylistModal(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.White.copy(alpha = 0.08f),
-                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = auraColors.surfaceCard,
+                            unfocusedContainerColor = auraColors.pillInactiveBg,
+                            focusedTextColor = auraColors.textPrimary,
+                            unfocusedTextColor = auraColors.textPrimary,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent,
                             disabledIndicatorColor = Color.Transparent,
-                            cursorColor = AuraNeonLime
+                            cursorColor = accentTint
                         )
                     )
 
-                    // Playlist Description Field (Borderless)
                     TextField(
                         value = description,
                         onValueChange = { description = it },
                         placeholder = {
                             Text(
-                                text = "Description (Optional)",
-                                color = Color.White.copy(alpha = 0.35f),
+                                text = "Description",
+                                color = auraColors.textMuted,
                                 fontSize = 13.sp
                             )
                         },
@@ -273,14 +272,14 @@ fun AuraCreatePlaylistModal(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp),
                         colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.White.copy(alpha = 0.08f),
-                            unfocusedContainerColor = Color.White.copy(alpha = 0.05f),
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White,
+                            focusedContainerColor = auraColors.surfaceCard,
+                            unfocusedContainerColor = auraColors.pillInactiveBg,
+                            focusedTextColor = auraColors.textPrimary,
+                            unfocusedTextColor = auraColors.textPrimary,
                             focusedIndicatorColor = Color.Transparent,
                             unfocusedIndicatorColor = Color.Transparent,
                             disabledIndicatorColor = Color.Transparent,
-                            cursorColor = AuraNeonLime
+                            cursorColor = accentTint
                         )
                     )
                 }
@@ -296,15 +295,16 @@ fun AuraCreatePlaylistModal(
                     }
                 },
                 enabled = title.isNotBlank(),
+                elevation = null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(50.dp),
                 shape = RoundedCornerShape(25.dp),
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = AuraNeonLime,
-                    contentColor = Color.Black,
-                    disabledContainerColor = Color.White.copy(alpha = 0.12f),
-                    disabledContentColor = Color.White.copy(alpha = 0.35f)
+                    containerColor = auraColors.accent,
+                    contentColor = auraColors.onAccent,
+                    disabledContainerColor = auraColors.pillInactiveBg,
+                    disabledContentColor = auraColors.textMuted
                 )
             ) {
                 Text(

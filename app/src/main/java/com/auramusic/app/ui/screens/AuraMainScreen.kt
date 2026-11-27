@@ -30,11 +30,11 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.MarqueeAnimationMode
 import androidx.compose.foundation.background
@@ -138,19 +138,15 @@ import com.auramusic.app.domain.model.ArtistCarouselItem
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.ui.AuraViewModel
 import com.auramusic.app.ui.DetailScreenEntry
+import com.auramusic.app.ui.components.AuraStarPromptDialog
 import com.auramusic.app.ui.components.AuraUpdateModal
 import com.auramusic.app.ui.screens.player.applemusic.appleMusicVerticalFadeEdges
 import com.auramusic.app.ui.screens.player.applemusic.prewarmAppleMusicArtwork
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.AuraPlayGreen
-import com.auramusic.app.ui.theme.AuraViolet
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalGlassBackdrop
 import com.auramusic.app.ui.theme.LocalIsDarkTheme
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.SpotifyCard
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.contrastInk
 import com.auramusic.app.ui.theme.glassBackdropSource
 import com.auramusic.app.ui.theme.isLyricsBlurSupported
 import com.auramusic.app.ui.theme.liquidGlass
@@ -193,9 +189,12 @@ private class NonUniformScaledRoundedShape(
 }
 
 @Composable
-fun AuraMainScreen(viewModel: AuraViewModel) {
-    var selectedTab by remember { mutableIntStateOf(0) }
-    var isPlayerExpanded by remember { mutableStateOf(false) }
+fun AuraMainScreen(
+    viewModel: AuraViewModel,
+    isSplashActive: Boolean = false
+) {
+    var selectedTab by rememberSaveable { mutableIntStateOf(0) }
+    var isPlayerExpanded by rememberSaveable { mutableStateOf(false) }
     var isPlayerCollapseTransition by remember { mutableStateOf(false) }
     var isPlayerExpandTransition by remember { mutableStateOf(false) }
     var fullPlayerArtworkBounds by remember { mutableStateOf<Rect?>(null) }
@@ -317,7 +316,9 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val playlistScrollTargetTrackId by viewModel.playlistScrollTargetTrackId.collectAsState()
     val detailStack by viewModel.detailStack.collectAsState()
 
-    BackHandler(enabled = !isPlayerExpanded && detailStack.isEmpty() && selectedTab != 0) {
+    var isAnalyticsVisible by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = !isPlayerExpanded && !isAnalyticsVisible && detailStack.isEmpty() && selectedTab != 0) {
         selectedTab = 0
     }
     val activeCategory by viewModel.activeCategory.collectAsState()
@@ -381,6 +382,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
 
     val palette by viewModel.palette.collectAsState()
     val lyrics by viewModel.lyrics.collectAsState()
+    val mainLyricsProvider by viewModel.mainLyricsProvider.collectAsState()
     val lyricsOffsetMs by viewModel.lyricsOffsetMs.collectAsState()
     val showRomanized by viewModel.showRomanizedLyrics.collectAsState()
     val rydData by viewModel.rydData.collectAsState()
@@ -389,6 +391,34 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     val livePerformances by viewModel.livePerformances.collectAsState()
     val isLoadingLivePerformances by viewModel.isLoadingLivePerformances.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
+
+    val playbackSpeed by viewModel.playbackSpeed.collectAsState()
+    val playbackPitchSemitones by viewModel.playbackPitchSemitones.collectAsState()
+    val audioOutputDevices by viewModel.audioOutputDevices.collectAsState()
+    val selectedAudioOutputId by viewModel.selectedAudioOutputId.collectAsState()
+    val translatedLyricsMap by viewModel.translatedLyricsMap.collectAsState()
+    val isTranslatingLyrics by viewModel.isTranslatingLyrics.collectAsState()
+    val analyticsRange by viewModel.analyticsRange.collectAsState()
+    val analyticsSnapshot by viewModel.analyticsSnapshot.collectAsState()
+    val cachedTracks by viewModel.cachedTracks.collectAsState()
+    val pendingDeepLinkTab by viewModel.pendingDeepLinkTab.collectAsState()
+    val deepLinkExpandPlayer by viewModel.deepLinkExpandPlayer.collectAsState()
+
+    LaunchedEffect(pendingDeepLinkTab) {
+        val targetTab = pendingDeepLinkTab ?: return@LaunchedEffect
+        isAnalyticsVisible = false
+        selectedTab = targetTab
+        viewModel.consumePendingDeepLinkTab()
+    }
+
+    LaunchedEffect(deepLinkExpandPlayer, currentTrack != null) {
+        if (deepLinkExpandPlayer && currentTrack != null) {
+            if (!isPlayerExpanded) {
+                expandFullPlayer()
+            }
+            viewModel.consumeDeepLinkExpandPlayer()
+        }
+    }
 
     val collapseFullPlayer: () -> Unit = {
         if (isPlayerExpanded && !isPlayerCollapseTransition && !isPlayerExpandTransition) {
@@ -438,7 +468,10 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
     }
 
-    val glassBackdrop = rememberGlassBackdrop(SpotifyPitchBlack)
+    val auraColors = LocalAuraColors.current
+    val screenBgColor = auraColors.background
+    val navSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
+    val glassBackdrop = rememberGlassBackdrop(screenBgColor)
     val liquidGlassEnabled = LocalLiquidGlassEnabled.current
     val dockGlassLayer = rememberGraphicsLayer()
     val dockLuminance = rememberGlassLuminance(
@@ -450,7 +483,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(screenBgColor)
     ) {
         // Sibling backdrop source: contains ONLY the main tabs + detail navigation stack.
         // Never place any .liquidGlass(...) surface inside this Box to prevent RuntimeShader feedback loops.
@@ -461,9 +494,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         ) {
         // 1. Screens Content (full screen underneath floating controls) with directional slide transitions
         val saveableStateHolder = rememberSaveableStateHolder()
-        val navSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
         val mainContentOffsetX by animateFloatAsState(
-            targetValue = if (detailStack.isNotEmpty()) -1f else 0f,
+            targetValue = if (detailStack.isNotEmpty() || isAnalyticsVisible) -1f else 0f,
             animationSpec = tween(durationMillis = 270, easing = navSlideEasing),
             label = "MainContentSlideOffset"
         )
@@ -604,6 +636,12 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                             playlists = playlists,
                             stats = listeningStats,
                             recentlyPlayed = recentlyPlayed,
+                            cachedTracks = cachedTracks,
+                            onRefreshCachedTracks = { viewModel.refreshCachedTracks() },
+                            onOpenAnalytics = {
+                                viewModel.refreshAnalytics()
+                                isAnalyticsVisible = true
+                            },
                             downloadingIds = downloadingIds,
                             downloadProgressMap = downloadProgress,
                             currentPlayingId = currentTrack?.videoId,
@@ -799,7 +837,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
         }
         } // End sibling glassBackdropSource
 
-        BackHandler(enabled = !isPlayerExpanded && detailStack.isNotEmpty()) {
+        BackHandler(enabled = !isPlayerExpanded && !isAnalyticsVisible && detailStack.isNotEmpty()) {
             viewModel.popTopDetail()
         }
 
@@ -814,16 +852,16 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                         colors = if (liquidGlassEnabled) {
                             listOf(
                                 Color.Transparent,
-                                SpotifyPitchBlack.copy(alpha = 0.22f),
-                                SpotifyPitchBlack.copy(alpha = 0.45f),
-                                SpotifyPitchBlack.copy(alpha = 0.65f)
+                                screenBgColor.copy(alpha = 0.22f),
+                                screenBgColor.copy(alpha = 0.45f),
+                                screenBgColor.copy(alpha = 0.65f)
                             )
                         } else {
                             listOf(
                                 Color.Transparent,
-                                SpotifyPitchBlack.copy(alpha = 0.70f),
-                                SpotifyPitchBlack.copy(alpha = 0.95f),
-                                SpotifyPitchBlack
+                                screenBgColor.copy(alpha = 0.70f),
+                                screenBgColor.copy(alpha = 0.95f),
+                                screenBgColor
                             )
                         }
                     )
@@ -859,13 +897,14 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     if (currentIndex in 0 until currentQueue.lastIndex) currentQueue[currentIndex + 1] else null
                 }
 
+                val isAppleMusicPlayer = nowPlayingStyle == com.auramusic.app.domain.model.NowPlayingStyle.LIQUID_GLASS
                 AuraMiniPlayer(
                     track = activeTrack,
                     isPlaying = isPlaying,
                     isBuffering = isBuffering,
                     progress = (positionSec / durationSec.coerceAtLeast(1f)).coerceIn(0f, 1f),
-                    backgroundColor = palette.primary,
-                    backdropTintColor = palette.backgroundTop,
+                    backgroundColor = if (isAppleMusicPlayer) palette.appleMusicBackdrop else palette.primary,
+                    backdropTintColor = if (isAppleMusicPlayer) palette.appleMusicBackdrop else palette.backgroundTop,
                     glassBackdrop = glassBackdrop,
                     previousTrack = previousTrack,
                     nextTrack = nextTrack,
@@ -925,7 +964,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                 } else {
                     Surface(
                         shape = RoundedCornerShape(40.dp),
-                        color = Color(0xFF16181F).copy(alpha = 0.98f),
+                        color = auraColors.surfaceElevated.copy(alpha = 0.98f),
                         shadowElevation = 16.dp,
                         modifier = Modifier.animateContentSize(
                             animationSpec = spring(
@@ -957,7 +996,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                                 Surface(
                                     onClick = { onSelectNavTab(idx) },
                                     shape = RoundedCornerShape(28.dp),
-                                    color = if (isSelected) AuraNeonLime else Color.Transparent
+                                    color = if (isSelected) auraColors.accent else Color.Transparent
                                 ) {
                                     Row(
                                         modifier = Modifier.padding(
@@ -970,7 +1009,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                                         Icon(
                                             imageVector = icon,
                                             contentDescription = label,
-                                            tint = if (isSelected) Color.Black else TextSecondary,
+                                            tint = if (isSelected) auraColors.onAccent else auraColors.textSecondary,
                                             modifier = Modifier
                                                 .size(23.dp)
                                                 .graphicsLayer {
@@ -998,7 +1037,7 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                                                 Spacer(modifier = Modifier.width(7.dp))
                                                 Text(
                                                     text = label,
-                                                    color = Color.Black,
+                                                    color = auraColors.onAccent,
                                                     fontWeight = FontWeight.Bold,
                                                     fontSize = 13.5.sp,
                                                     maxLines = 1,
@@ -1172,6 +1211,8 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     onPlayQueueTrack = { viewModel.playTrack(it, queue) },
                     onAdjustLyricsOffset = { viewModel.adjustLyricsOffset(it) },
                     onToggleRomanized = { viewModel.toggleRomanizedLyrics() },
+                    mainLyricsProvider = mainLyricsProvider,
+                    onSwitchLyricsProvider = { viewModel.setMainLyricsProvider(it) },
                     comments = playerComments,
                     isLoadingComments = areCommentsLoading,
                     commentsError = commentsError,
@@ -1179,7 +1220,20 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
                     onLoadMoreComments = { viewModel.loadMorePlayerComments() },
                     onSelectCommentSort = { viewModel.selectCommentSort(it) },
                     onToggleCommentReplies = { viewModel.toggleCommentReplies(it) },
-                    onLoadMoreCommentReplies = { viewModel.loadMoreCommentReplies(it) }
+                    onLoadMoreCommentReplies = { viewModel.loadMoreCommentReplies(it) },
+                    rydData = rydData,
+                    playbackSpeed = playbackSpeed,
+                    playbackPitchSemitones = playbackPitchSemitones,
+                    onPlaybackSpeedChange = { viewModel.setPlaybackSpeed(it) },
+                    onPlaybackPitchChange = { viewModel.setPlaybackPitchSemitones(it) },
+                    onResetSpeedPitch = { viewModel.resetSpeedAndPitch() },
+                    audioOutputDevices = audioOutputDevices,
+                    selectedAudioOutputId = selectedAudioOutputId,
+                    onRefreshOutputDevices = { viewModel.refreshAudioOutputDevices() },
+                    onSelectAudioOutputDevice = { viewModel.selectAudioOutputDevice(it) },
+                    translatedLyricsMap = translatedLyricsMap,
+                    isTranslatingLyrics = isTranslatingLyrics,
+                    onTranslateLyrics = { viewModel.translateCurrentLyrics() }
                 )
             }
         }
@@ -1239,6 +1293,31 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             )
         }
 
+        // Analytics & Aura Wrapped Full-Screen Overlay
+        BackHandler(enabled = isAnalyticsVisible && !isPlayerExpanded) {
+            isAnalyticsVisible = false
+        }
+        AnimatedVisibility(
+            visible = isAnalyticsVisible,
+            enter = slideInHorizontally(
+                animationSpec = tween(durationMillis = 270, easing = navSlideEasing)
+            ) { it } + fadeIn(animationSpec = tween(200, easing = navSlideEasing)),
+            exit = slideOutHorizontally(
+                animationSpec = tween(durationMillis = 270, easing = navSlideEasing)
+            ) { it } + fadeOut(animationSpec = tween(180, easing = navSlideEasing)),
+            modifier = Modifier
+                .fillMaxSize()
+                .zIndex(15f)
+        ) {
+            AnalyticsScreen(
+                snapshot = analyticsSnapshot,
+                selectedRange = analyticsRange,
+                onSelectRange = { viewModel.refreshAnalytics(it) },
+                onPlayTrack = { track -> viewModel.playTrack(track) },
+                onBack = { isAnalyticsVisible = false }
+            )
+        }
+
         // In-App Update Modal
         val isUpdateModalVisible by viewModel.isUpdateModalVisible.collectAsState()
         val currentUpdateRelease by viewModel.currentUpdateRelease.collectAsState()
@@ -1260,6 +1339,24 @@ fun AuraMainScreen(viewModel: AuraViewModel) {
             onUpdateNow = { release -> viewModel.downloadAndInstallUpdate(release) },
             onInstallNow = { release -> viewModel.installDownloadedApk(release) }
         )
+
+        // SimpMusic-style GitHub Star Reminder Dialog on App Open
+        val showStarPrompt by viewModel.showStarPrompt.collectAsState()
+        var isStarPromptReady by remember { mutableStateOf(false) }
+        LaunchedEffect(showStarPrompt, isSplashActive, isUpdateModalVisible, isPlayerExpanded) {
+            if (showStarPrompt && !isSplashActive && !isUpdateModalVisible && !isPlayerExpanded) {
+                kotlinx.coroutines.delay(420L)
+                isStarPromptReady = true
+            } else {
+                isStarPromptReady = false
+            }
+        }
+        if (isStarPromptReady && showStarPrompt && !isUpdateModalVisible) {
+            AuraStarPromptDialog(
+                onDismissLater = { viewModel.dismissStarPromptLater() },
+                onGiveStar = { viewModel.markRepoStarred() }
+            )
+        }
     }
     }
 }
@@ -1287,8 +1384,9 @@ private fun AuraMiniPlayer(
     onSkipPrevious: () -> Unit,
     onSkipNext: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     val liquidGlassEnabled = LocalLiquidGlassEnabled.current
-    val isDarkTheme = LocalIsDarkTheme.current
+    val isDarkTheme = auraColors.isDark
     val glassLayer = rememberGraphicsLayer()
     val luminance = rememberGlassLuminance(
         source = glassLayer,
@@ -1335,20 +1433,20 @@ private fun AuraMiniPlayer(
 
     val foregroundColor by animateColorAsState(
         targetValue = if (liquidGlassEnabled) {
-            if (artworkVeilAlpha.value > 0.35f || isDarkTheme || luminance.value < 0.65f) {
+            if (artworkVeilAlpha.value > 0.35f || isDarkTheme || luminance.value < 0.40f) {
                 Color.White
             } else {
-                Color(0xFF111318)
+                auraColors.textPrimary
             }
         } else {
-            Color.White
+            animatedBgColor.contrastInk()
         },
         animationSpec = tween(durationMillis = 320),
         label = "miniPlayerForegroundColor"
     )
 
-    val lighterProgressColor = remember(animatedBgColor) {
-        lerp(animatedBgColor, Color.White, 0.65f)
+    val lighterProgressColor = remember(animatedBgColor, foregroundColor) {
+        lerp(animatedBgColor, foregroundColor, 0.65f)
     }
 
     val animatedProgress by animateFloatAsState(
@@ -1378,15 +1476,26 @@ private fun AuraMiniPlayer(
                 shape = miniPlayerShape,
                 interactive = true,
                 pressedScale = 1.02f,
-                fallbackColor = Color(0xFF1A1D24).copy(alpha = 0.94f)
+                fallbackColor = if (isDarkTheme) {
+                    Color(0xFF1A1D24).copy(alpha = 0.94f)
+                } else {
+                    auraColors.surfaceElevated.copy(alpha = 0.94f)
+                }
             )
             .border(
                 width = 0.75.dp,
                 brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.28f),
-                        Color.White.copy(alpha = 0.06f)
-                    )
+                    colors = if (isDarkTheme) {
+                        listOf(
+                            Color.White.copy(alpha = 0.28f),
+                            Color.White.copy(alpha = 0.06f)
+                        )
+                    } else {
+                        listOf(
+                            Color.Black.copy(alpha = 0.09f),
+                            Color.Black.copy(alpha = 0.04f)
+                        )
+                    }
                 ),
                 shape = miniPlayerShape
             )
@@ -1682,8 +1791,8 @@ private fun AuraMiniPlayer(
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            val playTint = if (liquidGlassEnabled) foregroundColor else Color.Black
-                            if (isBuffering) {
+                            val playTint = if (liquidGlassEnabled) foregroundColor else lighterProgressColor.contrastInk()
+                            if (isBuffering && !isPlaying) {
                                 CircularProgressIndicator(
                                     color = playTint,
                                     strokeWidth = 2.dp,

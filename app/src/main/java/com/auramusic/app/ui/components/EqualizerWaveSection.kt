@@ -9,26 +9,38 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Headphones
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.RestartAlt
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -44,19 +56,24 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.auramusic.app.core.media.AutoEqProfile
+import com.auramusic.app.core.media.AutoEqProfiles
 import com.auramusic.app.domain.model.EQUALIZER_BAND_LABELS
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
 import com.auramusic.app.domain.model.findMatchingPreset
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
+import java.util.Locale
 import kotlin.math.roundToInt
 
 private const val BAND_RANGE_DB = 12f
@@ -72,19 +89,27 @@ fun EqualizerWaveSection(
     onPreampChange: (Float) -> Unit,
     onPresetSelect: (EqualizerPreset) -> Unit,
     onReset: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    activeAutoEqProfileId: String? = null,
+    onSelectAutoEqProfile: ((String?) -> Unit)? = null
 ) {
+    val auraColors = LocalAuraColors.current
+    val accentTint = auraReadableAccent(auraColors.accent, auraColors.isDark)
     var draftPreamp by remember { mutableStateOf<Float?>(null) }
     LaunchedEffect(preampDb) { draftPreamp = null }
 
     var presetMenuOpen by remember { mutableStateOf(false) }
+    var autoEqSheetOpen by remember { mutableStateOf(false) }
     val activePreset = remember(bands) { findMatchingPreset(bands) }
+    val activeAutoEqProfile = remember(activeAutoEqProfileId) {
+        activeAutoEqProfileId?.let { id -> AutoEqProfiles.ALL_PROFILES.firstOrNull { it.id == id } }
+    }
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp)),
-        color = Color(0xFF14161E),
+        color = auraColors.surfaceCard,
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(
@@ -103,16 +128,16 @@ fun EqualizerWaveSection(
                         text = "Curve Preset",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium,
-                        color = TextSecondary
+                        color = auraColors.textSecondary
                     )
-                    Spacer(modifier = Modifier.height(2.dp))
+                    Spacer(modifier = Modifier.height(4.dp))
                     Box {
                         Row(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color(0xFF1F222C))
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(auraColors.circleButtonBg)
                                 .clickable { presetMenuOpen = true }
-                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
@@ -120,12 +145,12 @@ fun EqualizerWaveSection(
                                 text = activePreset?.name ?: presetName.ifBlank { "Custom" },
                                 fontSize = 13.5.sp,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White
+                                color = auraColors.textPrimary
                             )
                             Icon(
                                 imageVector = Icons.Rounded.KeyboardArrowDown,
                                 contentDescription = "Select Preset",
-                                tint = AuraNeonLime,
+                                tint = auraColors.textSecondary,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -133,7 +158,7 @@ fun EqualizerWaveSection(
                         DropdownMenu(
                             expanded = presetMenuOpen,
                             onDismissRequest = { presetMenuOpen = false },
-                            modifier = Modifier.background(Color(0xFF1A1C24))
+                            modifier = Modifier.background(auraColors.surfaceElevated)
                         ) {
                             SIMPMUSIC_ALL_EQ_PRESETS.forEach { preset ->
                                 val isSelected = (activePreset?.name ?: presetName) == preset.name
@@ -142,13 +167,13 @@ fun EqualizerWaveSection(
                                         Column {
                                             Text(
                                                 text = preset.name,
-                                                color = if (isSelected) AuraNeonLime else Color.White,
+                                                color = auraColors.textPrimary,
                                                 fontSize = 13.sp,
                                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                                             )
                                             Text(
                                                 text = preset.subtitle,
-                                                color = TextSecondary,
+                                                color = auraColors.textSecondary,
                                                 fontSize = 10.sp
                                             )
                                         }
@@ -158,7 +183,7 @@ fun EqualizerWaveSection(
                                             Icon(
                                                 imageVector = Icons.Rounded.Check,
                                                 contentDescription = null,
-                                                tint = AuraNeonLime,
+                                                tint = auraColors.textPrimary,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         } else {
@@ -180,20 +205,20 @@ fun EqualizerWaveSection(
                     modifier = Modifier
                         .clip(RoundedCornerShape(8.dp))
                         .clickable { onReset() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
                         imageVector = Icons.Rounded.RestartAlt,
                         contentDescription = "Reset EQ",
-                        tint = TextSecondary,
+                        tint = auraColors.textSecondary,
                         modifier = Modifier.size(16.dp)
                     )
                     Text(
                         text = "Reset",
                         fontSize = 12.sp,
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -210,7 +235,7 @@ fun EqualizerWaveSection(
                 Text(
                     text = "Preamp",
                     fontSize = 12.sp,
-                    color = TextSecondary,
+                    color = auraColors.textSecondary,
                     modifier = Modifier.width(52.dp)
                 )
                 Slider(
@@ -219,9 +244,9 @@ fun EqualizerWaveSection(
                     onValueChangeFinished = { draftPreamp?.let(onPreampChange) },
                     valueRange = PREAMP_MIN_DB..0f,
                     colors = SliderDefaults.colors(
-                        thumbColor = AuraNeonLime,
-                        activeTrackColor = AuraNeonLime,
-                        inactiveTrackColor = Color(0xFF282C38)
+                        thumbColor = auraColors.textPrimary,
+                        activeTrackColor = accentTint,
+                        inactiveTrackColor = auraColors.pillInactiveBg
                     ),
                     modifier = Modifier.weight(1f)
                 )
@@ -229,8 +254,9 @@ fun EqualizerWaveSection(
                     text = "${(draftPreamp ?: preampDb).roundToInt()} dB",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     textAlign = TextAlign.End,
+                    style = TextStyle(fontFeatureSettings = "tnum"),
                     modifier = Modifier.width(48.dp)
                 )
             }
@@ -253,24 +279,25 @@ fun EqualizerWaveSection(
                     Text(
                         text = "+${BAND_RANGE_DB.roundToInt()}dB",
                         fontSize = 10.sp,
-                        color = TextSecondary
+                        color = auraColors.textSecondary
                     )
                     Text(
                         text = "0dB",
                         fontSize = 10.sp,
-                        color = TextSecondary.copy(alpha = 0.8f)
+                        color = auraColors.textMuted
                     )
                     Text(
                         text = "-${BAND_RANGE_DB.roundToInt()}dB",
                         fontSize = 10.sp,
-                        color = TextSecondary
+                        color = auraColors.textSecondary
                     )
                 }
 
                 EqualizerWavePlot(
                     bands = bands,
-                    curveColor = AuraNeonLime,
-                    gridColor = Color(0xFF252936),
+                    curveColor = accentTint,
+                    gridColor = if (auraColors.isDark) Color(0xFF252936) else Color.Black.copy(alpha = 0.09f),
+                    handleCenterColor = auraColors.surfaceCard,
                     onBandsChange = onBandsChange,
                     modifier = Modifier
                         .weight(1f)
@@ -290,11 +317,285 @@ fun EqualizerWaveSection(
                     Text(
                         text = label,
                         fontSize = 10.sp,
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         textAlign = TextAlign.Center
                     )
                 }
             }
+
+            if (onSelectAutoEqProfile != null) {
+                Spacer(modifier = Modifier.height(14.dp))
+                HorizontalDivider(color = auraColors.divider, thickness = 0.5.dp)
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 52.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { autoEqSheetOpen = true }
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Headphones,
+                            contentDescription = null,
+                            tint = if (activeAutoEqProfile != null) auraColors.textPrimary else auraColors.textSecondary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Headphone Profile",
+                                fontSize = 11.5.sp,
+                                color = auraColors.textSecondary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = activeAutoEqProfile?.name ?: "None",
+                                fontSize = 14.sp,
+                                color = auraColors.textPrimary,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = "Select Headphone Profile",
+                        tint = auraColors.textSecondary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+
+    if (autoEqSheetOpen && onSelectAutoEqProfile != null) {
+        AutoEqProfilePickerSheet(
+            activeProfileId = activeAutoEqProfileId,
+            onSelectProfile = { profileId ->
+                onSelectAutoEqProfile(profileId)
+                autoEqSheetOpen = false
+            },
+            onDismiss = { autoEqSheetOpen = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AutoEqProfilePickerSheet(
+    activeProfileId: String?,
+    onSelectProfile: (String?) -> Unit,
+    onDismiss: () -> Unit,
+    profiles: List<AutoEqProfile> = AutoEqProfiles.ALL_PROFILES,
+    containerColor: Color = auraGlassSheetColor(LocalAuraColors.current.sheetBackground)
+) {
+    val auraColors = LocalAuraColors.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var searchQuery by remember { mutableStateOf("") }
+    val filteredProfiles = remember(profiles, searchQuery) {
+        val q = searchQuery.trim().lowercase(Locale.ROOT)
+        if (q.isEmpty()) {
+            profiles
+        } else {
+            profiles.filter {
+                it.name.lowercase(Locale.ROOT).contains(q) ||
+                    it.source.lowercase(Locale.ROOT).contains(q)
+            }
+        }
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = containerColor,
+        scrimColor = auraColors.scrim,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .size(width = 36.dp, height = 4.dp)
+                    .clip(RoundedCornerShape(2.dp))
+                    .background(auraColors.dragHandle)
+            )
+        }
+    ) {
+        ForceWhiteSystemBarsEffect()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+                .padding(bottom = 24.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Headphone Profile",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = auraColors.textPrimary,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = onDismiss, modifier = Modifier.size(44.dp)) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close Headphone Profile",
+                        tint = auraColors.textSecondary
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Borderless search field
+            BasicTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                textStyle = TextStyle(
+                    fontSize = 14.sp,
+                    color = auraColors.textPrimary,
+                    fontWeight = FontWeight.Normal
+                ),
+                singleLine = true,
+                cursorBrush = SolidColor(auraColors.textPrimary),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(auraColors.surfaceCard)
+                    .padding(horizontal = 12.dp),
+                decorationBox = { innerTextField ->
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = "Search",
+                            tint = auraColors.textSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Box(modifier = Modifier.weight(1f)) {
+                            if (searchQuery.isEmpty()) {
+                                Text(
+                                    text = "Search headphones…",
+                                    color = auraColors.textSecondary,
+                                    fontSize = 13.5.sp
+                                )
+                            }
+                            innerTextField()
+                        }
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(
+                                onClick = { searchQuery = "" },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Clear search",
+                                    tint = auraColors.textSecondary,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                item(key = "__none__") {
+                    val isNoneSelected = activeProfileId.isNullOrBlank()
+                    AutoEqProfileRow(
+                        title = "None",
+                        subtitle = null,
+                        isSelected = isNoneSelected,
+                        onClick = { onSelectProfile(null) }
+                    )
+                }
+
+                items(filteredProfiles, key = { it.id }) { profile ->
+                    val isSelected = activeProfileId == profile.id
+                    val preampLabel = String.format(Locale.US, "%.1f dB", profile.preampDb)
+                    AutoEqProfileRow(
+                        title = profile.name,
+                        subtitle = "${profile.source} · $preampLabel",
+                        isSelected = isSelected,
+                        onClick = { onSelectProfile(profile.id) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AutoEqProfileRow(
+    title: String,
+    subtitle: String?,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val auraColors = LocalAuraColors.current
+    val selectedBg = auraColors.surfaceCard
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 52.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (isSelected) selectedBg else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = auraColors.textPrimary,
+                fontSize = 14.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    color = auraColors.textSecondary,
+                    fontSize = 11.5.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        if (isSelected) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Selected",
+                tint = auraColors.textPrimary,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
@@ -304,6 +605,7 @@ private fun EqualizerWavePlot(
     bands: List<Float>,
     curveColor: Color,
     gridColor: Color,
+    handleCenterColor: Color,
     onBandsChange: (List<Float>) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -378,7 +680,7 @@ private fun EqualizerWavePlot(
                     path = area,
                     brush = Brush.verticalGradient(
                         colors = listOf(
-                            curveColor.copy(alpha = 0.32f),
+                            curveColor.copy(alpha = 0.28f),
                             curveColor.copy(alpha = 0.02f)
                         )
                     )
@@ -394,7 +696,7 @@ private fun EqualizerWavePlot(
                 // Draggable circular handles at each band
                 points.forEach { pt ->
                     drawCircle(
-                        color = Color(0xFF14161E),
+                        color = handleCenterColor,
                         radius = 6.dp.toPx(),
                         center = pt
                     )

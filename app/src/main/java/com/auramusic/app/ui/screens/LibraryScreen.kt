@@ -14,10 +14,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
@@ -42,8 +42,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.BarChart
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Clear
 import androidx.compose.material.icons.rounded.Close
@@ -108,16 +110,8 @@ import com.auramusic.app.domain.model.AuraPlaylist
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.ListeningStats
 import com.auramusic.app.ui.components.AuraTrackOptionsModal
-import com.auramusic.app.ui.theme.AuraCircleButtonBg
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.AuraPillInactive
-import com.auramusic.app.ui.theme.AuraPillInactiveText
-import com.auramusic.app.ui.theme.AuraPlayGreen
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.SpotifyCard
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
 import com.auramusic.app.ui.theme.auraGlassSurface
 
 @Composable
@@ -127,6 +121,9 @@ fun LibraryScreen(
     playlists: List<AuraPlaylist>,
     stats: ListeningStats,
     recentlyPlayed: List<AuraTrack> = emptyList(),
+    cachedTracks: List<AuraTrack> = emptyList(),
+    onRefreshCachedTracks: () -> Unit = {},
+    onOpenAnalytics: () -> Unit = {},
     downloadingIds: Set<String>,
     downloadProgressMap: Map<String, Float> = emptyMap(),
     currentPlayingId: String? = null,
@@ -160,6 +157,7 @@ fun LibraryScreen(
     onRemoveFromRecentlyPlayed: (AuraTrack) -> Unit = {},
     onOpenArtist: (String) -> Unit = {}
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     val uniqueRecent = remember(recentlyPlayed) {
         val seen = mutableSetOf<String>()
@@ -236,12 +234,18 @@ fun LibraryScreen(
     }
     val playlistSlideEasing = remember { CubicBezierEasing(0.23f, 1f, 0.32f, 1f) }
 
-    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Podcasts", "Downloaded")
+    val tabLabels = listOf("All", "Playlists", "Liked Songs", "Podcasts", "Downloaded", "Cached")
+
+    LaunchedEffect(activeTab) {
+        if (activeTab == 0 || activeTab == 5) {
+            onRefreshCachedTracks()
+        }
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
     // 1. My Music / Library Playlists Screen (slides out to the left when a playlist is opened, slides back in when closed)
     AnimatedVisibility(
@@ -259,7 +263,7 @@ fun LibraryScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
             .statusBarsPadding()
             .padding(top = 2.dp)
     ) {
@@ -275,7 +279,7 @@ fun LibraryScreen(
                 text = "My Music",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = auraColors.textPrimary,
                 fontSize = 20.sp
             )
 
@@ -292,7 +296,7 @@ fun LibraryScreen(
                 Icon(
                     imageVector = if (showImportCard) Icons.Rounded.Close else Icons.Rounded.Add,
                     contentDescription = if (showImportCard) "Close Import" else "Create or Import Playlist",
-                    tint = Color.White,
+                    tint = auraColors.textPrimary,
                     modifier = Modifier.size(24.dp)
                 )
             }
@@ -316,9 +320,9 @@ fun LibraryScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 20.dp, vertical = 6.dp)
                     .auraGlassSurface(
-                        shape = RoundedCornerShape(if (isGlass) 16.dp else 14.dp),
-                        fallbackColor = Color(0xFF14161E),
-                        glassAlpha = 0.10f
+                        shape = RoundedCornerShape(if (isGlass) 18.dp else 14.dp),
+                        selected = false,
+                        fallbackColor = auraColors.surfaceCard
                     )
             ) {
                 Column(modifier = Modifier.padding(14.dp)) {
@@ -329,13 +333,13 @@ fun LibraryScreen(
                         Icon(
                             imageVector = Icons.Rounded.Link,
                             contentDescription = null,
-                            tint = AuraNeonLime,
+                            tint = auraColors.textPrimary,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = "Import Spotify Playlist",
-                            color = Color.White,
+                            color = auraColors.textPrimary,
                             fontWeight = FontWeight.Bold,
                             fontSize = 14.sp
                         )
@@ -348,12 +352,8 @@ fun LibraryScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(40.dp)
-                            .auraGlassSurface(
-                                shape = RoundedCornerShape(if (isGlass) 10.dp else 8.dp),
-                                fallbackColor = Color(0xFF0D0E13),
-                                glassAlpha = 0.12f,
-                                borderTopAlpha = 0.24f
-                            )
+                            .clip(RoundedCornerShape(if (isGlass) 10.dp else 8.dp))
+                            .background(auraColors.groupedBackground)
                             .padding(horizontal = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -361,9 +361,9 @@ fun LibraryScreen(
                             value = linkInput,
                             onValueChange = { linkInput = it },
                             singleLine = true,
-                            cursorBrush = SolidColor(AuraNeonLime),
+                            cursorBrush = SolidColor(auraColors.accent),
                             textStyle = TextStyle(
-                                color = TextPrimary,
+                                color = auraColors.textPrimary,
                                 fontSize = 12.5.sp
                             ),
                             modifier = Modifier.weight(1f),
@@ -371,7 +371,7 @@ fun LibraryScreen(
                                 if (linkInput.isEmpty()) {
                                     Text(
                                         text = "Paste public Spotify playlist or album URL…",
-                                        color = TextSecondary.copy(alpha = 0.7f),
+                                        color = auraColors.textMuted,
                                         fontSize = 12.5.sp
                                     )
                                 }
@@ -387,7 +387,7 @@ fun LibraryScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.Clear,
                                     contentDescription = "Clear",
-                                    tint = TextSecondary,
+                                    tint = auraColors.textSecondary,
                                     modifier = Modifier.size(14.dp)
                                 )
                             }
@@ -412,7 +412,7 @@ fun LibraryScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     if (isImporting) {
                                         CircularProgressIndicator(
-                                            color = AuraNeonLime,
+                                            color = auraColors.accent,
                                             strokeWidth = 2.dp,
                                             modifier = Modifier.size(13.dp)
                                         )
@@ -423,7 +423,7 @@ fun LibraryScreen(
                                         color = if (spotifyImportStatus.contains("Could not", true) || spotifyImportStatus.contains("Failed", true))
                                             Color(0xFFFF5252)
                                         else
-                                            AuraNeonLime,
+                                            auraColors.accent,
                                         fontSize = 11.5.sp,
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
@@ -444,31 +444,31 @@ fun LibraryScreen(
                             enabled = linkInput.isNotBlank() && !isImporting,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = AuraNeonLime,
-                                disabledContainerColor = Color(0xFF222530)
+                                containerColor = auraColors.accent,
+                                disabledContainerColor = auraColors.pillInactiveBg
                             ),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
                             modifier = Modifier.height(34.dp)
                         ) {
                             if (isImporting) {
                                 CircularProgressIndicator(
-                                    color = Color.Black,
+                                    color = auraColors.onAccent,
                                     strokeWidth = 2.dp,
                                     modifier = Modifier.size(12.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Importing…", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Text("Importing…", color = auraColors.onAccent, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             } else {
                                 Icon(
                                     imageVector = Icons.Rounded.Download,
                                     contentDescription = null,
-                                    tint = if (linkInput.isNotBlank()) Color.Black else TextSecondary,
+                                    tint = if (linkInput.isNotBlank()) auraColors.onAccent else auraColors.textMuted,
                                     modifier = Modifier.size(14.dp)
                                 )
                                 Spacer(modifier = Modifier.width(5.dp))
                                 Text(
                                     "Import",
-                                    color = if (linkInput.isNotBlank()) Color.Black else TextSecondary,
+                                    color = if (linkInput.isNotBlank()) auraColors.onAccent else auraColors.textMuted,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 12.sp
                                 )
@@ -495,12 +495,12 @@ fun LibraryScreen(
                             if (selected) {
                                 Modifier
                                     .clip(CircleShape)
-                                    .background(AuraNeonLime)
+                                    .background(auraColors.accent)
                             } else {
                                 Modifier.auraGlassSurface(
                                     shape = CircleShape,
                                     selected = false,
-                                    fallbackColor = AuraPillInactive
+                                    fallbackColor = auraColors.pillInactiveBg
                                 )
                             }
                         )
@@ -508,7 +508,7 @@ fun LibraryScreen(
                 ) {
                     Text(
                         text = label,
-                        color = if (selected) Color.Black else AuraPillInactiveText,
+                        color = if (selected) auraColors.onAccent else auraColors.pillInactiveText,
                         fontWeight = FontWeight.Bold,
                         fontSize = 11.5.sp,
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
@@ -551,14 +551,136 @@ fun LibraryScreen(
                                         modifier = Modifier.weight(1f).height(124.dp), onClick = { activeTab = 1 }
                                     )
                                 }
+                                Spacer(Modifier.height(10.dp))
+                                LibraryOverviewTile(
+                                    title = "Cached",
+                                    subtitle = "${cachedTracks.size} songs",
+                                    tracks = cachedTracks.take(3),
+                                    modifier = Modifier.fillMaxWidth().height(104.dp),
+                                    onClick = {
+                                        onRefreshCachedTracks()
+                                        activeTab = 5
+                                    }
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                // Stats & Wrapped Card
+                                val isGlass = LocalLiquidGlassEnabled.current
+                                val isDark = auraColors.isDark
+                                val statsCardShape = RoundedCornerShape(20.dp)
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (isGlass) {
+                                                Modifier
+                                                    .clip(statsCardShape)
+                                                    .background(
+                                                        Brush.verticalGradient(
+                                                            colors = if (isDark) {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.12f),
+                                                                    Color.White.copy(alpha = 0.055f)
+                                                                )
+                                                            } else {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.86f),
+                                                                    Color(0xFFF1F3F8).copy(alpha = 0.68f)
+                                                                )
+                                                            }
+                                                        )
+                                                    )
+                                                    .border(
+                                                        width = 0.85.dp,
+                                                        brush = Brush.verticalGradient(
+                                                            colors = if (isDark) {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.34f),
+                                                                    Color.White.copy(alpha = 0.08f)
+                                                                )
+                                                            } else {
+                                                                listOf(
+                                                                    Color.White.copy(alpha = 0.92f),
+                                                                    Color.Black.copy(alpha = 0.07f)
+                                                                )
+                                                            }
+                                                        ),
+                                                        shape = statsCardShape
+                                                    )
+                                            } else {
+                                                Modifier
+                                                    .clip(statsCardShape)
+                                                    .background(auraColors.surfaceCard)
+                                            }
+                                        )
+                                        .clickable(onClick = onOpenAnalytics)
+                                ) {
+                                    if (isGlass) {
+                                        Box(
+                                            modifier = Modifier
+                                                .matchParentSize()
+                                                .background(
+                                                    Brush.radialGradient(
+                                                        colors = listOf(
+                                                            Color.White.copy(alpha = if (isDark) 0.13f else 0.44f),
+                                                            Color.Transparent
+                                                        ),
+                                                        center = Offset(48f, 20f),
+                                                        radius = 280f
+                                                    )
+                                                )
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Rounded.BarChart,
+                                                contentDescription = null,
+                                                tint = auraColors.textPrimary,
+                                                modifier = Modifier.size(22.dp)
+                                            )
+                                            Spacer(Modifier.width(12.dp))
+                                            Column {
+                                                Text(
+                                                    text = "Stats",
+                                                    color = auraColors.textPrimary,
+                                                    fontSize = 14.5.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = "${stats.totalMinutes} min · ${stats.tracksPlayed} plays",
+                                                    color = auraColors.textSecondary,
+                                                    fontSize = 12.sp,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Rounded.KeyboardArrowRight,
+                                            contentDescription = "Open Stats",
+                                            tint = auraColors.textSecondary,
+                                            modifier = Modifier.size(22.dp)
+                                        )
+                                    }
+                                }
                                 Spacer(Modifier.height(18.dp))
-                                Text("Recently added", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                                Text("Recently added", color = auraColors.textPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
                                 Spacer(Modifier.height(6.dp))
                             }
                         }
                         if (uniqueRecent.isEmpty()) {
                             item(key = "empty_tracks") {
-                                EmptyVaultMessage("No recently played songs yet. Play tracks to see them here.")
+                                EmptyVaultMessage("No recently played songs yet.")
                             }
                         } else items(uniqueRecent, key = { "recent_${it.videoId.ifBlank { it.id }}" }) { track ->
                             val isFav = favorites.any { it.videoId == track.videoId }
@@ -582,7 +704,7 @@ fun LibraryScreen(
             }
             1 -> {
                 if (playlists.isEmpty()) {
-                    EmptyVaultMessage("No playlists created or imported yet.")
+                    EmptyVaultMessage("No playlists yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(playlists, key = { it.id }) { playlist ->
@@ -597,7 +719,7 @@ fun LibraryScreen(
             }
             2 -> {
                 if (musicFavorites.isEmpty()) {
-                    EmptyVaultMessage("No liked songs yet. Tap the heart on any song to save it here.")
+                    EmptyVaultMessage("No liked songs yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(musicFavorites, key = { it.videoId }) { track ->
@@ -630,14 +752,14 @@ fun LibraryScreen(
                 }
 
                 if (podcastShows.isEmpty() && podcastEpisodes.isEmpty()) {
-                    EmptyVaultMessage("No liked podcasts yet. Tap the heart on any podcast show or episode to save it here.")
+                    EmptyVaultMessage("No liked podcasts yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         if (podcastShows.isNotEmpty()) {
                             item {
                                 Text(
                                     text = "Shows (${podcastShows.size})",
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
@@ -656,7 +778,7 @@ fun LibraryScreen(
                             item {
                                 Text(
                                     text = "Liked Episodes (${podcastEpisodes.size})",
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontSize = 17.sp,
                                     fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
@@ -683,7 +805,7 @@ fun LibraryScreen(
             }
             4 -> {
                 if (downloads.isEmpty()) {
-                    EmptyVaultMessage("No downloaded songs yet. Tap download on any song for offline listening.")
+                    EmptyVaultMessage("No downloaded songs yet.")
                 } else {
                     LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
                         items(downloads, key = { it.videoId }) { track ->
@@ -698,6 +820,31 @@ fun LibraryScreen(
                                 downloadProgress = downloadProgressMap[track.videoId],
                                 isPlaying = isPlaying,
                                 onClick = { onPlayTrack(track, downloads) },
+                                onToggleFavorite = { onToggleFavorite(track) },
+                                onDownload = { onDownloadTrack(track) },
+                                onOptionsClick = { selectedModalTrack = track }
+                            )
+                        }
+                    }
+                }
+            }
+            5 -> {
+                if (cachedTracks.isEmpty()) {
+                    EmptyVaultMessage("No cached songs yet.")
+                } else {
+                    LazyColumn(contentPadding = PaddingValues(bottom = 140.dp)) {
+                        items(cachedTracks, key = { "cached_${it.videoId}" }) { track ->
+                            val isDown = downloads.any { it.videoId == track.videoId && it.isDownloaded }
+                            val isDownProgress = downloadingIds.contains(track.videoId)
+                            SpotifyTrackRowItem(
+                                track = track,
+                                isCurrent = currentPlayingId == track.videoId,
+                                isFavorite = favorites.any { it.videoId == track.videoId },
+                                isDownloaded = isDown,
+                                isDownloading = isDownProgress,
+                                downloadProgress = downloadProgressMap[track.videoId],
+                                isPlaying = isPlaying,
+                                onClick = { onPlayTrack(track, cachedTracks) },
                                 onToggleFavorite = { onToggleFavorite(track) },
                                 onDownload = { onDownloadTrack(track) },
                                 onOptionsClick = { selectedModalTrack = track }
@@ -867,18 +1014,18 @@ fun LibraryScreen(
         val target = renamePlaylistTarget!!
         AlertDialog(
             onDismissRequest = { showRenameDialog = false },
-            containerColor = Color(0xFF1B1D26),
-            title = { Text("Rename Playlist", color = Color.White, fontWeight = FontWeight.Bold) },
+            containerColor = auraColors.sheetBackground,
+            title = { Text("Rename Playlist", color = auraColors.textPrimary, fontWeight = FontWeight.Bold) },
             text = {
                 OutlinedTextField(
                     value = renameInput,
                     onValueChange = { renameInput = it },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = AuraNeonLime,
-                        unfocusedBorderColor = Color.White.copy(alpha = 0.2f),
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedBorderColor = auraColors.accent,
+                        unfocusedBorderColor = auraColors.divider,
+                        focusedTextColor = auraColors.textPrimary,
+                        unfocusedTextColor = auraColors.textPrimary
                     )
                 )
             },
@@ -893,12 +1040,12 @@ fun LibraryScreen(
                         showRenameDialog = false
                     }
                 ) {
-                    Text("Save", color = AuraNeonLime, fontWeight = FontWeight.Bold)
+                    Text("Save", color = auraColors.accent, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showRenameDialog = false }) {
-                    Text("Cancel", color = Color.White.copy(alpha = 0.6f))
+                    Text("Cancel", color = auraColors.textSecondary)
                 }
             }
         )
@@ -959,65 +1106,131 @@ private fun LibraryOverviewTile(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    Box(
-        modifier = modifier
-            .auraGlassSurface(
-                shape = RoundedCornerShape(20.dp),
-                selected = false,
-                fallbackColor = Color(0xFF24272D)
+    val auraColors = LocalAuraColors.current
+    val isGlass = LocalLiquidGlassEnabled.current
+    val isDark = auraColors.isDark
+    val tileShape = RoundedCornerShape(20.dp)
+
+    val tileModifier = if (isGlass) {
+        modifier
+            .clip(tileShape)
+            .background(
+                Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.13f),
+                            Color.White.copy(alpha = 0.055f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.88f),
+                            Color(0xFFF0F2F8).copy(alpha = 0.68f)
+                        )
+                    }
+                )
+            )
+            .border(
+                width = 0.85.dp,
+                brush = Brush.verticalGradient(
+                    colors = if (isDark) {
+                        listOf(
+                            Color.White.copy(alpha = 0.36f),
+                            Color.White.copy(alpha = 0.14f),
+                            Color.White.copy(alpha = 0.07f)
+                        )
+                    } else {
+                        listOf(
+                            Color.White.copy(alpha = 0.94f),
+                            Color.White.copy(alpha = 0.45f),
+                            Color.Black.copy(alpha = 0.08f)
+                        )
+                    }
+                ),
+                shape = tileShape
             )
             .clickable(onClick = onClick)
-            .padding(14.dp)
-    ) {
-        if (tracks.isEmpty()) {
-            EmptyArtworkFanStack(
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-            )
-        } else if (tracks.size == 1) {
-            AsyncImage(
-                model = tracks.first().highResArtworkUrl,
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-                    .size(54.dp)
-                    .clip(RoundedCornerShape(9.dp))
-            )
-        } else {
+    } else {
+        modifier
+            .clip(tileShape)
+            .background(auraColors.surfaceCard)
+            .clickable(onClick = onClick)
+    }
+
+    Box(modifier = tileModifier) {
+        if (isGlass) {
+            // Subtle top-left specular glass refraction sheen matching Liquid Glass theme
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 2.dp, end = 2.dp)
-                    .size(width = 82.dp, height = 60.dp)
-            ) {
-                tracks.take(3).forEachIndexed { index, track ->
-                    AsyncImage(
-                        model = track.highResArtworkUrl,
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .align(Alignment.Center)
-                            .offset(x = ((index - 1) * 20).dp)
-                            .rotate((index - 1) * 18f)
-                            .zIndex(index.toFloat())
-                            .size(width = 44.dp, height = 52.dp)
-                            .clip(RoundedCornerShape(9.dp))
+                    .matchParentSize()
+                    .background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                Color.White.copy(alpha = if (isDark) 0.16f else 0.48f),
+                                Color.Transparent
+                            ),
+                            center = Offset(40f, 24f),
+                            radius = 260f
+                        )
                     )
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(14.dp)
+        ) {
+            if (tracks.isEmpty()) {
+                EmptyArtworkFanStack(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                )
+            } else if (tracks.size == 1) {
+                AsyncImage(
+                    model = tracks.first().highResArtworkUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                        .size(54.dp)
+                        .clip(RoundedCornerShape(9.dp))
+                )
+            } else {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(top = 2.dp, end = 2.dp)
+                        .size(width = 82.dp, height = 60.dp)
+                ) {
+                    tracks.take(3).forEachIndexed { index, track ->
+                        AsyncImage(
+                            model = track.highResArtworkUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(x = ((index - 1) * 20).dp)
+                                .rotate((index - 1) * 18f)
+                                .zIndex(index.toFloat())
+                                .size(width = 44.dp, height = 52.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                        )
+                    }
                 }
             }
-        }
-        Column(modifier = Modifier.align(Alignment.BottomStart)) {
-            Text(title, color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-            Text(subtitle, color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Column(modifier = Modifier.align(Alignment.BottomStart)) {
+                Text(title, color = auraColors.textPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(subtitle, color = auraColors.textSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
     }
 }
 
 @Composable
 private fun EmptyArtworkFanStack(modifier: Modifier = Modifier) {
+    val auraColors = LocalAuraColors.current
+    val strokeColor = auraColors.textPrimary.copy(alpha = 0.24f)
     Canvas(modifier = modifier.size(width = 82.dp, height = 60.dp)) {
         val cardWidth = size.width * 0.54f
         val cardHeight = size.height * 0.86f
@@ -1031,7 +1244,7 @@ private fun EmptyArtworkFanStack(modifier: Modifier = Modifier) {
             val center = Offset(size.width * (0.25f + index * 0.25f), size.height * 0.50f)
             rotate(degrees = (index - 1) * 18f, pivot = center) {
                 drawRoundRect(
-                    color = Color.White.copy(alpha = 0.30f),
+                    color = strokeColor,
                     topLeft = center - Offset(cardWidth / 2f, cardHeight / 2f),
                     size = Size(cardWidth, cardHeight),
                     cornerRadius = corner,
@@ -1049,6 +1262,7 @@ private fun PlaylistItemRow(
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1072,7 +1286,7 @@ private fun PlaylistItemRow(
             Text(
                 text = playlist.name,
                 style = MaterialTheme.typography.titleSmall,
-                color = TextPrimary,
+                color = auraColors.textPrimary,
                 maxLines = 1,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
             )
@@ -1080,7 +1294,7 @@ private fun PlaylistItemRow(
             Text(
                 text = "Playlist • ${playlist.tracks.size} songs",
                 style = MaterialTheme.typography.bodySmall,
-                color = TextSecondary
+                color = auraColors.textSecondary
             )
         }
     }
@@ -1088,6 +1302,7 @@ private fun PlaylistItemRow(
 
 @Composable
 private fun EmptyVaultMessage(message: String) {
+    val auraColors = LocalAuraColors.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1097,7 +1312,7 @@ private fun EmptyVaultMessage(message: String) {
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = TextSecondary
+            color = auraColors.textSecondary
         )
     }
 }

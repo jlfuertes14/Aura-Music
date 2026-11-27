@@ -1,7 +1,6 @@
 package com.auramusic.app.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,7 +20,6 @@ import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -29,13 +27,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auramusic.app.domain.model.AuraPlaylist
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 /**
  * Universal Mobile 3-Dot Options Bottom Sheet Modal for Playlists.
@@ -53,20 +51,21 @@ fun AuraPlaylistOptionsModal(
     onDelete: () -> Unit,
     onFindInPlaylist: (() -> Unit)? = null
 ) {
+    val auraColors = LocalAuraColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -95,7 +94,7 @@ fun AuraPlaylistOptionsModal(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = playlist.name,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp,
                         maxLines = 1,
@@ -104,14 +103,14 @@ fun AuraPlaylistOptionsModal(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = "${playlist.tracks.size} tracks",
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         fontSize = 12.5.sp
                     )
                 }
             }
 
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = auraColors.divider,
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
@@ -121,7 +120,7 @@ fun AuraPlaylistOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.Search,
                     label = "Find in playlist",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = {
                         onDismiss()
                         onFindInPlaylist()
@@ -132,8 +131,8 @@ fun AuraPlaylistOptionsModal(
             // 1. Download All Songs
             TrackOptionRow(
                 icon = Icons.Rounded.Download,
-                label = "Download All Songs (${playlist.tracks.size})",
-                iconTint = Color.White,
+                label = "Download All (${playlist.tracks.size})",
+                iconTint = auraColors.textPrimary,
                 onClick = onDownloadAll
             )
 
@@ -141,16 +140,16 @@ fun AuraPlaylistOptionsModal(
             TrackOptionRow(
                 icon = Icons.Rounded.Image,
                 label = "Change Cover Art",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onChangeCover
             )
 
-            // 3. Reset to Spotify Collage
+            // 3. Reset Cover
             if (playlist.coverUrl.isNotBlank() && onResetCover != null) {
                 TrackOptionRow(
                     icon = Icons.Rounded.RestartAlt,
-                    label = "Reset to Spotify Collage",
-                    iconTint = Color.White,
+                    label = "Reset Cover",
+                    iconTint = auraColors.textPrimary,
                     onClick = onResetCover
                 )
             }
@@ -159,7 +158,7 @@ fun AuraPlaylistOptionsModal(
             TrackOptionRow(
                 icon = Icons.Rounded.Edit,
                 label = "Rename Playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onRename
             )
 
@@ -167,7 +166,7 @@ fun AuraPlaylistOptionsModal(
             TrackOptionRow(
                 icon = Icons.Rounded.DeleteOutline,
                 label = "Delete Playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onDelete
             )
         }

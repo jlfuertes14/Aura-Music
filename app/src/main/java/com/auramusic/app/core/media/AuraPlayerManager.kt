@@ -2,11 +2,8 @@ package com.auramusic.app.core.media
 
 import android.content.Context
 import android.content.Intent
-import android.media.audiofx.Equalizer
-import android.media.audiofx.LoudnessEnhancer
+import android.media.AudioDeviceInfo
 import android.net.Uri
-import android.os.Build
-import android.os.Environment
 import android.util.Log
 import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
@@ -14,6 +11,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.database.StandaloneDatabaseProvider
@@ -23,11 +21,14 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.ResolvingDataSource
 import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.datasource.cache.LeastRecentlyUsedCacheEvictor
+import androidx.media3.datasource.cache.NoOpCacheEvictor
 import androidx.media3.datasource.cache.SimpleCache
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
@@ -35,21 +36,14 @@ import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.auramusic.app.core.extractor.ResolvedStream
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
 import com.auramusic.app.data.AuraStorageRepository
+import com.auramusic.app.data.prefs.AuraPreferencesStore
 import com.auramusic.app.domain.model.AuraTrack
-import com.auramusic.app.domain.model.isPendingResolution
 import com.auramusic.app.domain.model.EqualizerPreset
 import com.auramusic.app.domain.model.PlaybackMode
 import com.auramusic.app.domain.model.ResolvedVideoStream
-import com.auramusic.app.domain.model.SIMPMUSIC_ALL_EQ_PRESETS
-import com.auramusic.app.domain.model.SIMPMUSIC_EQ_PRESETS
 import com.auramusic.app.domain.model.SponsorSegment
-import com.auramusic.app.domain.model.findMatchingPreset
-import kotlinx.coroutines.CancellationException
+import com.auramusic.app.domain.model.isPendingResolution
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.async
-import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -61,29 +55,88 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
-import okhttp3.Request
 import java.io.File
+import kotlin.math.PI
+import kotlin.math.abs
+import kotlin.math.cos
 import kotlin.math.pow
+import kotlin.math.sin
+
+internal const val MIN_PLAYBACK_SPEED = 0.25f
+internal const val MAX_PLAYBACK_SPEED = 2.0f
+internal const val MIN_PITCH_SEMITONES = -12
+internal const val MAX_PITCH_SEMITONES = 12
+
+internal fun clampPlaybackSpeed(speed: Float): Float =
+    if (speed.isFinite()) speed.coerceIn(MIN_PLAYBACK_SPEED, MAX_PLAYBACK_SPEED) else 1.0f
+
+internal fun clampPitchSemitones(semitones: Int): Int =
+    semitones.coerceIn(MIN_PITCH_SEMITONES, MAX_PITCH_SEMITONES)
+
+internal fun semitonesToPitchFactor(semitones: Int): Float =
+    2.0.pow(clampPitchSemitones(semitones) / 12.0).toFloat()
+
+internal fun extractVideoIdFromCacheKey(key: String): String? = when {
+    key.startsWith("offline_") -> key.removePrefix("offline_").takeIf { it.isNotBlank() }
+    key.startsWith("audio_") -> {
+        val body = key.removePrefix("audio_")
+        (if ('_' in body) body.substringBeforeLast('_') else body).takeIf { it.isNotBlank() }
+    }
+    key.startsWith("video_audio_") -> {
+        val body = key.removePrefix("video_audio_")
+        (if ('_' in body) body.substringBeforeLast('_') else body).takeIf { it.isNotBlank() }
+    }
+    key.startsWith("video_") -> {
+        Regex("^video_([A-Za-z0-9_-]{11})_").find(key)?.groupValues?.getOrNull(1)
+    }
+    else -> null
+}
 
 @OptIn(UnstableApi::class)
 object AuraPlayerManager {
     private const val TAG = "AuraPlayerManager"
-    private const val MAX_CACHE_BYTES = 512L * 1024L * 1024L // 512 MB SimpMusic SimpleCache
+    private const val PLAYBACK_EVENT_THRESHOLD_MS = 15_000L
+    private const val PERIODIC_PERSIST_INTERVAL_MS = 5_000L
+    private const val MAX_STREAM_RECOVERY_ATTEMPTS = 2
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var progressJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var radioFetchJob: Job? = null
     private var fadeJob: Job? = null
-    private var baseVolume: Float = 1.0f
+    private var crossfadeJob: Job? = null
+    private var streamRecoveryTrackId: String? = null
+    private var streamRecoveryAttempts: Int = 0
 
     private var appContext: Context? = null
     private var simpleCache: SimpleCache? = null
-    private var hardwareEq: Equalizer? = null
-    private var loudnessEnhancer: LoudnessEnhancer? = null
-    private var boundAudioSessionId: Int = C.AUDIO_SESSION_ID_UNSET
+    private var resolvingDataSourceFactory: DataSource.Factory? = null
+    private var crossfadePlayer: ExoPlayer? = null
+    private var crossfadeSecondaryProcessors: Array<androidx.media3.common.audio.AudioProcessor>? = null
+    private var crossfadePreparedTrackKey: String? = null
+    private var crossfadeSourceTrackKey: String? = null
+
+    private var sessionTrack: AuraTrack? = null
+    private var sessionAccumulatedMs: Long = 0L
+    private var sessionEventRecorded: Boolean = false
+    private var sessionScrobbleNotified: Boolean = false
+    private var lastTickerWallMs: Long = 0L
+    private var lastPeriodicSaveWallMs: Long = 0L
+    private var lastPersistedQueueIds: List<String>? = null
+    private var selectedAudioDeviceInfo: AudioDeviceInfo? = null
+
     @Volatile
-    private var currentTrackLoudnessDb: Float = 0f
+    private var isSleepTimerFading: Boolean = false
+
+    val dspManager = AuraAudioDspManager()
+    val offlineDownloader = AuraOfflineDownloader()
+
+    private val baseVolume: Float
+        get() = dspManager.baseVolume
+
+    private val isAnyFadeActive: Boolean
+        get() = fadeJob?.isActive == true || _isCrossfading.value || isSleepTimerFading
 
     var exoPlayer: ExoPlayer? = null
         private set
@@ -120,23 +173,24 @@ object AuraPlayerManager {
     private val _lastSkippedSegment = MutableStateFlow<String?>(null)
     val lastSkippedSegment: StateFlow<String?> = _lastSkippedSegment.asStateFlow()
 
-    private val _activeEqPreset = MutableStateFlow(
-        SIMPMUSIC_ALL_EQ_PRESETS.find { it.id == "flat" } ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
-    )
-    val activeEqPreset: StateFlow<EqualizerPreset> = _activeEqPreset.asStateFlow()
+    // Delegated DSP StateFlows (100% API compatibility)
+    val activeEqPreset: StateFlow<EqualizerPreset> = dspManager.activeEqPreset
+    val equalizerBands: StateFlow<List<Float>> = dspManager.equalizerBands
+    val equalizerPreamp: StateFlow<Float> = dspManager.equalizerPreamp
+    val activeEqPresetName: StateFlow<String> = dspManager.activeEqPresetName
+    val eqEnabled: StateFlow<Boolean> = dspManager.eqEnabled
+    val loudnessNormalization: StateFlow<Boolean> = dspManager.loudnessNormalization
+    val audioReverbPreset: StateFlow<Int> = dspManager.audioReverbPreset
+    val activeAutoEqProfile: StateFlow<AutoEqProfile?> = dspManager.activeAutoEqProfile
 
-    private val _equalizerBands = MutableStateFlow(listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
-    val equalizerBands: StateFlow<List<Float>> = _equalizerBands.asStateFlow()
+    private val _activeAutoEqProfileName = MutableStateFlow<String?>(null)
+    val activeAutoEqProfileName: StateFlow<String?> = _activeAutoEqProfileName.asStateFlow()
 
-    private val _equalizerPreamp = MutableStateFlow(0f)
-    val equalizerPreamp: StateFlow<Float> = _equalizerPreamp.asStateFlow()
+    private val _activeAutoEqProfileId = MutableStateFlow<String?>(null)
+    val activeAutoEqProfileId: StateFlow<String?> = _activeAutoEqProfileId.asStateFlow()
 
-    private val _activeEqPresetName = MutableStateFlow("Flat")
-    val activeEqPresetName: StateFlow<String> = _activeEqPresetName.asStateFlow()
-
-    // Default EQ to false for bit-perfect, uncolored, distortion-free audio
-    private val _eqEnabled = MutableStateFlow(false)
-    val eqEnabled: StateFlow<Boolean> = _eqEnabled.asStateFlow()
+    // Delegated Offline Download StateFlows
+    val activeDownloads: StateFlow<Map<String, DownloadItemState>> = offlineDownloader.activeDownloads
 
     private val _audioQuality = MutableStateFlow("Auto")
     val audioQuality: StateFlow<String> = _audioQuality.asStateFlow()
@@ -150,14 +204,34 @@ object AuraPlayerManager {
     private val _maxCacheSizeMb = MutableStateFlow(1024)
     val maxCacheSizeMb: StateFlow<Int> = _maxCacheSizeMb.asStateFlow()
 
-    private val _loudnessNormalization = MutableStateFlow(true)
-    val loudnessNormalization: StateFlow<Boolean> = _loudnessNormalization.asStateFlow()
-
     private val _sponsorBlockEnabled = MutableStateFlow(true)
     val sponsorBlockEnabled: StateFlow<Boolean> = _sponsorBlockEnabled.asStateFlow()
 
+    private val _sponsorBlockCategories = MutableStateFlow(
+        setOf("sponsor", "selfpromo", "interaction", "intro", "outro", "music_offtopic")
+    )
+    val sponsorBlockCategories: StateFlow<Set<String>> = _sponsorBlockCategories.asStateFlow()
+
+    private val _savePlaybackState = MutableStateFlow(true)
+    val savePlaybackState: StateFlow<Boolean> = _savePlaybackState.asStateFlow()
+
+    private val _killServiceOnExit = MutableStateFlow(false)
+    val killServiceOnExit: StateFlow<Boolean> = _killServiceOnExit.asStateFlow()
+
+    private val _playVideoForVideoTrack = MutableStateFlow(false)
+    val playVideoForVideoTrack: StateFlow<Boolean> = _playVideoForVideoTrack.asStateFlow()
+
+    private val _radioAudioOnly = MutableStateFlow(true)
+    val radioAudioOnly: StateFlow<Boolean> = _radioAudioOnly.asStateFlow()
+
     private val _crossfadeSeconds = MutableStateFlow(4)
     val crossfadeSeconds: StateFlow<Int> = _crossfadeSeconds.asStateFlow()
+
+    private val _isCrossfading = MutableStateFlow(false)
+    val isCrossfading: StateFlow<Boolean> = _isCrossfading.asStateFlow()
+
+    private val _skipCrossfadeWithinAlbum = MutableStateFlow(false)
+    val skipCrossfadeWithinAlbum: StateFlow<Boolean> = _skipCrossfadeWithinAlbum.asStateFlow()
 
     // Spotify-style Video Player Mode State
     private val _isVideoMode = MutableStateFlow(false)
@@ -179,42 +253,67 @@ object AuraPlayerManager {
     private val _sleepTimerRemainingMin = MutableStateFlow<Int?>(null)
     val sleepTimerRemainingMin: StateFlow<Int?> = _sleepTimerRemainingMin.asStateFlow()
 
+    private val _sleepTimerEndOfTrack = MutableStateFlow(false)
+    val sleepTimerEndOfTrack: StateFlow<Boolean> = _sleepTimerEndOfTrack.asStateFlow()
+
     private val _isShuffleEnabled = MutableStateFlow(false)
     val isShuffleEnabled: StateFlow<Boolean> = _isShuffleEnabled.asStateFlow()
 
     private val _playbackMode = MutableStateFlow(PlaybackMode.NORMAL)
     val playbackMode: StateFlow<PlaybackMode> = _playbackMode.asStateFlow()
 
+    private val _playbackSpeed = MutableStateFlow(1.0f)
+    val playbackSpeed: StateFlow<Float> = _playbackSpeed.asStateFlow()
+
+    private val _playbackPitchSemitones = MutableStateFlow(0)
+    val playbackPitchSemitones: StateFlow<Int> = _playbackPitchSemitones.asStateFlow()
+
+    private val _selectedAudioOutputId = MutableStateFlow<Int?>(null)
+    val selectedAudioOutputId: StateFlow<Int?> = _selectedAudioOutputId.asStateFlow()
+
     var onTrackFinishedCallback: ((AuraTrack) -> Unit)? = null
     var onTrackSkippedCallback: ((AuraTrack) -> Unit)? = null
     var onVideoUnavailableCallback: ((AuraTrack) -> Unit)? = null
+    var onTrackStateChangedHook: ((track: AuraTrack?, isPlaying: Boolean, positionMs: Long, durationMs: Long) -> Unit)? = null
+    var onTrackScrobbleEligibleHook: ((track: AuraTrack, playedMs: Long) -> Unit)? = null
 
     fun initialize(context: Context) {
         if (exoPlayer != null) return
         val ctx = context.applicationContext
         appContext = ctx
 
+        dspManager.loadFromStorage(ctx)
         val storage = AuraStorageRepository(ctx)
-        _eqEnabled.value = storage.loadEqualizerEnabled()
-        _equalizerBands.value = storage.loadEqualizerBands()
-        _equalizerPreamp.value = storage.loadEqualizerPreamp()
-        val savedPreset = storage.loadEqualizerPreset()
-        _activeEqPresetName.value = savedPreset
-        _activeEqPreset.value = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.name == savedPreset }
-            ?: SIMPMUSIC_ALL_EQ_PRESETS.first()
         _audioQuality.value = storage.loadAudioQuality()
         _videoQuality.value = storage.loadVideoQuality()
-        _loudnessNormalization.value = storage.loadNormalizeVolume()
         _skipSilence.value = storage.loadSkipSilence()
         _crossfadeSeconds.value = storage.loadCrossfadeDuration()
         _maxCacheSizeMb.value = storage.loadMaxCacheSize()
+        _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
+        _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
+        _savePlaybackState.value = storage.loadSavePlaybackState()
+        _killServiceOnExit.value = storage.loadKillServiceOnExit()
+        _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
+        _radioAudioOnly.value = storage.loadRadioAudioOnly()
+        if (_savePlaybackState.value) {
+            val savedMode = PlaybackMode.entries.firstOrNull { it.name == storage.loadSavedPlaybackMode() }
+                ?: PlaybackMode.NORMAL
+            _playbackMode.value = savedMode
+            _isShuffleEnabled.value = savedMode == PlaybackMode.SHUFFLE
+        }
 
         SimpMusicExtractorEngine.initExtractors()
 
-        // 1. SimpMusic SimpleCache (512 MB disk cache for 0ms replays & instant scrubbing)
+        // 1. SimpMusic SimpleCache (respect configured cache limit; <= 0 means Unlimited)
         val cacheDir = File(ctx.cacheDir, "aura_media3_cache")
         val dbProvider = StandaloneDatabaseProvider(ctx)
-        val cache = SimpleCache(cacheDir, LeastRecentlyUsedCacheEvictor(MAX_CACHE_BYTES), dbProvider)
+        val configuredCacheMb = _maxCacheSizeMb.value
+        val cacheEvictor = if (configuredCacheMb <= 0) {
+            NoOpCacheEvictor()
+        } else {
+            LeastRecentlyUsedCacheEvictor(configuredCacheMb.toLong() * 1024L * 1024L)
+        }
+        val cache = SimpleCache(cacheDir, cacheEvictor, dbProvider)
         simpleCache = cache
 
         // 2. OkHttpDataSource + DefaultDataSource (handles both HTTP streams & file:// offline tracks)
@@ -286,7 +385,7 @@ object AuraPlayerManager {
                 val offlineFile = getOfflineFile(ctx, videoId)
                 if (offlineFile.exists() && offlineFile.length() > 10_000L) {
                     if (_currentTrack.value?.videoId == videoId) {
-                        currentTrackLoudnessDb = 0f
+                        dspManager.setTrackLoudnessDb(0f)
                         _streamSourceTier.value = "Offline • Lossless"
                         scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
                     }
@@ -328,7 +427,7 @@ object AuraPlayerManager {
 
                 if (resolvedVideo != null) {
                     if (_currentTrack.value?.videoId == videoId) {
-                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoId) ?: 0f
+                        dspManager.setTrackLoudnessDb(SimpMusicExtractorEngine.getTrackLoudnessDb(videoId) ?: 0f)
                         _streamSourceTier.value = "Video • ${resolvedVideo.quality}"
                         scope.launch(Dispatchers.Main) { applyEqualizerCurve() }
                     }
@@ -346,71 +445,117 @@ object AuraPlayerManager {
             }
             dataSpec
         }
+        this.resolvingDataSourceFactory = resolvingFactory
 
-        // 4. LoadControl with a robust rebuffer safety cushion to prevent endless pause/play loops
-        val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(
-                30_000, // minBufferMs: attempt to buffer up to 30s ahead
-                60_000, // maxBufferMs: keep maximum 60s in buffer
-                1_500,  // bufferForPlaybackMs: quick start with 1.5s buffer
-                4_000   // bufferForPlaybackAfterRebufferMs: MUST collect 4.0s of buffer before resuming after running dry!
-            )
-            .setPrioritizeTimeOverSizeThresholds(true)
-            .setBackBuffer(15_000, true) // Retain 15s behind current position for instant rewind
-            .build()
-
-        val audioAttributes = AudioAttributes.Builder()
-            .setUsage(C.USAGE_MEDIA)
-            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
-            .build()
-
-        val renderersFactory = DefaultRenderersFactory(ctx)
-            .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
-
-        val player = ExoPlayer.Builder(ctx, renderersFactory)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
-            .setLoadControl(loadControl)
-            .setAudioAttributes(audioAttributes, true)
-            .setHandleAudioBecomingNoisy(true)
-            .setWakeMode(C.WAKE_MODE_NETWORK)
-            .build()
+        val player = buildAudioExoPlayer(
+            ctx = ctx,
+            resolvingFactory = resolvingFactory,
+            handleAudioFocus = true,
+            useSecondaryDsp = false
+        )
         player.skipSilenceEnabled = _skipSilence.value
+        player.repeatMode = when (_playbackMode.value) {
+            PlaybackMode.REPEAT_ALL -> Player.REPEAT_MODE_ALL
+            PlaybackMode.REPEAT_ONE -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
 
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 _isPlaying.value = isPlaying
+                if (isPlaying) {
+                    _isBuffering.value = false
+                    streamRecoveryAttempts = 0
+                }
+                lastTickerWallMs = System.currentTimeMillis()
+                if (!isPlaying && _currentTrack.value != null) {
+                    persistPlaybackState()
+                }
+                notifyTrackStateChanged()
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                _isBuffering.value = playWhenReady && player.playbackState == Player.STATE_BUFFERING
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                _isBuffering.value = playbackState == Player.STATE_BUFFERING
+                _isBuffering.value = playbackState == Player.STATE_BUFFERING && player.playWhenReady
                 if (playbackState == Player.STATE_READY) {
+                    streamRecoveryAttempts = 0
                     val durMs = player.duration
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
                         _durationSec.value = (durMs / 1000f).coerceAtLeast(1f)
                     }
-                    bindHardwareEqualizer(player.audioSessionId)
+                    dspManager.attachAudioSession(
+                        audioSessionId = player.audioSessionId,
+                        player = player,
+                        isFadeActive = isAnyFadeActive
+                    )
                 } else if (playbackState == Player.STATE_ENDED) {
+                    recordCurrentSessionPlaybackEvent(completed = true)
                     _currentTrack.value?.let { finished ->
                         onTrackFinishedCallback?.invoke(finished)
                     }
-                    skipToNext(recordSkip = false)
+                    if (_sleepTimerEndOfTrack.value) {
+                        _sleepTimerEndOfTrack.value = false
+                        _sleepTimerRemainingMin.value = null
+                        isSleepTimerFading = false
+                        cancelCrossfade()
+                        player.volume = baseVolume
+                        player.pause()
+                    } else {
+                        skipToNext(recordSkip = false)
+                    }
+                    notifyTrackStateChanged()
                 }
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
                 fadeJob?.cancel()
+                if (!_isCrossfading.value) {
+                    cancelCrossfade()
+                }
+                if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                    reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                ) {
+                    recordCurrentSessionPlaybackEvent(completed = true)
+                }
+                if (_sleepTimerEndOfTrack.value &&
+                    (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT)
+                ) {
+                    _sleepTimerEndOfTrack.value = false
+                    _sleepTimerRemainingMin.value = null
+                    isSleepTimerFading = false
+                    cancelCrossfade()
+                    player.volume = baseVolume
+                    player.pause()
+                    player.seekToDefaultPosition(player.currentMediaItemIndex)
+                }
                 val mediaId = mediaItem?.mediaId ?: return
                 val matched = _queue.value.firstOrNull { it.videoId == mediaId || it.id == mediaId }
                 if (matched != null) {
+                    val isDifferentTrack = sessionTrack == null ||
+                        (sessionTrack?.videoId != matched.videoId && sessionTrack?.id != matched.id)
+                    if (isDifferentTrack ||
+                        reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
+                        reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT
+                    ) {
+                        resetPlaySessionTracker(matched)
+                    }
                     _currentTrack.value = matched
                     _durationSec.value = matched.durationSeconds.toFloat().coerceAtLeast(1f)
                     val cachedStream = SimpMusicExtractorEngine.getCachedStream(matched.videoId, _audioQuality.value)
                     if (cachedStream != null) {
                         applyResolvedAudioMetadata(matched.videoId, cachedStream)
                     } else {
-                        currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(matched.videoId) ?: 0f
-                        applyEqualizerCurve()
+                        dspManager.updateTrackLoudness(
+                            loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(matched.videoId) ?: 0f,
+                            player = player,
+                            isFadeActive = isAnyFadeActive
+                        )
                     }
+                    persistPlaybackState()
+                    notifyTrackStateChanged()
                     if (matched.isPendingResolution) {
                         scope.launch {
                             val resolved = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(matched)
@@ -441,12 +586,17 @@ object AuraPlayerManager {
                 Log.e(TAG, "ExoPlayer error: ${error.message}", error)
                 if (_isVideoMode.value) {
                     _isVideoLoading.value = false
+                    _isBuffering.value = false
                     Log.w(TAG, "Video playback failed; restoring the original audio track")
                     (originalAudioTrack ?: _currentTrack.value)?.let { onVideoUnavailableCallback?.invoke(it) }
                     switchToAudioMode()
                     return
                 }
-                val failedVid = _currentTrack.value?.videoId ?: return
+                val failedVid = _currentTrack.value?.videoId
+                if (failedVid == null) {
+                    _isBuffering.value = false
+                    return
+                }
                 if (failedVid.startsWith("spotify_pending") || _currentTrack.value?.isPendingResolution == true) {
                     _currentTrack.value?.let { pending ->
                         scope.launch {
@@ -457,6 +607,7 @@ object AuraPlayerManager {
                                 }
                             } else {
                                 withContext(Dispatchers.Main) {
+                                    _isBuffering.value = false
                                     skipToNext(recordSkip = false)
                                 }
                             }
@@ -464,17 +615,33 @@ object AuraPlayerManager {
                     }
                     return
                 }
+                if (streamRecoveryTrackId != failedVid) {
+                    streamRecoveryTrackId = failedVid
+                    streamRecoveryAttempts = 0
+                }
+                if (streamRecoveryAttempts >= MAX_STREAM_RECOVERY_ATTEMPTS) {
+                    Log.w(TAG, "Stream recovery exhausted ($MAX_STREAM_RECOVERY_ATTEMPTS attempts) for $failedVid")
+                    player.pause()
+                    _isBuffering.value = false
+                    _isPlaying.value = false
+                    return
+                }
+                streamRecoveryAttempts++
                 SimpMusicExtractorEngine.invalidateStream(failedVid)
                 // Automatic SimpMusic stream recovery
                 scope.launch {
                     delay(350)
-                    player.prepare()
-                    player.play()
+                    if (_currentTrack.value?.videoId == failedVid && !_isVideoMode.value) {
+                        player.prepare()
+                        player.play()
+                    }
                 }
             }
         })
 
         exoPlayer = player
+        applyPlaybackParameters()
+        selectedAudioDeviceInfo?.let { player.setPreferredAudioDevice(it) }
         startProgressTicker()
     }
 
@@ -512,6 +679,8 @@ object AuraPlayerManager {
         originalAudioQueue = null
         originalAudioIndex = -1
         _isVideoMode.value = false
+        streamRecoveryTrackId = null
+        streamRecoveryAttempts = 0
 
         val rawNewQueue = newQueue?.map(::withOfflineArtwork)
         val effectiveTrack = withOfflineArtwork(track)
@@ -546,16 +715,22 @@ object AuraPlayerManager {
         _bufferedSec.value = 0f
         _durationSec.value = track.durationSeconds.toFloat().coerceAtLeast(1f)
         _isBuffering.value = true
+        resetPlaySessionTracker(track)
 
         val mediaItems = updatedQueue.map { item -> buildMediaItem(item) }
         val startIndex = updatedQueue.indexOfFirst { it.id == track.id || it.videoId == track.videoId }.coerceAtLeast(0)
 
         fadeJob?.cancel()
+        cancelCrossfade()
+        isSleepTimerFading = false
         player.volume = baseVolume
         player.shuffleModeEnabled = false // Transparent explicit order
+        applyPlaybackParameters()
         player.setMediaItems(mediaItems, startIndex, 0L)
         player.prepare()
         player.play()
+        persistPlaybackState(forceQueueSave = true)
+        notifyTrackStateChanged()
 
         // Start MediaSessionService to keep media session active and system notification connected
         appContext?.let { ctx ->
@@ -571,13 +746,14 @@ object AuraPlayerManager {
         prefetchUpcomingTracks(track.videoId)
         if (allowRadioQueue && updatedQueue.size <= 3) {
             radioFetchJob = scope.launch {
-                val radio = SimpMusicExtractorEngine.fetchRadioQueue(track.videoId)
+                val radio = SimpMusicExtractorEngine.fetchRadioQueue(track.videoId, _radioAudioOnly.value)
                 if (radio.isNotEmpty()) {
                     val existingIds = _queue.value.map { it.videoId }.toSet()
                     val fresh = radio.filterNot { existingIds.contains(it.videoId) }
                     if (fresh.isNotEmpty()) {
                         _queue.value = _queue.value + fresh
                         player.addMediaItems(fresh.map { buildMediaItem(it) })
+                        persistPlaybackState(forceQueueSave = true)
                         fresh.firstOrNull()?.let { SimpMusicExtractorEngine.prefetchStream(it.videoId) }
                     }
                 }
@@ -590,6 +766,7 @@ object AuraPlayerManager {
             _queue.value = _queue.value + track
             originalQueue = originalQueue + track
             exoPlayer?.addMediaItem(buildMediaItem(track))
+            persistPlaybackState(forceQueueSave = true)
         }
     }
 
@@ -609,6 +786,7 @@ object AuraPlayerManager {
                     if (player != null && player.playbackState != Player.STATE_IDLE) {
                         syncUpcomingItemsInPlayer(currentList.drop(curIdx + 1))
                     }
+                    persistPlaybackState(forceQueueSave = true)
                 }
             } else {
                 val removeIdx = currentList.indexOfFirst { it.videoId == track.videoId }
@@ -620,6 +798,7 @@ object AuraPlayerManager {
                     if (player != null && player.playbackState != Player.STATE_IDLE) {
                         syncUpcomingItemsInPlayer(currentList.drop(curIdx + 1))
                     }
+                    persistPlaybackState(forceQueueSave = true)
                 }
             }
         }
@@ -633,11 +812,13 @@ object AuraPlayerManager {
         current.add(insertIndex, track)
         _queue.value = current
         exoPlayer?.addMediaItem(insertIndex, buildMediaItem(track))
+        persistPlaybackState(forceQueueSave = true)
     }
 
     fun pauseWithFadeOut(onComplete: (() -> Unit)? = null) {
         val player = exoPlayer ?: return
         if (!player.isPlaying) return
+        cancelCrossfade()
         fadeJob?.cancel()
         fadeJob = scope.launch {
             val startVol = player.volume
@@ -659,6 +840,7 @@ object AuraPlayerManager {
         fadeJob?.cancel()
         val targetVol = baseVolume
         if (player.playbackState == Player.STATE_IDLE) {
+            streamRecoveryAttempts = 0
             player.prepare()
         }
         player.volume = 0f
@@ -677,10 +859,46 @@ object AuraPlayerManager {
 
     fun togglePlayPause() {
         val player = exoPlayer ?: return
-        if (player.isPlaying) {
-            pauseWithFadeOut()
+        when {
+            player.isPlaying -> pauseWithFadeOut()
+            player.playWhenReady && player.playbackState == Player.STATE_BUFFERING -> {
+                fadeJob?.cancel()
+                cancelCrossfade()
+                player.volume = baseVolume
+                player.pause()
+                _isBuffering.value = false
+                _isPlaying.value = false
+                notifyTrackStateChanged()
+            }
+            else -> playWithFadeIn()
+        }
+    }
+
+    /**
+     * Instant zero-fade play/pause toggle for home-screen widgets so playback state
+     * and widget icons flip immediately without waiting on the 200ms audio fade.
+     */
+    fun togglePlayPauseImmediate(): Boolean {
+        val player = exoPlayer ?: return _isPlaying.value
+        fadeJob?.cancel()
+        cancelCrossfade()
+        player.volume = baseVolume
+        return if (player.isPlaying || (player.playWhenReady && player.playbackState == Player.STATE_BUFFERING)) {
+            player.pause()
+            _isBuffering.value = false
+            _isPlaying.value = false
+            persistPlaybackState()
+            notifyTrackStateChanged()
+            false
         } else {
-            playWithFadeIn()
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+            player.play()
+            _isPlaying.value = true
+            _isBuffering.value = player.playbackState == Player.STATE_BUFFERING
+            notifyTrackStateChanged()
+            true
         }
     }
 
@@ -719,6 +937,9 @@ object AuraPlayerManager {
                 }
             }
         }
+        if (_savePlaybackState.value) {
+            appContext?.let { AuraStorageRepository(it).saveSavedPlaybackMode(nextMode.name) }
+        }
         return nextMode
     }
 
@@ -733,7 +954,7 @@ object AuraPlayerManager {
             // Queue only has 1 song (e.g. played single search track), and user activated Shuffle mode!
             // Dynamically fetch radio queue so playback auto-plays into similar tracks
             scope.launch {
-                val radio = SimpMusicExtractorEngine.fetchRadioQueue(cur.videoId)
+                val radio = SimpMusicExtractorEngine.fetchRadioQueue(cur.videoId, _radioAudioOnly.value)
                 if (radio.isNotEmpty()) {
                     val existingIds = _queue.value.map { it.videoId }.toSet()
                     val fresh = radio.filterNot { existingIds.contains(it.videoId) }
@@ -754,6 +975,7 @@ object AuraPlayerManager {
         val after = if (curIdx >= 0) list.drop(curIdx + 1).shuffled() else list.filterNot { it.id == cur.id || it.videoId == cur.videoId }.shuffled()
         _queue.value = before + after
         syncUpcomingItemsInPlayer(after)
+        persistPlaybackState(forceQueueSave = true)
     }
 
     fun restoreOriginalQueue() {
@@ -765,6 +987,7 @@ object AuraPlayerManager {
             val after = originalQueue.drop(origIdx + 1)
             _queue.value = before + after
             syncUpcomingItemsInPlayer(after)
+            persistPlaybackState(forceQueueSave = true)
         }
     }
 
@@ -776,6 +999,7 @@ object AuraPlayerManager {
         val updated = before + newUpcomingList
         _queue.value = updated
         syncUpcomingItemsInPlayer(newUpcomingList)
+        persistPlaybackState(forceQueueSave = true)
     }
 
     /**
@@ -796,6 +1020,7 @@ object AuraPlayerManager {
         val removed = mutable.removeAt(index)
         _queue.value = mutable
         originalQueue = originalQueue.filterNot { it.id == removed.id && it.videoId == removed.videoId }
+        persistPlaybackState(forceQueueSave = true)
 
         if (!_isVideoMode.value) {
             val player = exoPlayer ?: return
@@ -824,6 +1049,7 @@ object AuraPlayerManager {
         if (!_isShuffleEnabled.value && originalQueue.size == list.size) {
             originalQueue = mutable
         }
+        persistPlaybackState(forceQueueSave = true)
 
         if (!_isVideoMode.value) {
             val player = exoPlayer ?: return
@@ -877,10 +1103,14 @@ object AuraPlayerManager {
     fun seekToSeconds(seconds: Float) {
         val player = exoPlayer ?: return
         fadeJob?.cancel()
+        cancelCrossfade()
+        isSleepTimerFading = false
         player.volume = baseVolume
         val targetMs = (seconds.coerceAtLeast(0f) * 1000f).toLong()
         player.seekTo(targetMs)
         _positionSec.value = seconds.coerceAtLeast(0f)
+        persistPlaybackState()
+        notifyTrackStateChanged()
     }
 
     fun skipToNext(recordSkip: Boolean = true) {
@@ -890,6 +1120,8 @@ object AuraPlayerManager {
             if (_positionSec.value < duration * 0.65f) onTrackSkippedCallback?.invoke(track)
         }
         fadeJob?.cancel()
+        cancelCrossfade()
+        isSleepTimerFading = false
         player.volume = baseVolume
         if (_isVideoMode.value) {
             if (originalAudioTrack != null) {
@@ -921,6 +1153,8 @@ object AuraPlayerManager {
     fun skipToPrevious() {
         val player = exoPlayer ?: return
         fadeJob?.cancel()
+        cancelCrossfade()
+        isSleepTimerFading = false
         player.volume = baseVolume
         if (_positionSec.value > 4f) {
             seekToSeconds(0f)
@@ -971,53 +1205,452 @@ object AuraPlayerManager {
         }
     }
 
+    /**
+     * Seeks directly to [index] inside the current [_queue] without rotating or reshuffling the
+     * queue order, keeping cover-art swipe pagers aligned with the exact swiped track and
+     * preserving previous tracks in the queue.
+     */
+    fun seekToQueueIndex(index: Int) {
+        val player = exoPlayer ?: return
+        val list = _queue.value
+        if (index !in list.indices) return
+        val target = list[index]
+
+        fadeJob?.cancel()
+        cancelCrossfade()
+        isSleepTimerFading = false
+        player.volume = baseVolume
+
+        if (_isVideoMode.value) {
+            if (originalAudioTrack != null) {
+                originalAudioTrack = null
+                originalAudioQueue = null
+                originalAudioIndex = -1
+                _isVideoMode.value = false
+            } else {
+                playStandaloneVideo(target, list)
+                return
+            }
+        }
+
+        val mediaIndex = (0 until player.mediaItemCount).firstOrNull { idx ->
+            val mid = player.getMediaItemAt(idx).mediaId
+            mid == target.videoId || mid == target.id
+        } ?: index.takeIf { it in 0 until player.mediaItemCount }
+
+        if (mediaIndex != null) {
+            streamRecoveryTrackId = null
+            streamRecoveryAttempts = 0
+            _currentTrack.value = target
+            _positionSec.value = 0f
+            _bufferedSec.value = 0f
+            _durationSec.value = target.durationSeconds.toFloat().coerceAtLeast(1f)
+            _isBuffering.value = true
+            resetPlaySessionTracker(target)
+            player.seekToDefaultPosition(mediaIndex)
+            player.play()
+            persistPlaybackState()
+            notifyTrackStateChanged()
+            prefetchUpcomingTracks(target.videoId)
+        } else {
+            playTrack(target, list, allowRadioQueue = false)
+        }
+    }
+
+    // --- Playback Speed & Pitch ---
+
+    fun setPlaybackSpeed(speed: Float) {
+        _playbackSpeed.value = clampPlaybackSpeed(speed)
+        applyPlaybackParameters()
+    }
+
+    fun setPlaybackPitchSemitones(semitones: Int) {
+        _playbackPitchSemitones.value = clampPitchSemitones(semitones)
+        applyPlaybackParameters()
+    }
+
+    fun resetSpeedAndPitch() {
+        _playbackSpeed.value = 1.0f
+        _playbackPitchSemitones.value = 0
+        applyPlaybackParameters()
+    }
+
+    fun semitonesToPitchFactor(semitones: Int): Float =
+        com.auramusic.app.core.media.semitonesToPitchFactor(semitones)
+
+    private fun applyPlaybackParameters() {
+        val player = exoPlayer ?: return
+        if (_isCrossfading.value) {
+            player.playbackParameters = PlaybackParameters.DEFAULT
+            crossfadePlayer?.playbackParameters = PlaybackParameters.DEFAULT
+            return
+        }
+        val speed = _playbackSpeed.value
+        val pitchFactor = com.auramusic.app.core.media.semitonesToPitchFactor(_playbackPitchSemitones.value)
+        player.playbackParameters = PlaybackParameters(speed, pitchFactor)
+    }
+
+    // --- Per-App Audio Output Routing ---
+
+    fun selectAudioOutputDevice(device: AudioOutputDevice?) {
+        selectedAudioDeviceInfo = device?.deviceInfo
+        _selectedAudioOutputId.value = device?.id
+        exoPlayer?.setPreferredAudioDevice(device?.deviceInfo)
+        crossfadePlayer?.setPreferredAudioDevice(device?.deviceInfo)
+    }
+
+    // --- Cached Media Inspection ---
+
+    fun getCachedVideoIds(): Set<String> {
+        val cache = simpleCache ?: return emptySet()
+        return runCatching {
+            val ids = LinkedHashSet<String>()
+            for (key in cache.keys) {
+                val cachedBytes = runCatching { cache.getCachedBytes(key, 0L, Long.MAX_VALUE) }.getOrDefault(0L)
+                if (cachedBytes <= 0L) continue
+                val extracted = extractVideoIdFromCacheKey(key)
+                if (!extracted.isNullOrBlank()) {
+                    ids.add(extracted)
+                }
+            }
+            ids
+        }.getOrDefault(emptySet())
+    }
+
+    // --- Queue + Position Persistence & Resumption ---
+
+    @JvmOverloads
+    fun restoreSavedPlaybackState(autoPlay: Boolean = false) {
+        val ctx = appContext ?: return
+        val player = exoPlayer ?: return
+        if (!_savePlaybackState.value) return
+        if (_currentTrack.value != null || _queue.value.isNotEmpty()) return
+
+        scope.launch {
+            val restored = withContext(Dispatchers.IO) { loadSavedPlaybackBundle(ctx) } ?: return@launch
+            if (_currentTrack.value != null || _queue.value.isNotEmpty()) return@launch
+            val (savedQueue, savedIndex, savedPosMs) = restored
+            applyRestoredQueueToPlayer(
+                player = player,
+                savedQueue = savedQueue,
+                savedIndex = savedIndex,
+                savedPosMs = savedPosMs,
+                autoPlay = autoPlay
+            )
+        }
+    }
+
+    fun resumeSavedPlayback() {
+        val player = exoPlayer ?: return
+        if (_queue.value.isNotEmpty() && player.mediaItemCount > 0) {
+            if (player.playbackState == Player.STATE_IDLE) {
+                player.prepare()
+            }
+            player.play()
+            return
+        }
+        restoreSavedPlaybackState(autoPlay = true)
+    }
+
+    internal suspend fun prepareMediaItemsForResumption(ctx: Context): Triple<List<MediaItem>, Int, Long>? {
+        val currentQ = _queue.value
+        if (currentQ.isNotEmpty()) {
+            val cur = _currentTrack.value
+            val curIdx = cur?.let { t ->
+                currentQ.indexOfFirst { it.id == t.id || it.videoId == t.videoId }
+            }?.takeIf { it >= 0 } ?: (exoPlayer?.currentMediaItemIndex ?: 0).coerceIn(0, currentQ.lastIndex)
+            val posMs = exoPlayer?.currentPosition?.coerceAtLeast(0L)
+                ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+            return Triple(currentQ.map { buildMediaItem(it) }, curIdx, posMs)
+        }
+
+        val bundle = withContext(Dispatchers.IO) {
+            loadSavedPlaybackBundle(ctx) ?: run {
+                val storage = AuraStorageRepository(ctx)
+                val fallback = storage.loadRecentlyPlayed().ifEmpty { storage.loadFavorites() }
+                    .map { offlineDownloader.withOfflineArtwork(ctx, it) }
+                if (fallback.isNotEmpty()) Triple(fallback, 0, 0L) else null
+            }
+        } ?: return null
+
+        val (tracks, startIdx, startPosMs) = bundle
+        val targetTrack = tracks[startIdx]
+        withContext(Dispatchers.Main) {
+            if (_queue.value.isEmpty()) {
+                originalQueue = tracks
+                lastPersistedQueueIds = tracks.map { if (it.id.isNotBlank()) it.id else it.videoId }
+                _queue.value = tracks
+                _currentTrack.value = targetTrack
+                _durationSec.value = targetTrack.durationSeconds.toFloat().coerceAtLeast(1f)
+                _positionSec.value = (startPosMs / 1000f).coerceAtLeast(0f)
+                _bufferedSec.value = 0f
+                resetPlaySessionTracker(targetTrack)
+                applyPlaybackParameters()
+                notifyTrackStateChanged()
+            }
+        }
+        return Triple(tracks.map { buildMediaItem(it) }, startIdx, startPosMs)
+    }
+
+    internal fun syncExternalQueueSelection(tracks: List<AuraTrack>, startIndex: Int) {
+        if (tracks.isEmpty()) return
+        val normalized = tracks.map(::withOfflineArtwork)
+        val safeIdx = startIndex.coerceIn(0, normalized.lastIndex)
+        val target = normalized[safeIdx]
+        originalAudioTrack = null
+        originalAudioQueue = null
+        originalAudioIndex = -1
+        _isVideoMode.value = false
+        originalQueue = normalized
+        _queue.value = normalized
+        _currentTrack.value = target
+        _positionSec.value = 0f
+        _bufferedSec.value = 0f
+        _durationSec.value = target.durationSeconds.toFloat().coerceAtLeast(1f)
+        _isBuffering.value = true
+        resetPlaySessionTracker(target)
+        applyPlaybackParameters()
+        persistPlaybackState(forceQueueSave = true)
+        notifyTrackStateChanged()
+        prefetchUpcomingTracks(target.videoId)
+    }
+
+    fun buildMediaItemForTrack(track: AuraTrack): MediaItem = buildMediaItem(withOfflineArtwork(track))
+
+    private fun loadSavedPlaybackBundle(ctx: Context): Triple<List<AuraTrack>, Int, Long>? {
+        val storage = AuraStorageRepository(ctx)
+        val savedQueue = storage.loadPlaybackQueue().map { offlineDownloader.withOfflineArtwork(ctx, it) }
+        if (savedQueue.isEmpty()) return null
+        val prefs = AuraPreferencesStore.getInstance(ctx)
+        val savedIndex = prefs.getInt(AuraPreferencesStore.Keys.SAVED_QUEUE_INDEX, 0)
+            .coerceIn(0, savedQueue.lastIndex)
+        val savedPosMs = prefs.getLong(AuraPreferencesStore.Keys.SAVED_QUEUE_POSITION_MS, 0L)
+            .coerceAtLeast(0L)
+        return Triple(savedQueue, savedIndex, savedPosMs)
+    }
+
+    private fun applyRestoredQueueToPlayer(
+        player: ExoPlayer,
+        savedQueue: List<AuraTrack>,
+        savedIndex: Int,
+        savedPosMs: Long,
+        autoPlay: Boolean
+    ) {
+        val targetTrack = savedQueue[savedIndex]
+        originalQueue = savedQueue
+        lastPersistedQueueIds = savedQueue.map { if (it.id.isNotBlank()) it.id else it.videoId }
+        _queue.value = savedQueue
+        _currentTrack.value = targetTrack
+        _durationSec.value = targetTrack.durationSeconds.toFloat().coerceAtLeast(1f)
+        _positionSec.value = (savedPosMs / 1000f).coerceAtLeast(0f)
+        _bufferedSec.value = 0f
+        _isBuffering.value = autoPlay
+        resetPlaySessionTracker(targetTrack)
+        player.volume = baseVolume
+        player.shuffleModeEnabled = false
+        applyPlaybackParameters()
+        player.setMediaItems(savedQueue.map { buildMediaItem(it) }, savedIndex, savedPosMs)
+        player.playWhenReady = autoPlay
+        player.prepare()
+        notifyTrackStateChanged()
+    }
+
+    private fun persistPlaybackState(forceQueueSave: Boolean = false) {
+        val ctx = appContext ?: return
+        if (!_savePlaybackState.value) return
+        val activeQueue = if (_isVideoMode.value && !originalAudioQueue.isNullOrEmpty()) {
+            originalAudioQueue!!
+        } else {
+            _queue.value
+        }
+        if (activeQueue.isEmpty()) return
+        val activeTrack = if (_isVideoMode.value && originalAudioTrack != null) {
+            originalAudioTrack
+        } else {
+            _currentTrack.value
+        }
+        val idx = activeTrack?.let { t ->
+            activeQueue.indexOfFirst { it.id == t.id || it.videoId == t.videoId }
+        }?.takeIf { it >= 0 } ?: (exoPlayer?.currentMediaItemIndex ?: 0).coerceIn(0, activeQueue.lastIndex)
+        val posMs = exoPlayer?.currentPosition?.coerceAtLeast(0L)
+            ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+
+        AuraPreferencesStore.getInstance(ctx).editBatch(
+            mapOf(
+                kotlin.Pair(AuraPreferencesStore.Keys.SAVED_QUEUE_INDEX, idx),
+                kotlin.Pair(AuraPreferencesStore.Keys.SAVED_QUEUE_POSITION_MS, posMs)
+            )
+        )
+
+        val queueIds = activeQueue.map { if (it.id.isNotBlank()) it.id else it.videoId }
+        if (forceQueueSave || queueIds != lastPersistedQueueIds) {
+            lastPersistedQueueIds = queueIds
+            val snapshot = activeQueue.toList()
+            ioScope.launch {
+                runCatching { AuraStorageRepository(ctx).savePlaybackQueue(snapshot) }
+            }
+        }
+    }
+
+    private fun resetPlaySessionTracker(track: AuraTrack?) {
+        sessionTrack = track
+        sessionAccumulatedMs = 0L
+        sessionEventRecorded = false
+        sessionScrobbleNotified = false
+        lastTickerWallMs = System.currentTimeMillis()
+    }
+
+    private fun recordCurrentSessionPlaybackEvent(completed: Boolean) {
+        val ctx = appContext ?: return
+        val track = (if (_isVideoMode.value) originalAudioTrack else null)
+            ?: sessionTrack
+            ?: _currentTrack.value
+            ?: return
+        if (sessionEventRecorded) return
+        if (!completed && sessionAccumulatedMs < PLAYBACK_EVENT_THRESHOLD_MS) return
+        if (completed && sessionAccumulatedMs < 1_000L && !track.isPendingResolution) return
+
+        sessionEventRecorded = true
+        val playedMs = sessionAccumulatedMs.coerceAtLeast(if (completed) 1_000L else PLAYBACK_EVENT_THRESHOLD_MS)
+        ioScope.launch {
+            runCatching {
+                val storage = AuraStorageRepository(ctx)
+                if (storage.loadRecordListeningHistory()) {
+                    storage.recordPlaybackEvent(
+                        track = track,
+                        durationPlayedMs = playedMs,
+                        completed = completed
+                    )
+                }
+            }
+        }
+    }
+
+    private fun notifyTrackStateChanged() {
+        val player = exoPlayer
+        val track = _currentTrack.value
+        val playing = _isPlaying.value
+        val posMs = player?.currentPosition?.coerceAtLeast(0L)
+            ?: (_positionSec.value * 1000f).toLong().coerceAtLeast(0L)
+        val durMs = player?.duration?.takeIf { it > 0 && it != C.TIME_UNSET }
+            ?: ((track?.durationSeconds ?: 0).coerceAtLeast(0) * 1000L)
+        onTrackStateChangedHook?.invoke(track, playing, posMs, durMs)
+        appContext?.let { ctx ->
+            com.auramusic.app.ui.widget.AuraWidgetUpdater.notifyPlayerStateChanged(
+                context = ctx,
+                track = track,
+                isPlaying = playing
+            )
+        }
+    }
+
     fun setSponsorSegments(segments: List<SponsorSegment>) {
         _sponsorSegments.value = segments
     }
 
     fun setSponsorBlockEnabled(enabled: Boolean) {
         _sponsorBlockEnabled.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveSponsorBlockEnabled(enabled) }
+    }
+
+    fun setSponsorBlockCategories(categories: Set<String>) {
+        _sponsorBlockCategories.value = categories
+        appContext?.let { AuraStorageRepository(it).saveSponsorBlockCategories(categories) }
+    }
+
+    fun setAudioReverbPreset(preset: Int) {
+        dspManager.setAudioReverbPreset(
+            context = appContext,
+            preset = preset,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
+    }
+
+    fun setSavePlaybackState(enabled: Boolean) {
+        _savePlaybackState.value = enabled
+        appContext?.let {
+            val storage = AuraStorageRepository(it)
+            storage.saveSavePlaybackState(enabled)
+            if (enabled) storage.saveSavedPlaybackMode(_playbackMode.value.name)
+        }
+    }
+
+    fun setKillServiceOnExit(enabled: Boolean) {
+        _killServiceOnExit.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveKillServiceOnExit(enabled) }
+    }
+
+    fun setPlayVideoForVideoTrack(enabled: Boolean) {
+        _playVideoForVideoTrack.value = enabled
+        appContext?.let { AuraStorageRepository(it).savePlayVideoForVideoTrack(enabled) }
+    }
+
+    fun setRadioAudioOnly(enabled: Boolean) {
+        _radioAudioOnly.value = enabled
+        appContext?.let { AuraStorageRepository(it).saveRadioAudioOnly(enabled) }
+    }
+
+    fun getAudioSessionId(): Int {
+        return dspManager.getAudioSessionId(exoPlayer?.audioSessionId)
+    }
+
+    fun openSystemEqualizer(context: Context): Boolean {
+        return dspManager.openSystemEqualizer(context, exoPlayer?.audioSessionId)
+    }
+
+    fun reloadSettingsFromStorage() {
+        val ctx = appContext ?: return
+        dspManager.loadFromStorage(ctx)
+        val storage = AuraStorageRepository(ctx)
+        _audioQuality.value = storage.loadAudioQuality()
+        _videoQuality.value = storage.loadVideoQuality()
+        _skipSilence.value = storage.loadSkipSilence()
+        exoPlayer?.skipSilenceEnabled = _skipSilence.value
+        _crossfadeSeconds.value = storage.loadCrossfadeDuration()
+        _maxCacheSizeMb.value = storage.loadMaxCacheSize()
+        _sponsorBlockEnabled.value = storage.loadSponsorBlockEnabled()
+        _sponsorBlockCategories.value = storage.loadSponsorBlockCategories()
+        _savePlaybackState.value = storage.loadSavePlaybackState()
+        _killServiceOnExit.value = storage.loadKillServiceOnExit()
+        _playVideoForVideoTrack.value = storage.loadPlayVideoForVideoTrack()
+        _radioAudioOnly.value = storage.loadRadioAudioOnly()
+        applyEqualizerCurve()
     }
 
     fun setEqualizerBands(bands: List<Float>) {
-        _equalizerBands.value = bands
-        val match = findMatchingPreset(bands)
-        _activeEqPresetName.value = match?.name ?: "Custom"
-        if (match != null) {
-            _activeEqPreset.value = match
-        }
-        applyEqualizerCurve()
-        appContext?.let {
-            val storage = AuraStorageRepository(it)
-            storage.saveEqualizerBands(bands)
-            storage.saveEqualizerPreset(_activeEqPresetName.value)
-        }
+        dspManager.setEqualizerBands(
+            context = appContext,
+            bands = bands,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun setEqualizerPreamp(preampDb: Float) {
-        _equalizerPreamp.value = preampDb
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveEqualizerPreamp(preampDb) }
+        dspManager.setEqualizerPreamp(
+            context = appContext,
+            preampDb = preampDb,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun applyEqualizerPreset(preset: EqualizerPreset) {
-        _activeEqPreset.value = preset
-        _activeEqPresetName.value = preset.name
-        _equalizerBands.value = preset.bandsDb
-        _equalizerPreamp.value = preset.preampDb
-        applyEqualizerCurve()
-        appContext?.let {
-            val storage = AuraStorageRepository(it)
-            storage.saveEqualizerBands(preset.bandsDb)
-            storage.saveEqualizerPreamp(preset.preampDb)
-            storage.saveEqualizerPreset(preset.name)
-        }
+        dspManager.applyEqualizerPreset(
+            context = appContext,
+            preset = preset,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun resetEqualizer() {
-        val flat = SIMPMUSIC_ALL_EQ_PRESETS.firstOrNull { it.id == "flat" }
-            ?: EqualizerPreset("flat", "Flat", "Flat response", listOf(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f))
-        applyEqualizerPreset(flat)
+        dspManager.resetEqualizer(
+            context = appContext,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun selectEqualizerPreset(preset: EqualizerPreset) {
@@ -1025,15 +1658,67 @@ object AuraPlayerManager {
     }
 
     fun setEqualizerEnabled(enabled: Boolean) {
-        _eqEnabled.value = enabled
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveEqualizerEnabled(enabled) }
+        dspManager.setEqualizerEnabled(
+            context = appContext,
+            enabled = enabled,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun setLoudnessNormalization(enabled: Boolean) {
-        _loudnessNormalization.value = enabled
-        applyEqualizerCurve()
-        appContext?.let { AuraStorageRepository(it).saveNormalizeVolume(enabled) }
+        dspManager.setLoudnessNormalization(
+            context = appContext,
+            enabled = enabled,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
+    }
+
+    /** Applies or clears a named 10-band AutoEq headphone compensation curve. */
+    fun applyAutoEqProfile(name: String, bandsDb: List<Float>) {
+        if (name.isBlank() || (bandsDb.all { abs(it) < 0.01f } && name.equals("None", ignoreCase = true))) {
+            applyAutoEqProfile(profileId = null)
+            return
+        }
+        val matched = AutoEqProfiles.findByName(name)
+        val maxBoost = bandsDb.maxOrNull()?.coerceAtLeast(0f) ?: 0f
+        val profile = matched ?: AutoEqProfile(
+            id = AutoEqRepository.toProfileId(name),
+            name = name,
+            source = "AutoEq",
+            bandsDb = bandsDb,
+            preampDb = if (maxBoost > 0f) -maxBoost else 0f
+        )
+        _activeAutoEqProfileName.value = profile.name
+        _activeAutoEqProfileId.value = profile.id
+        dspManager.applyAutoEqProfile(
+            profile = profile,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
+    }
+
+    /** Applies or clears a curated AutoEq headphone profile by [profileId]. */
+    fun applyAutoEqProfile(profileId: String?) {
+        if (profileId.isNullOrBlank()) {
+            _activeAutoEqProfileId.value = null
+            _activeAutoEqProfileName.value = null
+            dspManager.applyAutoEqProfile(
+                profile = null,
+                player = exoPlayer,
+                isFadeActive = isAnyFadeActive
+            )
+            return
+        }
+        val profile = AutoEqProfiles.findById(profileId) ?: AutoEqProfiles.findByName(profileId)
+        _activeAutoEqProfileId.value = profile?.id
+        _activeAutoEqProfileName.value = profile?.name
+        dspManager.applyAutoEqProfile(
+            profile = profile,
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
     fun setAudioQuality(quality: String) {
@@ -1051,7 +1736,7 @@ object AuraPlayerManager {
     }
 
     private fun applyResolvedAudioMetadata(videoId: String, resolved: ResolvedStream) {
-        currentTrackLoudnessDb = resolved.loudnessDb
+        dspManager.setTrackLoudnessDb(resolved.loudnessDb)
         _streamSourceTier.value = when {
             resolved.bitrateKbps >= 180 -> "Ultra HD • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
             resolved.bitrateKbps >= 110 -> "High Quality • ${resolved.codec} ${resolved.bitrateKbps} KBPS"
@@ -1123,307 +1808,148 @@ object AuraPlayerManager {
     }
 
     fun setCrossfadeSeconds(seconds: Int) {
-        _crossfadeSeconds.value = seconds.coerceIn(0, 12)
-        appContext?.let { AuraStorageRepository(it).saveCrossfadeDuration(seconds) }
+        val clamped = seconds.coerceIn(0, 12)
+        _crossfadeSeconds.value = clamped
+        if (clamped == 0) {
+            cancelCrossfade()
+        }
+        appContext?.let { AuraStorageRepository(it).saveCrossfadeDuration(clamped) }
+    }
+
+    fun setSkipCrossfadeWithinAlbum(enabled: Boolean) {
+        _skipCrossfadeWithinAlbum.value = enabled
+    }
+
+    fun setSleepTimerEndOfTrack(enabled: Boolean) {
+        _sleepTimerEndOfTrack.value = enabled
+        if (enabled) {
+            sleepTimerJob?.cancel()
+            _sleepTimerRemainingMin.value = null
+            isSleepTimerFading = false
+            cancelCrossfade()
+            if (fadeJob?.isActive != true) {
+                exoPlayer?.volume = baseVolume
+            }
+        }
     }
 
     fun setSleepTimerMinutes(minutes: Int?) {
         sleepTimerJob?.cancel()
+        isSleepTimerFading = false
+        if (minutes == null || minutes <= 0) {
+            _sleepTimerRemainingMin.value = null
+            if (!_isCrossfading.value && fadeJob?.isActive != true) {
+                exoPlayer?.volume = baseVolume
+            }
+            return
+        }
+        _sleepTimerEndOfTrack.value = false
         _sleepTimerRemainingMin.value = minutes
-        if (minutes != null && minutes > 0) {
-            sleepTimerJob = scope.launch {
-                var rem = minutes
-                while (rem > 0 && isActive) {
-                    delay(60_000L)
-                    rem--
-                    _sleepTimerRemainingMin.value = rem
+        sleepTimerJob = scope.launch {
+            var remainingSec = minutes * 60
+            while (remainingSec > 5 && isActive) {
+                delay(1_000L)
+                remainingSec--
+                _sleepTimerRemainingMin.value = ((remainingSec + 59) / 60).coerceAtLeast(1)
+            }
+            if (!isActive) return@launch
+
+            val player = exoPlayer
+            if (player != null && player.isPlaying) {
+                isSleepTimerFading = true
+                cancelCrossfade()
+                val startVol = player.volume.coerceIn(0f, 1f)
+                val steps = 50 // 50 * 100ms = 5 seconds smooth fade-out
+                for (step in steps downTo 0) {
+                    if (!isActive) break
+                    player.volume = (startVol * (step / steps.toFloat())).coerceIn(0f, 1f)
+                    if (step % 10 == 0 && step > 0) {
+                        _sleepTimerRemainingMin.value = 1
+                    }
+                    delay(100L)
                 }
-                if (rem <= 0) {
-                    exoPlayer?.pause()
-                    _sleepTimerRemainingMin.value = null
-                }
+                player.pause()
+                isSleepTimerFading = false
+                player.volume = 1.0f.coerceAtMost(baseVolume)
+            } else {
+                exoPlayer?.pause()
+                isSleepTimerFading = false
+                exoPlayer?.volume = baseVolume
             }
+            _sleepTimerRemainingMin.value = null
         }
     }
 
-    fun getDedicatedDownloadDir(context: Context): File {
-        try {
-            val publicMusic = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC)
-            val auraPublic = File(publicMusic, "AuraMusic")
-            if (auraPublic.exists() || auraPublic.mkdirs()) {
-                return auraPublic
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Cannot access public Music directory: ${e.message}")
+    /** Returns the current size in bytes of Media3's [SimpleCache]. */
+    fun getMediaCacheSizeBytes(): Long {
+        val cache = simpleCache
+        if (cache != null) {
+            return runCatching { cache.cacheSpace }.getOrElse { 0L }
         }
-        val extDir = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
-        val auraExt = File(extDir, "AuraMusic")
-        if (auraExt.exists() || auraExt.mkdirs()) {
-            return auraExt
-        }
-        val internalDir = File(context.filesDir, "aura_offline_tracks")
-        if (!internalDir.exists()) internalDir.mkdirs()
-        return internalDir
-    }
-
-    fun getOfflineArtworkFile(context: Context, videoId: String): File {
-        val dir = File(context.filesDir, "aura_offline_artwork").apply { if (!exists()) mkdirs() }
-        return File(dir, "$videoId.jpg")
-    }
-
-    fun getOfflineArtworkUri(context: Context, videoId: String): String? {
-        val f = getOfflineArtworkFile(context, videoId)
-        return if (f.exists() && f.length() > 500L) "file://${f.absolutePath}" else null
-    }
-
-    private fun withOfflineArtwork(track: AuraTrack): AuraTrack {
-        val ctx = appContext ?: return track
-        val localUri = getOfflineArtworkUri(ctx, track.videoId) ?: return track
-        return track.copy(artworkUrl = localUri)
-    }
-
-    @OptIn(coil.annotation.ExperimentalCoilApi::class)
-    suspend fun saveOfflineArtwork(context: Context, track: AuraTrack): String? = withContext(Dispatchers.IO) {
-        getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
-        val target = getOfflineArtworkFile(context, track.videoId)
-        val artUrl = track.highResArtworkUrl.ifBlank { track.artworkUrl }
-        if (artUrl.isBlank()) return@withContext null
-        if (artUrl.startsWith("file://") || artUrl.startsWith("/")) {
-            val src = File(artUrl.removePrefix("file://"))
-            if (src.exists() && src.length() > 500L) {
-                runCatching { src.copyTo(target, overwrite = true) }
-                return@withContext getOfflineArtworkUri(context, track.videoId)
-            }
-        }
-        try {
-            val diskCache = coil.Coil.imageLoader(context).diskCache
-            val snap = diskCache?.openSnapshot(track.highResArtworkUrl)
-                ?: diskCache?.openSnapshot(track.artworkUrl)
-            if (snap != null) {
-                snap.use { it.data.toFile().copyTo(target, overwrite = true) }
-                getOfflineArtworkUri(context, track.videoId)?.let { return@withContext it }
-            }
-        } catch (_: Exception) {}
-        try {
-            SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(artUrl)).execute().use { resp ->
-                if (!resp.isSuccessful) return@withContext null
-                val bytes = resp.body?.bytes() ?: return@withContext null
-                if (bytes.size > 500) {
-                    target.writeBytes(bytes)
-                    return@withContext "file://${target.absolutePath}"
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to save offline artwork for ${track.videoId}: ${e.message}")
-        }
-        null
-    }
-
-    fun getOfflineFile(context: Context, videoId: String): File {
-        val dedicated = File(getDedicatedDownloadDir(context), "$videoId.m4a")
-        if (dedicated.exists() && dedicated.length() > 10_000L) return dedicated
-        val fallback = File(context.filesDir, "aura_offline_tracks/$videoId.m4a")
-        if (fallback.exists() && fallback.length() > 10_000L) return fallback
-        return dedicated
-    }
-
-    private const val DOWNLOAD_USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    private const val DOWNLOAD_CHUNK_BYTES = 2L * 1024 * 1024
-    private const val DOWNLOAD_PARALLELISM = 4
-
-    private suspend fun checkActive() = currentCoroutineContext().ensureActive()
-
-    private fun downloadRequest(url: String, rangeStart: Long? = null, rangeEnd: Long? = null): Request {
-        val builder = Request.Builder().url(url).header("User-Agent", DOWNLOAD_USER_AGENT)
-        if (rangeStart != null && rangeEnd != null) builder.header("Range", "bytes=$rangeStart-$rangeEnd")
-        return builder.build()
-    }
-
-    /** Returns total size in bytes if the server honours HTTP range requests, else null. */
-    private fun probeRangeSupport(url: String): Long? = try {
-        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url, 0, 0)).execute().use { resp ->
-            if (resp.code != 206) return@use null
-            resp.header("Content-Range")?.substringAfterLast('/')?.trim()?.toLongOrNull()
-        }
-    } catch (e: java.io.IOException) {
-        null
+        val ctx = appContext ?: return 0L
+        return calculateDirectorySize(File(ctx.cacheDir, "aura_media3_cache"))
     }
 
     /**
-     * Downloads the stream in ranged chunks over several parallel connections. YouTube throttles a
-     * single unbounded request, while small ranged requests run at full speed.
+     * Safely evicts every entry from Media3's [SimpleCache] via `removeResource(key)`
+     * without deleting files out from under open cache handles. Returns approximate freed bytes.
      */
-    private suspend fun downloadChunked(
-        url: String,
-        part: File,
-        total: Long,
-        awaitResume: suspend () -> Unit,
-        onProgress: (Long, Long, Float) -> Unit
-    ) = coroutineScope {
-        java.io.RandomAccessFile(part, "rw").use { raf ->
-            raf.setLength(total)
-            val channel = raf.channel
-            val chunkCount = ((total + DOWNLOAD_CHUNK_BYTES - 1) / DOWNLOAD_CHUNK_BYTES).toInt()
-            val nextChunk = java.util.concurrent.atomic.AtomicInteger(0)
-            val downloaded = java.util.concurrent.atomic.AtomicLong(0)
-            val lastReport = java.util.concurrent.atomic.AtomicLong(0)
-
-            val workers = (1..minOf(DOWNLOAD_PARALLELISM, chunkCount)).map {
-                async {
-                    while (true) {
-                        awaitResume()
-                        checkActive()
-                        val idx = nextChunk.getAndIncrement()
-                        if (idx >= chunkCount) break
-                        val start = idx * DOWNLOAD_CHUNK_BYTES
-                        val end = minOf(start + DOWNLOAD_CHUNK_BYTES, total) - 1
-                        var attempt = 0
-                        while (true) {
-                            var written = 0L
-                            try {
-                                SimpMusicExtractorEngine.httpClient
-                                    .newCall(downloadRequest(url, start, end)).execute().use { resp ->
-                                        if (resp.code != 206) throw java.io.IOException("Range not honoured: ${resp.code}")
-                                        val input = resp.body?.byteStream() ?: throw java.io.IOException("Empty body")
-                                        val buffer = ByteArray(32 * 1024)
-                                        var pos = start
-                                        while (true) {
-                                            val read = input.read(buffer)
-                                            if (read == -1) break
-                                            val bb = java.nio.ByteBuffer.wrap(buffer, 0, read)
-                                            while (bb.hasRemaining()) pos += channel.write(bb, pos)
-                                            written += read
-                                            downloaded.addAndGet(read.toLong())
-                                            val now = System.currentTimeMillis()
-                                            val last = lastReport.get()
-                                            if (now - last > 32 && lastReport.compareAndSet(last, now)) {
-                                                val soFar = downloaded.get()
-                                                onProgress(soFar, total, (soFar.toFloat() / total).coerceIn(0f, 1f))
-                                            }
-                                            checkActive()
-                                        }
-                                    }
-                                if (written != end - start + 1) throw java.io.IOException("Short chunk")
-                                break
-                            } catch (e: java.io.IOException) {
-                                downloaded.addAndGet(-written)
-                                if (++attempt >= 3) throw e
-                            }
-                        }
-                    }
-                }
+    fun clearMediaCache(): Long {
+        val cache = simpleCache ?: return 0L
+        return runCatching {
+            val beforeBytes = cache.cacheSpace
+            val keys = cache.keys.toList()
+            for (key in keys) {
+                cache.removeResource(key)
             }
-            workers.forEach { it.await() }
-            onProgress(total, total, 1f)
+            val afterBytes = cache.cacheSpace
+            (beforeBytes - afterBytes).coerceAtLeast(0L)
+        }.getOrElse { e ->
+            Log.w(TAG, "Safe media cache clear notice: ${e.message}")
+            0L
         }
     }
 
-    private suspend fun downloadSingleStream(
-        url: String,
-        part: File,
-        fallbackTotal: Long,
-        awaitResume: suspend () -> Unit,
-        onProgress: (Long, Long, Float) -> Unit
-    ) {
-        SimpMusicExtractorEngine.httpClient.newCall(downloadRequest(url)).execute().use { resp ->
-            if (!resp.isSuccessful) throw java.io.IOException("HTTP ${resp.code}")
-            val body = resp.body ?: throw java.io.IOException("Empty body")
-            val totalBytes = body.contentLength().takeIf { it > 0 } ?: fallbackTotal
-            var bytesReadTotal = 0L
-            part.outputStream().use { out ->
-                body.byteStream().use { input ->
-                    val buffer = ByteArray(32 * 1024)
-                    var lastProgressUpdate = 0L
-                    while (true) {
-                        awaitResume()
-                        checkActive()
-                        val read = input.read(buffer)
-                        if (read == -1) break
-                        out.write(buffer, 0, read)
-                        bytesReadTotal += read
-                        val now = System.currentTimeMillis()
-                        if (now - lastProgressUpdate > 32) {
-                            lastProgressUpdate = now
-                            onProgress(bytesReadTotal, totalBytes, (bytesReadTotal.toFloat() / totalBytes.coerceAtLeast(1L)).coerceIn(0f, 1f))
-                        }
-                    }
-                    onProgress(bytesReadTotal, totalBytes, 1f)
-                }
-            }
+    private fun calculateDirectorySize(dir: File): Long {
+        if (!dir.exists()) return 0L
+        var total = 0L
+        val files = dir.listFiles() ?: return 0L
+        for (file in files) {
+            total += if (file.isDirectory) calculateDirectorySize(file) else file.length()
         }
+        return total
     }
+
+    fun getDedicatedDownloadDir(context: Context): File =
+        offlineDownloader.getDedicatedDownloadDir(context)
+
+    fun getOfflineArtworkFile(context: Context, videoId: String): File =
+        offlineDownloader.getOfflineArtworkFile(context, videoId)
+
+    fun getOfflineArtworkUri(context: Context, videoId: String): String? =
+        offlineDownloader.getOfflineArtworkUri(context, videoId)
+
+    private fun withOfflineArtwork(track: AuraTrack): AuraTrack =
+        offlineDownloader.withOfflineArtwork(appContext, track)
+
+    suspend fun saveOfflineArtwork(context: Context, track: AuraTrack): String? =
+        offlineDownloader.saveOfflineArtwork(context, track)
+
+    fun getOfflineFile(context: Context, videoId: String): File =
+        offlineDownloader.getOfflineFile(context, videoId)
 
     suspend fun downloadTrackOffline(
         context: Context,
         track: AuraTrack,
         awaitResume: suspend () -> Unit = {},
         onProgress: (bytesRead: Long, totalBytes: Long, progress: Float) -> Unit = { _, _, _ -> }
-    ): File? = withContext(Dispatchers.IO) {
-        val activeTrack = if (track.isPendingResolution || track.videoId.startsWith("spotify_pending")) {
-            val resolvedPending = SimpMusicExtractorEngine.resolveSpotifyPendingTrack(track)
-            if (resolvedPending.isPendingResolution || resolvedPending.videoId.startsWith("spotify_pending")) {
-                Log.e(TAG, "Offline download failed: could not resolve pending track ${track.title}")
-                return@withContext null
-            }
-            resolvedPending
-        } else {
-            track
-        }
-        val cacheTmpDir = File(context.cacheDir, "aura_dl_tmp").apply { mkdirs() }
-        // Download into app-private cache first; Scoped Storage blocks .part files in Music/ with EPERM.
-        val partFile = File(cacheTmpDir, "${activeTrack.videoId}.m4a.part")
-        try {
-            val resolved = SimpMusicExtractorEngine.resolveStream(activeTrack.videoId, _audioQuality.value)
-            val url = resolved.streamUrl
-            val rangeTotal = probeRangeSupport(url)
-            var done = false
-            if (rangeTotal != null && rangeTotal > DOWNLOAD_CHUNK_BYTES) {
-                try {
-                    downloadChunked(url, partFile, rangeTotal, awaitResume, onProgress)
-                    done = true
-                } catch (e: java.io.IOException) {
-                    Log.w(TAG, "Chunked download failed for ${activeTrack.videoId}, falling back: ${e.message}")
-                }
-            }
-            if (!done) {
-                downloadSingleStream(url, partFile, activeTrack.durationSeconds * 20_000L, awaitResume, onProgress)
-            }
-            if (partFile.length() > 10_000L) {
-                val primaryTarget = getOfflineFile(context, activeTrack.videoId)
-                val fallbackTarget = File(
-                    File(context.filesDir, "aura_offline_tracks").apply { mkdirs() },
-                    "${activeTrack.videoId}.m4a"
-                )
-                val saved = moveOrCopyToTarget(partFile, primaryTarget)
-                    ?: moveOrCopyToTarget(partFile, fallbackTarget)
-                partFile.delete()
-                saved
-            } else {
-                partFile.delete()
-                null
-            }
-        } catch (e: CancellationException) {
-            partFile.delete()
-            throw e
-        } catch (e: Exception) {
-            Log.e(TAG, "Offline download failed for ${activeTrack.videoId}: ${e.message}")
-            partFile.delete()
-            null
-        }
-    }
-
-    private fun moveOrCopyToTarget(partFile: File, targetFile: File): File? = try {
-        targetFile.parentFile?.mkdirs()
-        if (targetFile.exists()) targetFile.delete()
-        if (!partFile.renameTo(targetFile)) {
-            partFile.copyTo(targetFile, overwrite = true)
-        }
-        if (targetFile.exists() && targetFile.length() > 10_000L) targetFile else null
-    } catch (e: Exception) {
-        Log.w(TAG, "Cannot write offline track to ${targetFile.absolutePath}: ${e.message}")
-        null
-    }
+    ): File? = offlineDownloader.downloadTrackOffline(
+        context = context,
+        track = track,
+        audioQuality = _audioQuality.value,
+        awaitResume = awaitResume,
+        onProgress = onProgress
+    )
 
     fun setVideoLoading(loading: Boolean) {
         _isVideoLoading.value = loading
@@ -1489,6 +2015,7 @@ object AuraPlayerManager {
                 }
             }
         }
+        cancelCrossfade()
         _isVideoMode.value = true
         val wasPlaying = player?.isPlaying == true || startPlayback
         player?.pause()
@@ -1517,8 +2044,11 @@ object AuraPlayerManager {
 
             val activePlayer = exoPlayer ?: return@launch
             if (resolved != null) {
-                currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
-                applyEqualizerCurve()
+                dspManager.updateTrackLoudness(
+                    loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f,
+                    player = activePlayer,
+                    isFadeActive = isAnyFadeActive
+                )
                 _streamSourceTier.value = "Video • ${resolved.quality}"
                 val cFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
                 val mediaSource = buildVideoMediaSource(resolved, cFactory)
@@ -1578,6 +2108,7 @@ object AuraPlayerManager {
         val previousTrack = _currentTrack.value
         val previousQueue = _queue.value
         val wasPlaying = exoPlayer?.isPlaying == true
+        cancelCrossfade()
         exoPlayer?.pause()
         originalAudioTrack = null
         originalAudioQueue = null
@@ -1592,6 +2123,8 @@ object AuraPlayerManager {
             artworkUrl = "https://i.ytimg.com/vi/${videoTrack.videoId}/hqdefault.jpg",
             musicVideoType = videoTrack.musicVideoType ?: "MUSIC_VIDEO_TYPE_OMV"
         )
+        resetPlaySessionTracker(videoTrack)
+        notifyTrackStateChanged()
 
         scope.launch(Dispatchers.IO) {
             val officialAudio = SimpMusicExtractorEngine.findOfficialAudioTrack(videoTrack)
@@ -1632,8 +2165,11 @@ object AuraPlayerManager {
                 return@launch
             }
 
-            currentTrackLoudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f
-            applyEqualizerCurve()
+            dspManager.updateTrackLoudness(
+                loudnessDb = SimpMusicExtractorEngine.getTrackLoudnessDb(videoTrack.videoId) ?: 0f,
+                player = player,
+                isFadeActive = isAnyFadeActive
+            )
             _streamSourceTier.value = "Video • ${resolved.quality}"
             val dataSourceFactory = cacheDataSourceFactory ?: DefaultDataSource.Factory(appContext!!)
             val mediaSource = buildVideoMediaSource(resolved, dataSourceFactory)
@@ -1660,7 +2196,6 @@ object AuraPlayerManager {
 
         val origTrack = originalAudioTrack
         val origQueue = originalAudioQueue
-        val origIndex = originalAudioIndex
 
         originalAudioTrack = null
         originalAudioQueue = null
@@ -1672,22 +2207,26 @@ object AuraPlayerManager {
                 _queue.value = origQueue
             }
             val mediaItem = buildMediaItem(origTrack)
+            applyPlaybackParameters()
             player.setMediaItem(mediaItem, currentPos)
             player.prepare()
             if (wasPlaying) {
                 player.play()
             }
+            notifyTrackStateChanged()
             if (SimpMusicExtractorEngine.isVideoThumbnailUrl(origTrack.artworkUrl)) {
                 resolveAndApplyOfficialAudioArtwork(origTrack)
             }
         } else {
             val cur = currentTrack.value ?: return
             val mediaItem = buildMediaItem(cur)
+            applyPlaybackParameters()
             player.setMediaItem(mediaItem, currentPos)
             player.prepare()
             if (wasPlaying) {
                 player.play()
             }
+            notifyTrackStateChanged()
             if (SimpMusicExtractorEngine.isVideoThumbnailUrl(cur.artworkUrl)) {
                 resolveAndApplyOfficialAudioArtwork(cur)
             }
@@ -1735,6 +2274,7 @@ object AuraPlayerManager {
         if (!enabled) {
             switchToAudioMode()
         } else {
+            cancelCrossfade()
             val cur = currentTrack.value ?: return
             scope.launch {
                 _isVideoLoading.value = true
@@ -1810,112 +2350,358 @@ object AuraPlayerManager {
         }
     }
 
-    private fun bindHardwareEqualizer(audioSessionId: Int) {
-        if (audioSessionId == C.AUDIO_SESSION_ID_UNSET || audioSessionId <= 0) return
-        if (boundAudioSessionId == audioSessionId && hardwareEq != null && loudnessEnhancer != null) {
-            applyEqualizerCurve()
-            return
-        }
-        boundAudioSessionId = audioSessionId
-        try {
-            hardwareEq?.release()
-            hardwareEq = Equalizer(0, audioSessionId).apply {
-                enabled = _eqEnabled.value
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "Hardware Equalizer binding notice: ${e.message}")
-        }
-        try {
-            loudnessEnhancer?.release()
-            loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
-                enabled = _loudnessNormalization.value
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "LoudnessEnhancer binding notice: ${e.message}")
-        }
-        applyEqualizerCurve()
+    private fun applyEqualizerCurve() {
+        dspManager.applyCurve(
+            player = exoPlayer,
+            isFadeActive = isAnyFadeActive
+        )
     }
 
-    private fun applyEqualizerCurve() {
-        val player = exoPlayer ?: return
-        val enabled = _eqEnabled.value
-        val bands = _equalizerBands.value
-        val preampDb = _equalizerPreamp.value
-        val normEnabled = _loudnessNormalization.value
+    private fun buildAudioExoPlayer(
+        ctx: Context,
+        resolvingFactory: DataSource.Factory,
+        handleAudioFocus: Boolean,
+        useSecondaryDsp: Boolean
+    ): ExoPlayer {
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(
+                30_000,
+                60_000,
+                1_500,
+                4_000
+            )
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .setBackBuffer(15_000, true)
+            .build()
 
-        try {
-            val eq = hardwareEq
-            if (eq != null) {
-                eq.enabled = enabled
-                val numBands = eq.numberOfBands.toInt()
-                val range = eq.bandLevelRange // millibels, e.g. [-1500, 1500]
-                val minMb = range[0].toInt()
-                val maxMb = range[1].toInt()
+        val audioAttributes = AudioAttributes.Builder()
+            .setUsage(C.USAGE_MEDIA)
+            .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
 
-                for (b in 0 until numBands) {
-                    val mappedIdx = ((b.toFloat() / numBands.coerceAtLeast(1)) * bands.size)
-                        .toInt()
-                        .coerceIn(0, bands.lastIndex)
-                    val targetMb = if (enabled) (bands[mappedIdx] * 100f).toInt() else 0
-                    eq.setBandLevel(b.toShort(), targetMb.coerceIn(minMb, maxMb).toShort())
-                }
+        val processors = if (useSecondaryDsp) {
+            dspManager.createSecondaryAudioProcessors().also {
+                crossfadeSecondaryProcessors = it
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Equalizer curve apply notice: ${e.message}")
+        } else {
+            dspManager.getAudioProcessors()
         }
 
-        // Loudness Normalization (ReplayGain via YouTube loudnessDb + hardware LoudnessEnhancer)
-        val normDb = if (normEnabled) (-currentTrackLoudnessDb).coerceIn(-10f, 8f) else 0f
-        try {
-            loudnessEnhancer?.let { enhancer ->
-                enhancer.enabled = normEnabled
-                if (normEnabled) {
-                    val targetMb = when {
-                        currentTrackLoudnessDb == 0f -> 250 // Gentle +2.5 dB dynamic leveling when metadata is absent
-                        normDb > 0f -> (normDb * 100f).toInt().coerceIn(0, 800)
-                        else -> 0
+        val renderersFactory = object : DefaultRenderersFactory(ctx) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioTrackPlaybackParams: Boolean
+            ): AudioSink? {
+                if (processors.isEmpty()) {
+                    return super.buildAudioSink(
+                        context,
+                        enableFloatOutput,
+                        enableAudioTrackPlaybackParams
+                    )
+                }
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+                    .setAudioProcessors(processors)
+                    .build()
+            }
+        }.setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+
+        return ExoPlayer.Builder(ctx, renderersFactory)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(resolvingFactory))
+            .setLoadControl(loadControl)
+            .setAudioAttributes(audioAttributes, handleAudioFocus)
+            .setHandleAudioBecomingNoisy(handleAudioFocus)
+            .setWakeMode(C.WAKE_MODE_NETWORK)
+            .build()
+    }
+
+    private fun trackUniqueKey(track: AuraTrack): String {
+        return if (track.id.isNotBlank()) "${track.id}:${track.videoId}" else track.videoId
+    }
+
+    private fun resolveNextTrackForCrossfade(): Pair<Int, AuraTrack>? {
+        val cfSec = _crossfadeSeconds.value
+        if (cfSec <= 0 || _isVideoMode.value || _sleepTimerEndOfTrack.value) return null
+        if (_playbackMode.value == PlaybackMode.REPEAT_ONE || exoPlayer?.repeatMode == Player.REPEAT_MODE_ONE) {
+            return null
+        }
+
+        val list = _queue.value
+        val cur = _currentTrack.value ?: return null
+        val curIdx = list.indexOfFirst { it.id == cur.id || it.videoId == cur.videoId }
+        if (curIdx < 0) return null
+
+        val nextPair = when {
+            curIdx < list.lastIndex -> (curIdx + 1) to list[curIdx + 1]
+            list.size > 1 && (_playbackMode.value == PlaybackMode.REPEAT_ALL || exoPlayer?.repeatMode == Player.REPEAT_MODE_ALL) -> {
+                0 to list[0]
+            }
+            else -> null
+        } ?: return null
+
+        val nextTrack = nextPair.second
+        if (nextTrack.isPendingResolution) return null
+
+        if (_skipCrossfadeWithinAlbum.value) {
+            val curAlbum = cur.album.trim()
+            val nextAlbum = nextTrack.album.trim()
+            if (curAlbum.isNotBlank() &&
+                nextAlbum.isNotBlank() &&
+                !curAlbum.equals("YouTube Music", ignoreCase = true) &&
+                curAlbum.equals(nextAlbum, ignoreCase = true)
+            ) {
+                return null
+            }
+        }
+        return nextPair
+    }
+
+    private fun prepareCrossfadeTarget(currentTrack: AuraTrack, nextTrack: AuraTrack) {
+        val ctx = appContext ?: return
+        val factory = resolvingDataSourceFactory ?: return
+        val sourceKey = trackUniqueKey(currentTrack)
+        val targetKey = trackUniqueKey(nextTrack)
+        if (crossfadePreparedTrackKey == targetKey && crossfadeSourceTrackKey == sourceKey && crossfadePlayer != null) {
+            return
+        }
+
+        releaseCrossfadePlayerOnly()
+        val secondary = buildAudioExoPlayer(
+            ctx = ctx,
+            resolvingFactory = factory,
+            handleAudioFocus = false,
+            useSecondaryDsp = true
+        )
+        selectedAudioDeviceInfo?.let { secondary.setPreferredAudioDevice(it) }
+        secondary.volume = 0f
+        secondary.playWhenReady = false
+        secondary.setMediaItem(buildMediaItem(nextTrack), 0L)
+        secondary.prepare()
+
+        crossfadePlayer = secondary
+        crossfadePreparedTrackKey = targetKey
+        crossfadeSourceTrackKey = sourceKey
+    }
+
+    private fun startCrossfadeTransition(
+        outgoingTrack: AuraTrack,
+        nextQueueIndex: Int,
+        nextTrack: AuraTrack,
+        crossfadeDurationMs: Long
+    ) {
+        val primary = exoPlayer ?: return
+        if (_isCrossfading.value || crossfadeJob?.isActive == true) return
+
+        prepareCrossfadeTarget(outgoingTrack, nextTrack)
+        val secondary = crossfadePlayer ?: return
+
+        _isCrossfading.value = true
+        // Temporarily neutralize speed/pitch during active crossfade so fade timing stays exact
+        primary.playbackParameters = PlaybackParameters.DEFAULT
+        secondary.playbackParameters = PlaybackParameters.DEFAULT
+        crossfadeJob = scope.launch {
+            try {
+                // Wait briefly for pre-warmed secondary player to become ready without blocking forever
+                var readyWaitMs = 0L
+                val maxReadyWaitMs = minOf(2_000L, crossfadeDurationMs / 2L)
+                while (isActive &&
+                    secondary.playbackState != Player.STATE_READY &&
+                    readyWaitMs < maxReadyWaitMs
+                ) {
+                    if (!primary.isPlaying || primary.playbackState == Player.STATE_ENDED) {
+                        cancelCrossfade()
+                        return@launch
                     }
-                    enhancer.setTargetGain(targetMb)
+                    delay(40L)
+                    readyWaitMs += 40L
                 }
+
+                if (!isActive || secondary.playbackState != Player.STATE_READY || !primary.isPlaying) {
+                    cancelCrossfade()
+                    return@launch
+                }
+
+                val remainingAtStartMs = (primary.duration - primary.currentPosition - 120L).coerceAtLeast(300L)
+                val actualFadeMs = minOf(crossfadeDurationMs, remainingAtStartMs)
+
+                secondary.volume = 0f
+                secondary.play()
+
+                val startTimeMs = System.currentTimeMillis()
+                while (isActive) {
+                    if (!primary.isPlaying) {
+                        cancelCrossfade()
+                        return@launch
+                    }
+                    val elapsedMs = System.currentTimeMillis() - startTimeMs
+                    val t = (elapsedMs.toFloat() / actualFadeMs.toFloat()).coerceIn(0f, 1f)
+                    val angle = t * (PI / 2.0)
+                    val outGain = cos(angle).toFloat().coerceIn(0f, 1f)
+                    val inGain = sin(angle).toFloat().coerceIn(0f, 1f)
+
+                    primary.volume = (baseVolume * outGain).coerceIn(0f, 1f)
+                    secondary.volume = (baseVolume * inGain).coerceIn(0f, 1f)
+
+                    if (t >= 1f || (primary.duration > 0L && primary.duration - primary.currentPosition <= 100L)) {
+                        break
+                    }
+                    delay(40L)
+                }
+                if (!isActive) return@launch
+
+                recordCurrentSessionPlaybackEvent(completed = true)
+                onTrackFinishedCallback?.invoke(outgoingTrack)
+
+                val handoffPosMs = secondary.currentPosition.coerceAtLeast(0L)
+                val targetMediaIdx = (0 until primary.mediaItemCount).firstOrNull { idx ->
+                    val mid = primary.getMediaItemAt(idx).mediaId
+                    mid == nextTrack.id || mid == nextTrack.videoId
+                } ?: nextQueueIndex.coerceIn(0, (primary.mediaItemCount - 1).coerceAtLeast(0))
+
+                _currentTrack.value = nextTrack
+                _durationSec.value = nextTrack.durationSeconds.toFloat().coerceAtLeast(1f)
+                _positionSec.value = (handoffPosMs / 1000f).coerceAtLeast(0f)
+                resetPlaySessionTracker(nextTrack)
+
+                primary.volume = 0f
+                primary.seekTo(targetMediaIdx, handoffPosMs)
+                primary.play()
+
+                // Keep secondary carrying the beat until primary is READY at handoffPosMs
+                var handoffWait = 0L
+                while (isActive && primary.playbackState != Player.STATE_READY && handoffWait < 500L) {
+                    delay(20L)
+                    handoffWait += 20L
+                }
+
+                // Short 80ms micro-blend from secondary -> primary so the handoff is seamless
+                val blendSteps = 4
+                for (step in 1..blendSteps) {
+                    if (!isActive) break
+                    val frac = step / blendSteps.toFloat()
+                    primary.volume = (baseVolume * frac).coerceIn(0f, 1f)
+                    secondary.volume = (baseVolume * (1f - frac)).coerceIn(0f, 1f)
+                    delay(20L)
+                }
+
+                primary.volume = baseVolume
+                releaseCrossfadePlayerOnly()
+                _isCrossfading.value = false
+                applyPlaybackParameters()
+                persistPlaybackState()
+                notifyTrackStateChanged()
+                prefetchUpcomingTracks(nextTrack.videoId)
+            } catch (e: Exception) {
+                Log.w(TAG, "Crossfade transition notice: ${e.message}")
+                cancelCrossfade()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "LoudnessEnhancer apply notice: ${e.message}")
         }
+    }
 
-        // Anti-Clipping Headroom + loudness attenuation for tracks louder than -14 LUFS
-        val maxBoost = if (enabled) bands.maxOrNull()?.coerceAtLeast(0f) ?: 0f else 0f
-        val safeHeadroom = if (maxBoost > 0f) 10.0.pow(-maxBoost.toDouble() / 20.0).toFloat() else 1.0f
-        val preampFactor = if (enabled) 10.0.pow(preampDb.toDouble() / 20.0).toFloat() else 1.0f
-        val eqGain = if (enabled) (preampFactor * safeHeadroom) else 1.0f
-        val normAttenuation = if (normEnabled && normDb < 0f) 10.0.pow(normDb.toDouble() / 20.0).toFloat() else 1.0f
+    private fun releaseCrossfadePlayerOnly() {
+        crossfadePlayer?.let { p ->
+            runCatching {
+                p.stop()
+                p.clearMediaItems()
+                p.release()
+            }
+        }
+        crossfadePlayer = null
+        dspManager.releaseSecondaryAudioProcessors(crossfadeSecondaryProcessors)
+        crossfadeSecondaryProcessors = null
+        crossfadePreparedTrackKey = null
+        crossfadeSourceTrackKey = null
+    }
 
-        baseVolume = (eqGain * normAttenuation).coerceIn(0.15f, 1.0f)
-        if (fadeJob?.isActive != true) {
-            player.volume = baseVolume
+    private fun cancelCrossfade() {
+        crossfadeJob?.cancel()
+        crossfadeJob = null
+        releaseCrossfadePlayerOnly()
+        _isCrossfading.value = false
+        applyPlaybackParameters()
+        if (!isSleepTimerFading && fadeJob?.isActive != true) {
+            exoPlayer?.volume = baseVolume
         }
     }
 
     private fun startProgressTicker() {
         progressJob?.cancel()
+        lastTickerWallMs = System.currentTimeMillis()
+        lastPeriodicSaveWallMs = lastTickerWallMs
         progressJob = scope.launch {
             while (isActive) {
+                val now = System.currentTimeMillis()
+                val deltaMs = (now - lastTickerWallMs).coerceIn(0L, 500L)
+                lastTickerWallMs = now
+
                 val player = exoPlayer
                 if (player != null) {
+                    val isResolvingPendingTrack = _currentTrack.value?.isPendingResolution == true
+                    if (_isBuffering.value && (
+                            player.isPlaying ||
+                                (!isResolvingPendingTrack && (!player.playWhenReady || player.playbackState == Player.STATE_READY))
+                            )
+                    ) {
+                        _isBuffering.value = false
+                    }
                     val posSec = (player.currentPosition / 1000f).coerceAtLeast(0f)
                     val bufSec = (player.bufferedPosition / 1000f).coerceAtLeast(0f)
                     _positionSec.value = posSec
                     _bufferedSec.value = bufSec
 
+                    val curTrack = _currentTrack.value
+                    if (player.isPlaying && curTrack != null) {
+                        sessionAccumulatedMs += deltaMs
+
+                        if (!sessionEventRecorded && sessionAccumulatedMs >= PLAYBACK_EVENT_THRESHOLD_MS) {
+                            recordCurrentSessionPlaybackEvent(completed = false)
+                        }
+
+                        val canonicalTrack = (if (_isVideoMode.value) originalAudioTrack else null)
+                            ?: sessionTrack
+                            ?: curTrack
+                        if (!sessionScrobbleNotified) {
+                            val durSec = canonicalTrack.durationSeconds.coerceAtLeast(30)
+                            val scrobbleThresholdMs = minOf((durSec * 1000L) / 2L, 240_000L)
+                                .coerceAtLeast(PLAYBACK_EVENT_THRESHOLD_MS)
+                            if (sessionAccumulatedMs >= scrobbleThresholdMs) {
+                                sessionScrobbleNotified = true
+                                onTrackScrobbleEligibleHook?.invoke(canonicalTrack, sessionAccumulatedMs)
+                            }
+                        }
+
+                        if (now - lastPeriodicSaveWallMs >= PERIODIC_PERSIST_INTERVAL_MS) {
+                            lastPeriodicSaveWallMs = now
+                            persistPlaybackState(forceQueueSave = false)
+                        }
+                    }
+
                     val durMs = player.duration
                     if (durMs > 0 && durMs != C.TIME_UNSET) {
                         _durationSec.value = (durMs / 1000f).coerceAtLeast(1f)
 
-                        // Smooth audio fade out effect when the song is finishing (last 2 seconds)
                         val remainingMs = durMs - player.currentPosition
-                        if (player.isPlaying && remainingMs in 50L..2000L && fadeJob?.isActive != true) {
-                            val fadeFactor = (remainingMs / 2000f).coerceIn(0f, 1f)
-                            player.volume = (baseVolume * fadeFactor).coerceIn(0f, 1f)
-                        } else if (remainingMs > 2000L && fadeJob?.isActive != true && player.volume < baseVolume) {
+                        val crossfadeMs = _crossfadeSeconds.value * 1000L
+                        val nextTarget = if (crossfadeMs > 0L && durMs > crossfadeMs * 2L + 2000L) {
+                            resolveNextTrackForCrossfade()
+                        } else {
+                            null
+                        }
+
+                        if (player.isPlaying && curTrack != null && nextTarget != null && !_isCrossfading.value) {
+                            if (remainingMs in (crossfadeMs + 1000L)..(crossfadeMs + 6000L)) {
+                                prepareCrossfadeTarget(curTrack, nextTarget.second)
+                            } else if (remainingMs in 300L..crossfadeMs) {
+                                startCrossfadeTransition(
+                                    outgoingTrack = curTrack,
+                                    nextQueueIndex = nextTarget.first,
+                                    nextTrack = nextTarget.second,
+                                    crossfadeDurationMs = crossfadeMs
+                                )
+                            }
+                        } else if (!isAnyFadeActive && player.volume != baseVolume) {
                             player.volume = baseVolume
                         }
                     }

@@ -37,11 +37,16 @@ fun rememberGlassLuminance(
     source: GraphicsLayer,
     enabled: Boolean = true,
 ): State<Float> {
+    val isDark = LocalIsDarkTheme.current
     val sample = rememberGraphicsLayer()
-    val luminance = remember { Animatable(0.5f) }
+    val luminance = remember { Animatable(if (isDark) 0.45f else 0.75f) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
+
+    LaunchedEffect(isDark) {
+        luminance.snapTo(if (isDark) 0.45f else 0.75f)
+    }
 
     LaunchedEffect(source, sample, enabled, lifecycle, density, layoutDirection) {
         if (!enabled) return@LaunchedEffect

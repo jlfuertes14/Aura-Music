@@ -1,10 +1,10 @@
 package com.auramusic.app.core.lyrics
 
 import com.auramusic.app.core.extractor.SimpMusicExtractorEngine
+import com.auramusic.app.data.AuraStorageRepository
 import com.auramusic.app.domain.model.LyricLine
 import com.auramusic.app.domain.model.LyricWord
 import com.auramusic.app.domain.model.LyricsData
-import com.atilika.kuromoji.ipadic.Tokenizer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Request
@@ -14,22 +14,91 @@ import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 
 object SimpMusicLyricsRepository {
-    private val lyricsCache = ConcurrentHashMap<String, LyricsData>()
+    private data class CachedLyricsEntry(
+        val data: LyricsData,
+        val languages: Set<String>
+    )
 
-    suspend fun getLyrics(videoId: String, title: String, artist: String, durationSeconds: Int): LyricsData =
+    private val lyricsCache = ConcurrentHashMap<String, CachedLyricsEntry>()
+
+    @Volatile
+    private var currentEnabledLanguages: Set<String> = LyricsRomanizer.DEFAULT_LANGUAGES
+
+    fun clearCache() {
+        lyricsCache.clear()
+    }
+
+    fun setEnabledRomanizationLanguages(languages: Set<String>) {
+        currentEnabledLanguages = languages.toSet()
+    }
+
+    fun applyRomanization(
+        lyrics: LyricsData,
+        enabledLanguages: Set<String> = currentEnabledLanguages
+    ): LyricsData {
+        if (lyrics.syncedLines.isEmpty()) {
+            return lyrics.copy(hasRomanization = false)
+        }
+        val updatedLines = lyrics.syncedLines.map { line ->
+            line.copy(romanizedText = LyricsRomanizer.romanizeLine(line.text, enabledLanguages))
+        }
+        return lyrics.copy(
+            syncedLines = updatedLines,
+            hasRomanization = updatedLines.any { !it.romanizedText.isNullOrBlank() }
+        )
+    }
+
+    suspend fun getLyrics(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationSeconds: Int,
+        preferredProvider: String = "SimpMusic"
+    ): LyricsData =
         withContext(Dispatchers.IO) {
-            lyricsCache[videoId]?.let { return@withContext it }
-
-            // 1. Primary: Official SimpMusic Lyrics API (https://api-lyrics.simpmusic.org/v1/{videoId})
-            fetchFromSimpMusicApi(videoId)?.let { data ->
-                lyricsCache[videoId] = data
-                return@withContext data
+            val activeLanguages = currentEnabledLanguages
+            val cacheKey = "${videoId}_$preferredProvider"
+            lyricsCache[cacheKey]?.let { cached ->
+                if (cached.languages == activeLanguages) {
+                    return@withContext cached.data
+                }
+                val updated = applyRomanization(cached.data, activeLanguages)
+                lyricsCache[cacheKey] = CachedLyricsEntry(updated, activeLanguages)
+                return@withContext updated
             }
 
-            // 2. Fallback: Direct LRCLIB API (https://lrclib.net/api/search)
-            fetchFromLrcLib(videoId, title, artist, durationSeconds)?.let { data ->
-                lyricsCache[videoId] = data
-                return@withContext data
+            val cleanTitle = normalizeLyricsTitle(title, artist).ifBlank { title }
+            val cleanArtist = normalizeLyricsArtist(artist).ifBlank { artist }
+
+            val providerOrder = when {
+                preferredProvider.equals("BetterLyrics", ignoreCase = true) ->
+                    listOf("BetterLyrics", "SimpMusic", "LRCLIB", "YouTube")
+                preferredProvider.equals("LRCLIB", ignoreCase = true) ->
+                    listOf("LRCLIB", "SimpMusic", "BetterLyrics", "YouTube")
+                preferredProvider.equals("YouTube", ignoreCase = true) ->
+                    listOf("YouTube", "SimpMusic", "BetterLyrics", "LRCLIB")
+                else ->
+                    listOf("SimpMusic", "LRCLIB", "BetterLyrics", "YouTube")
+            }
+
+            for (provider in providerOrder) {
+                val resolved = when (provider) {
+                    "SimpMusic" -> fetchFromSimpMusicApi(videoId, activeLanguages)
+                    "LRCLIB" -> fetchFromLrcLib(videoId, title, artist, durationSeconds, activeLanguages)
+                    "BetterLyrics" -> BetterLyricsProvider.fetchBetterLyrics(
+                        videoId = videoId,
+                        title = cleanTitle,
+                        artist = cleanArtist,
+                        durationSeconds = durationSeconds
+                    )?.let { applyRomanization(it, activeLanguages) }
+                    "YouTube" -> BetterLyricsProvider.fetchYouTubeCaptions(videoId)
+                        ?.let { applyRomanization(it, activeLanguages) }
+                    else -> null
+                }
+                if (resolved != null) {
+                    lyricsCache[cacheKey] = CachedLyricsEntry(resolved, activeLanguages)
+                    return@withContext resolved
+                }
             }
 
             LyricsData(
@@ -40,7 +109,59 @@ object SimpMusicLyricsRepository {
             )
         }
 
-    private fun fetchFromSimpMusicApi(videoId: String): LyricsData? {
+    /**
+     * Translates [lyrics] using [AiLyricsTranslator], checking Room-cached translations in [storage]
+     * first and persisting successful results for offline reuse.
+     */
+    suspend fun translateLyrics(
+        lyrics: LyricsData,
+        config: AiLyricsTranslator.AiTranslationConfig,
+        storage: AuraStorageRepository? = null
+    ): Result<Map<Int, String>> = withContext(Dispatchers.IO) {
+        val targetLang = config.targetLanguage.trim().ifBlank { "English" }
+        val expectedSource = "AI:$targetLang"
+
+        if (storage != null && lyrics.videoId.isNotBlank()) {
+            val cached = runCatching { storage.loadTranslatedLyrics(lyrics.videoId) }.getOrNull()
+            if (cached != null && (cached.source.equals(expectedSource, ignoreCase = true) || !cached.source.startsWith("AI:"))) {
+                val fromJson = AiLyricsTranslator.deserializeTranslations(cached.plainLyrics)
+                if (fromJson.isNotEmpty()) {
+                    return@withContext Result.success(fromJson)
+                }
+                if (cached.syncedLines.isNotEmpty()) {
+                    val fromLines = cached.syncedLines.mapIndexedNotNull { idx, line ->
+                        line.text.trim().takeIf { it.isNotEmpty() }?.let { idx to it }
+                    }.toMap()
+                    if (fromLines.isNotEmpty()) {
+                        return@withContext Result.success(fromLines)
+                    }
+                }
+            }
+        }
+
+        val result = AiLyricsTranslator.translateLyrics(lyrics, config)
+        result.onSuccess { translatedMap ->
+            if (storage != null && lyrics.videoId.isNotBlank() && translatedMap.isNotEmpty()) {
+                val translatedLines = lyrics.syncedLines.mapIndexed { idx, line ->
+                    line.copy(text = translatedMap[idx] ?: line.text)
+                }
+                val persisted = LyricsData(
+                    videoId = lyrics.videoId,
+                    plainLyrics = AiLyricsTranslator.serializeTranslations(translatedMap),
+                    syncedLines = translatedLines,
+                    source = expectedSource,
+                    hasRomanization = false
+                )
+                runCatching { storage.saveTranslatedLyrics(lyrics.videoId, persisted) }
+            }
+        }
+        result
+    }
+
+    private fun fetchFromSimpMusicApi(
+        videoId: String,
+        enabledLanguages: Set<String>
+    ): LyricsData? {
         return try {
             val req = Request.Builder()
                 .url("https://api-lyrics.simpmusic.org/v1/$videoId")
@@ -70,7 +191,12 @@ object SimpMusicLyricsRepository {
                 val plain = unescapeLyricsHtml(bestObj.optString("plainLyric"))
 
                 val rawToParse = if (richLrc.isNotBlank()) richLrc else syncedLrc
-                val lines = if (rawToParse.isNotBlank()) parseLrcWithRichWords(rawToParse) else emptyList()
+                val lines = if (rawToParse.isNotBlank()) {
+                    parseLrcWithRichWords(rawToParse, enabledLanguages)
+                } else {
+                    emptyList()
+                }
+                if (lines.isEmpty() && plain.isBlank()) return null
                 val hasRomanized = lines.any { !it.romanizedText.isNullOrBlank() }
 
                 LyricsData(
@@ -86,7 +212,13 @@ object SimpMusicLyricsRepository {
         }
     }
 
-    private fun fetchFromLrcLib(videoId: String, title: String, artist: String, durationSeconds: Int): LyricsData? {
+    private fun fetchFromLrcLib(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationSeconds: Int,
+        enabledLanguages: Set<String>
+    ): LyricsData? {
         return try {
             val cleanTitle = normalizeLyricsTitle(title, artist)
             val cleanArtist = normalizeLyricsArtist(artist)
@@ -100,7 +232,7 @@ object SimpMusicLyricsRepository {
             }
             // LRCLIB's signature endpoint uses track + artist + duration for precise matching.
             fetchLrcLibRecord("https://lrclib.net/api/get?${encodeQuery(params)}")?.let { record ->
-                return record.toLyricsData(videoId, "LRCLIB Exact Match")
+                return record.toLyricsData(videoId, "LRCLIB Exact Match", enabledLanguages)
             }
 
             // Search with structured metadata first. Some YouTube uploads use channel names or
@@ -122,7 +254,7 @@ object SimpMusicLyricsRepository {
                 .maxByOrNull { (_, score) -> score }
                 ?.first ?: return null
 
-            chosen.toLyricsData(videoId, "LRCLIB Search")
+            chosen.toLyricsData(videoId, "LRCLIB Search", enabledLanguages)
         } catch (e: Exception) {
             null
         }
@@ -151,10 +283,14 @@ object SimpMusicLyricsRepository {
         emptyList()
     }
 
-    private fun JSONObject.toLyricsData(videoId: String, sourceName: String): LyricsData? {
+    private fun JSONObject.toLyricsData(
+        videoId: String,
+        sourceName: String,
+        enabledLanguages: Set<String>
+    ): LyricsData? {
         val synced = unescapeLyricsHtml(optString("syncedLyrics").takeUnless { it == "null" }.orEmpty())
         val plain = unescapeLyricsHtml(optString("plainLyrics").takeUnless { it == "null" }.orEmpty())
-        val lines = if (synced.isNotBlank()) parseLrcWithRichWords(synced) else emptyList()
+        val lines = if (synced.isNotBlank()) parseLrcWithRichWords(synced, enabledLanguages) else emptyList()
         if (lines.isEmpty() && plain.isBlank()) return null
         return LyricsData(
             videoId = videoId,
@@ -235,7 +371,10 @@ object SimpMusicLyricsRepository {
         .replace(Regex("(?i)\\b(official|music|video|audio|lyrics?|visuali[sz]er|feat|featuring|ft)\\b"), " ")
         .replace(Regex("[^\\p{L}\\p{N}]"), "")
 
-    private fun parseLrcWithRichWords(lrcText: String): List<LyricLine> {
+    private fun parseLrcWithRichWords(
+        lrcText: String,
+        enabledLanguages: Set<String> = currentEnabledLanguages
+    ): List<LyricLine> {
         val lineRegex = Regex("^\\[(\\d{1,2}):(\\d{2})(?:\\.(\\d{1,3}))?](.*)$")
         val wordTagRegex = Regex("<(\\d{1,2}):(\\d{2})(?:\\.(\\d{1,3}))?>\\s*([^<]+)")
 
@@ -312,7 +451,7 @@ object SimpMusicLyricsRepository {
                 endTimeSec = lineEndSec,
                 text = cleanText,
                 words = words,
-                romanizedText = romanizeIfNonLatin(cleanText)
+                romanizedText = LyricsRomanizer.romanizeLine(cleanText, enabledLanguages)
             )
         }
     }
@@ -350,142 +489,4 @@ object SimpMusicLyricsRepository {
             .replace("&ldquo;", "“")
         return res
     }
-
-    /** Kuromoji is initialized on the lyrics IO dispatcher, not during app startup. */
-    private val japaneseTokenizer: Tokenizer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { Tokenizer() }
-
-    private fun romanizeIfNonLatin(text: String): String? {
-        if (text.isBlank()) return null
-
-        // Kana reliably identifies Japanese text. Han-only lines are ambiguous with Chinese,
-        // so leave those alone rather than assigning them Japanese readings without context.
-        val hasJapanese = text.any(::isJapaneseKana)
-        if (hasJapanese) {
-            val reading = runCatching {
-                buildString {
-                    japaneseTokenizer.tokenize(text).forEach { token ->
-                        val tokenReading = token.reading
-                        // Unknown words and Latin fragments have no dictionary reading.
-                        append(if (tokenReading.isNullOrBlank() || tokenReading == "*") token.surface else tokenReading)
-                    }
-                }
-            }.getOrNull() ?: text
-
-            return romanizeKana(reading).takeIf { it.isNotBlank() && it != text }
-        }
-
-        // Keep the existing Hangul romanization behavior.
-        val initials = arrayOf(
-            "g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s",
-            "ss", "", "j", "jj", "ch", "k", "t", "p", "h"
-        )
-        val medials = arrayOf(
-            "a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa",
-            "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"
-        )
-        val finals = arrayOf(
-            "", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lg", "lm",
-            "lb", "ls", "lt", "lp", "lh", "m", "p", "bs", "t", "t", "ng",
-            "t", "t", "k", "t", "p", "t"
-        )
-        var hasHangul = false
-        val hangul = buildString {
-            text.forEach { ch ->
-                val code = ch.code
-                if (code in 0xAC00..0xD7A3) {
-                    hasHangul = true
-                    val index = code - 0xAC00
-                    val initial = index / (21 * 28)
-                    val medial = (index % (21 * 28)) / 28
-                    val finalIndex = index % 28
-                    append(initials[initial]).append(medials[medial]).append(finals[finalIndex])
-                } else {
-                    append(ch)
-                }
-            }
-        }
-        return hangul.takeIf { hasHangul }
-    }
-
-    private fun isJapaneseKana(ch: Char): Boolean {
-        val code = ch.code
-        return code in 0x3040..0x30FF
-    }
-
-    /** Kana → Hepburn romaji, including contracted sounds, doubled consonants and long vowels. */
-    private fun romanizeKana(text: String): String {
-        val kana = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFKC)
-            .map { ch -> if (ch in 'ァ'..'ヶ') (ch.code - 0x60).toChar() else ch }
-            .joinToString("")
-        val output = StringBuilder()
-        var index = 0
-        while (index < kana.length) {
-            val ch = kana[index]
-            if (ch == 'っ') {
-                val next = romanizeKanaUnit(kana, index + 1)
-                if (!next.isNullOrEmpty() && next[0] !in "aiueo") output.append(next[0])
-                index++
-                continue
-            }
-            if (ch == 'ー') {
-                output.lastOrNull()?.takeIf { it in "aiueo" }?.let(output::append)
-                index++
-                continue
-            }
-
-            val pair = if (index + 1 < kana.length) kana.substring(index, index + 2) else ""
-            val contracted = YOUON[pair]
-            if (contracted != null) {
-                output.append(contracted)
-                index += 2
-                continue
-            }
-            output.append(KANA_MAP[ch] ?: ch)
-            index++
-        }
-        return output.toString()
-    }
-
-    private fun romanizeKanaUnit(kana: String, index: Int): String? {
-        if (index >= kana.length) return null
-        val pair = if (index + 1 < kana.length) kana.substring(index, index + 2) else ""
-        return YOUON[pair] ?: KANA_MAP[kana[index]]
-    }
-
-    private val YOUON = mapOf(
-        "きゃ" to "kya", "きゅ" to "kyu", "きょ" to "kyo",
-        "しゃ" to "sha", "しゅ" to "shu", "しょ" to "sho",
-        "ちゃ" to "cha", "ちゅ" to "chu", "ちょ" to "cho",
-        "にゃ" to "nya", "にゅ" to "nyu", "にょ" to "nyo",
-        "ひゃ" to "hya", "ひゅ" to "hyu", "ひょ" to "hyo",
-        "みゃ" to "mya", "みゅ" to "myu", "みょ" to "myo",
-        "りゃ" to "rya", "りゅ" to "ryu", "りょ" to "ryo",
-        "ぎゃ" to "gya", "ぎゅ" to "gyu", "ぎょ" to "gyo",
-        "じゃ" to "ja", "じゅ" to "ju", "じょ" to "jo",
-        "びゃ" to "bya", "びゅ" to "byu", "びょ" to "byo",
-        "ぴゃ" to "pya", "ぴゅ" to "pyu", "ぴょ" to "pyo",
-        "ふぁ" to "fa", "ふぃ" to "fi", "ふぇ" to "fe", "ふぉ" to "fo",
-        "うぃ" to "wi", "うぇ" to "we", "てぃ" to "ti", "でぃ" to "di",
-        "とぅ" to "tu", "どぅ" to "du", "ゔぁ" to "va", "ゔぃ" to "vi",
-        "ゔぇ" to "ve", "ゔぉ" to "vo", "しぇ" to "she", "ちぇ" to "che", "じぇ" to "je"
-    )
-
-    private val KANA_MAP = mapOf(
-        'あ' to "a", 'い' to "i", 'う' to "u", 'え' to "e", 'お' to "o",
-        'か' to "ka", 'き' to "ki", 'く' to "ku", 'け' to "ke", 'こ' to "ko",
-        'さ' to "sa", 'し' to "shi", 'す' to "su", 'せ' to "se", 'そ' to "so",
-        'た' to "ta", 'ち' to "chi", 'つ' to "tsu", 'て' to "te", 'と' to "to",
-        'な' to "na", 'に' to "ni", 'ぬ' to "nu", 'ね' to "ne", 'の' to "no",
-        'は' to "ha", 'ひ' to "hi", 'ふ' to "fu", 'へ' to "he", 'ほ' to "ho",
-        'ま' to "ma", 'み' to "mi", 'む' to "mu", 'め' to "me", 'も' to "mo",
-        'や' to "ya", 'ゆ' to "yu", 'よ' to "yo", 'ら' to "ra", 'り' to "ri",
-        'る' to "ru", 'れ' to "re", 'ろ' to "ro", 'わ' to "wa", 'を' to "o", 'ん' to "n",
-        'が' to "ga", 'ぎ' to "gi", 'ぐ' to "gu", 'げ' to "ge", 'ご' to "go",
-        'ざ' to "za", 'じ' to "ji", 'ず' to "zu", 'ぜ' to "ze", 'ぞ' to "zo",
-        'だ' to "da", 'ぢ' to "ji", 'づ' to "zu", 'で' to "de", 'ど' to "do",
-        'ば' to "ba", 'び' to "bi", 'ぶ' to "bu", 'べ' to "be", 'ぼ' to "bo",
-        'ぱ' to "pa", 'ぴ' to "pi", 'ぷ' to "pu", 'ぺ' to "pe", 'ぽ' to "po",
-        'ぁ' to "a", 'ぃ' to "i", 'ぅ' to "u", 'ぇ' to "e", 'ぉ' to "o",
-        'ゃ' to "ya", 'ゅ' to "yu", 'ょ' to "yo", 'ゔ' to "vu", 'ゕ' to "ka", 'ゖ' to "ke"
-    )
 }

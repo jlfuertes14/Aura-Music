@@ -1,6 +1,8 @@
 package com.auramusic.app.ui.screens.player.applemusic
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -16,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsDraggedAsState
@@ -25,14 +28,14 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -40,7 +43,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.CloseFullscreen
 import androidx.compose.material.icons.rounded.OpenInFull
+import androidx.compose.material.icons.rounded.Pause
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Timer
@@ -64,6 +70,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -72,10 +79,15 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,20 +95,26 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.auramusic.app.domain.model.AuraPalette
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.LyricsData
 import com.auramusic.app.ui.theme.AuraNeonLime
 import com.auramusic.app.ui.theme.AuraPoppinsFontFamily
+import com.auramusic.app.ui.theme.AuraViolet
 import com.auramusic.app.ui.theme.LiquidGlassContainer
 import com.auramusic.app.ui.theme.LiquidGlassIconButton
 import com.auramusic.app.ui.theme.LocalGlassBackdrop
+import com.auramusic.app.ui.theme.glassBackdropSource
+import com.auramusic.app.ui.theme.rememberGlassBackdrop
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
 private const val FOOTER_ALPHA = 0.45f
-private const val AUTO_SCROLL_RESUME_DELAY_MS = 3_500L
-private const val CLUSTER_AUTO_HIDE_MS = 8_000L
+private const val AUTO_SCROLL_RESUME_DELAY_MS = 1_800L
+private const val CLUSTER_AUTO_HIDE_MS = 3_000L
 
 /**
  * Reusable Apple Music depth-of-field synced lyrics list, used in both [AppleMusicLyricsTabView]
@@ -112,7 +130,9 @@ fun AppleMusicLyricsList(
     onLineClick: (Float) -> Unit,
     modifier: Modifier = Modifier,
     isLoading: Boolean = false,
+    topExtraPadding: Dp = 0.dp,
     bottomExtraPadding: Dp = 0.dp,
+    reanchorKey: Any = Unit,
     footerContent: (@Composable () -> Unit)? = null,
 ) {
     val displayLines = remember(lyricsData?.syncedLines, lyricsData?.plainLyrics) {
@@ -167,7 +187,7 @@ fun AppleMusicLyricsList(
     }
     val stagger = remember(displayLines) { LyricsStagger() }
 
-    LaunchedEffect(currentDisplayIndex, displayLines.isUnsynced, isUserScrollingPaused, stagger) {
+    LaunchedEffect(currentDisplayIndex, displayLines.isUnsynced, isUserScrollingPaused, stagger, reanchorKey) {
         if (currentDisplayIndex >= 0 && !displayLines.isUnsynced && !isUserScrollingPaused) {
             listState.animateScrollAndAnchorItemTop(
                 index = currentDisplayIndex,
@@ -234,7 +254,7 @@ fun AppleMusicLyricsList(
                 modifier = Modifier
                     .fillMaxSize()
                     .nestedScroll(userScrollTracker),
-                contentPadding = PaddingValues(bottom = tailPadding),
+                contentPadding = PaddingValues(top = topExtraPadding, bottom = tailPadding),
             ) {
                 items(
                     count = displayLines.items.size,
@@ -338,10 +358,122 @@ private fun DefaultLyricsAttributionFooter(
 }
 
 /**
+ * Compact header trailing trio shown when the bottom player controls hide in Apple Music lyrics:
+ * `Translate` (romanization), expandable inline [LyricsOffsetInlinePill] between `Translate` and `Timer`,
+ * `Timer` (lyrics timing offset), and `Play / Pause` (or buffering spinner).
+ */
+@Composable
+private fun AppleMusicFullScreenHeaderActions(
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    showRomanized: Boolean,
+    lyricsOffsetMs: Long,
+    showOffsetControl: Boolean,
+    backdrop: com.kyant.backdrop.backdrops.LayerBackdrop?,
+    onToggleRomanized: () -> Unit,
+    onToggleOffsetControl: () -> Unit,
+    onAdjustOffsetMs: (Int) -> Unit,
+    onTogglePlayPause: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier,
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .appleMusicPressInflate()
+                .size(38.dp)
+                .clip(CircleShape)
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (showRomanized) "Original lyrics" else "Romanized lyrics",
+                    onClick = onToggleRomanized,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Translate,
+                contentDescription = if (showRomanized) "Romanized lyrics active" else "Original lyrics active",
+                tint = if (showRomanized) AuraNeonLime else Color.White.copy(alpha = 0.88f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        AnimatedVisibility(
+            visible = showOffsetControl,
+            enter = fadeIn(tween(160)) + expandHorizontally(tween(200)),
+            exit = fadeOut(tween(140)) + shrinkHorizontally(tween(180)),
+        ) {
+            LyricsOffsetInlinePill(
+                offsetMs = lyricsOffsetMs.toInt(),
+                backdrop = backdrop,
+                onAdjustOffsetMs = onAdjustOffsetMs,
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .appleMusicPressInflate()
+                .size(38.dp)
+                .clip(CircleShape)
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = "Lyrics timing offset",
+                    onClick = onToggleOffsetControl,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Timer,
+                contentDescription = "Lyrics timing offset",
+                tint = if (lyricsOffsetMs != 0L || showOffsetControl) AuraNeonLime else Color.White.copy(alpha = 0.88f),
+                modifier = Modifier.size(20.dp),
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .appleMusicPressInflate()
+                .size(40.dp)
+                .clip(CircleShape)
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = if (isPlaying) "Pause" else "Play",
+                    onClick = onTogglePlayPause,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            if (isBuffering) {
+                CircularProgressIndicator(
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(19.dp),
+                )
+            } else {
+                Crossfade(targetState = isPlaying, label = "appleMusicHeaderPlayPause") { playing ->
+                    Icon(
+                        imageVector = if (playing) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
+                        contentDescription = if (playing) "Pause" else "Play",
+                        tint = Color.White,
+                        modifier = Modifier.size(25.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
  * Full Apple Music `LYRICS` tab layout combining [compactHeader], [AppleMusicLyricsList],
- * floating `38.dp` Liquid Glass / translucent action pills (Offset `±0.1s` / `±0.5s`,
- * Romanization toggle when `hasRomanization`, and Fullscreen expand), and an `8_000L` ms
+ * floating `44.dp` Liquid Glass / translucent action pills (Offset `±0.1s` / `±0.5s`,
+ * Romanization toggle when `hasRomanization`, and Expand/Full-Screen toggle), and a `3_000L` ms
  * auto-hiding [bottomCluster] woken on tap or scroll.
+ *
+ * When [bottomCluster] hides (after 3s idle, tap, or pressing Expand), the compact header's
+ * trailing actions crossfade from `(Plus, Heart, More)` to `(Translate, [Offset Pill], Timer, Play/Pause)`.
+ * Scrolling or moving the screen wakes [bottomCluster] and reverts the header icons back to `(Plus, Heart, More)`.
  */
 @Composable
 fun AppleMusicLyricsTabView(
@@ -350,14 +482,15 @@ fun AppleMusicLyricsTabView(
     isLoading: Boolean,
     currentPositionSec: Float,
     isPlaying: Boolean,
+    isBuffering: Boolean,
     lyricsOffsetMs: Long,
     showRomanized: Boolean,
     onSeekToSec: (Float) -> Unit,
     onAdjustOffsetMs: (Int) -> Unit,
     onToggleRomanized: () -> Unit,
-    onOpenFullscreen: () -> Unit,
+    onTogglePlayPause: () -> Unit,
     onBackToMain: () -> Unit,
-    compactHeader: @Composable () -> Unit,
+    compactHeader: @Composable (trailingOverride: (@Composable RowScope.() -> Unit)?) -> Unit,
     bottomCluster: @Composable () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -378,8 +511,9 @@ fun AppleMusicLyricsTabView(
     val scrollWakesControls = remember {
         object : NestedScrollConnection {
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                if (available.y != 0f) {
+                if (abs(available.y) > 0.5f) {
                     showCluster = true
+                    showOffsetControl = false
                     interactionTick++
                 }
                 return Offset.Zero
@@ -399,7 +533,26 @@ fun AppleMusicLyricsTabView(
                 contentDescription = "Lyrics for ${track.title} by ${track.artist}"
             },
     ) {
-        compactHeader()
+        compactHeader(
+            if (showCluster) {
+                null
+            } else {
+                {
+                    AppleMusicFullScreenHeaderActions(
+                        isPlaying = isPlaying,
+                        isBuffering = isBuffering,
+                        showRomanized = showRomanized,
+                        lyricsOffsetMs = lyricsOffsetMs,
+                        showOffsetControl = showOffsetControl,
+                        backdrop = backdrop,
+                        onToggleRomanized = onToggleRomanized,
+                        onToggleOffsetControl = { showOffsetControl = !showOffsetControl },
+                        onAdjustOffsetMs = onAdjustOffsetMs,
+                        onTogglePlayPause = onTogglePlayPause,
+                    )
+                }
+            },
+        )
 
         Box(
             modifier = Modifier
@@ -411,7 +564,7 @@ fun AppleMusicLyricsTabView(
                     interactionSource = remember { MutableInteractionSource() },
                 ) {
                     showCluster = !showCluster
-                    if (!showCluster) showOffsetControl = false
+                    showOffsetControl = false
                     interactionTick++
                 },
         ) {
@@ -422,6 +575,7 @@ fun AppleMusicLyricsTabView(
                 isPlaying = isPlaying,
                 showRomanized = showRomanized,
                 isLoading = isLoading,
+                reanchorKey = showCluster,
                 onLineClick = { targetSec ->
                     interactionTick++
                     onSeekToSec(targetSec)
@@ -510,11 +664,11 @@ fun AppleMusicLyricsTabView(
 
                     FloatingLyricsPillButton(
                         icon = Icons.Rounded.OpenInFull,
-                        contentDescription = "Open fullscreen lyrics",
+                        contentDescription = "Expand fullscreen lyrics",
                         active = false,
                         onClick = {
-                            interactionTick++
-                            onOpenFullscreen()
+                            showCluster = false
+                            showOffsetControl = false
                         },
                     )
                 }
@@ -526,7 +680,20 @@ fun AppleMusicLyricsTabView(
             enter = expandVertically() + fadeIn(),
             exit = shrinkVertically() + fadeOut(),
         ) {
-            bottomCluster()
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            interactionTick++
+                            waitForUpOrCancellation()
+                            interactionTick++
+                        }
+                    },
+            ) {
+                bottomCluster()
+            }
         }
     }
 }
@@ -714,4 +881,409 @@ private fun formatOffsetSeconds(offsetMs: Int): String {
     val sec = absMs / 1000
     val tenths = (absMs % 1000) / 100
     return "$sign$sec.${tenths}s"
+}
+
+/**
+ * Dedicated Apple Music Full-Screen Lyrics view matching the Apple Music Lyrics screen 1:1:
+ * - Frosted [AppleMusicArtworkBackdrop] (sibling [glassBackdropSource] for Liquid Glass pills)
+ * - Persistent top grabber (swipe down or tap to close)
+ * - Transparent [AppleMusicCompactHeader] + [AppleMusicHeaderActions] over the frosted backdrop
+ * - [AppleMusicLyricsList] anchored at the first line with identical karaoke word-by-word highlighting
+ * - Floating Liquid Glass pills (`Timer` + offset, `Translate`, and `CloseFullscreen`)
+ * - Exact [AppleMusicBottomCluster] player controls that auto-hide after [CLUSTER_AUTO_HIDE_MS] (3s)
+ *   of inactivity and wake on tap or scroll.
+ */
+@Composable
+fun AppleMusicFullScreenLyricsView(
+    track: AuraTrack,
+    lyricsData: LyricsData?,
+    isLoading: Boolean,
+    positionSec: Float,
+    durationSec: Float,
+    isPlaying: Boolean,
+    isBuffering: Boolean,
+    isFavorite: Boolean,
+    isVideoMode: Boolean,
+    lyricsOffsetMs: Int,
+    showRomanized: Boolean,
+    palette: AuraPalette,
+    showControlsAllowed: Boolean = true,
+    onClose: () -> Unit,
+    onSeekTo: (Float) -> Unit,
+    onTogglePlayPause: () -> Unit,
+    onSkipPrevious: () -> Unit,
+    onSkipNext: () -> Unit,
+    onToggleFavorite: () -> Unit,
+    onOpenArtist: () -> Unit,
+    onOpenOptions: () -> Unit,
+    onOpenComments: () -> Unit,
+    onShareTrack: () -> Unit,
+    onSaveToPlaylist: () -> Unit,
+    onToggleVideoMode: () -> Unit,
+    onOpenQueue: () -> Unit,
+    onToggleRomanized: () -> Unit,
+    onAdjustLyricsOffset: (Int) -> Unit,
+    onArtworkPositioned: (Rect) -> Unit = {},
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val typography = rememberAppleMusicTypography()
+    val rawSeed = remember(palette.appleMusicBackdrop) {
+        if (palette.appleMusicBackdrop == Color.Black) AuraViolet else palette.appleMusicBackdrop
+    }
+    val seedColor by animateColorAsState(
+        targetValue = rawSeed,
+        animationSpec = tween(500),
+        label = "amFullScreenLyricsSeed",
+    )
+
+    val glassBackdrop = rememberGlassBackdrop(Color.Black)
+
+    var showCluster by rememberSaveable(track.videoId) { mutableStateOf(true) }
+    var showOffsetControl by rememberSaveable(track.videoId) { mutableStateOf(false) }
+    var interactionTick by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(showCluster, interactionTick, showControlsAllowed) {
+        if (showCluster && showControlsAllowed) {
+            delay(CLUSTER_AUTO_HIDE_MS)
+            showCluster = false
+            showOffsetControl = false
+        }
+    }
+
+    val scrollWakesControls = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (abs(available.y) > 0.5f) {
+                    showCluster = true
+                    showOffsetControl = false
+                    interactionTick++
+                }
+                return Offset.Zero
+            }
+        }
+    }
+
+    val displayLyrics = lyricsData?.takeIf { it.source != "None" }
+    val hasTimedLyrics = remember(displayLyrics?.syncedLines) {
+        val lines = displayLyrics?.syncedLines.orEmpty()
+        lines.size >= 2 && lines.map { (it.timeSec * 1000f).roundToLong() }.distinct().size > 1
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .semantics {
+                contentDescription = "Fullscreen lyrics for ${track.title} by ${track.artist}"
+            },
+    ) {
+        // 1. Sibling frosted artwork backdrop source (identical to Apple Music Lyrics tab)
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .glassBackdropSource(glassBackdrop),
+        ) {
+            AppleMusicArtworkBackdrop(
+                artworkUrl = track.highResArtworkUrl,
+                seedColor = seedColor,
+                onArtworkBitmap = { bmp ->
+                    cacheAppleMusicBitmap(track.highResArtworkUrl, bmp)
+                },
+            )
+        }
+
+        // 2. Foreground layout matching AppleMusicView.LYRICS + AppleMusicLyricsTabView
+        CompositionLocalProvider(LocalGlassBackdrop provides glassBackdrop) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                Spacer(
+                    modifier = Modifier
+                        .statusBarsPadding()
+                        .height(20.dp),
+                )
+
+                AppleMusicCompactHeader(
+                    track = track,
+                    artworkContent = {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(track.highResArtworkUrl)
+                                .crossfade(300)
+                                .build(),
+                            contentDescription = track.title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .onGloballyPositioned { onArtworkPositioned(it.boundsInRoot()) },
+                        )
+                    },
+                    onTapTrack = onClose,
+                    onTapArtist = onOpenArtist,
+                    typography = typography,
+                    trailingActions = {
+                        Crossfade(
+                            targetState = showCluster,
+                            animationSpec = tween(220),
+                            label = "amFullScreenHeaderSwitch",
+                        ) { controlsVisible ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (controlsVisible) {
+                                    AppleMusicHeaderActions(
+                                        isFavorite = isFavorite,
+                                        onToggleFavorite = {
+                                            interactionTick++
+                                            onToggleFavorite()
+                                        },
+                                        onOptionsClick = {
+                                            interactionTick++
+                                            onOpenOptions()
+                                        },
+                                        onAddToPlaylist = {
+                                            interactionTick++
+                                            onSaveToPlaylist()
+                                        },
+                                    )
+                                } else {
+                                    AppleMusicFullScreenHeaderActions(
+                                        isPlaying = isPlaying,
+                                        isBuffering = isBuffering,
+                                        showRomanized = showRomanized,
+                                        lyricsOffsetMs = lyricsOffsetMs.toLong(),
+                                        showOffsetControl = showOffsetControl,
+                                        backdrop = glassBackdrop,
+                                        onToggleRomanized = onToggleRomanized,
+                                        onToggleOffsetControl = { showOffsetControl = !showOffsetControl },
+                                        onAdjustOffsetMs = onAdjustLyricsOffset,
+                                        onTogglePlayPause = onTogglePlayPause,
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .nestedScroll(scrollWakesControls)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() },
+                        ) {
+                            showCluster = !showCluster
+                            showOffsetControl = false
+                            interactionTick++
+                        },
+                ) {
+                    AppleMusicLyricsList(
+                        lyricsData = displayLyrics,
+                        currentPositionSec = positionSec,
+                        lyricsOffsetMs = lyricsOffsetMs.toLong(),
+                        isPlaying = isPlaying,
+                        showRomanized = showRomanized,
+                        isLoading = isLoading,
+                        reanchorKey = showCluster,
+                        onLineClick = { targetSec ->
+                            interactionTick++
+                            onSeekTo(targetSec)
+                        },
+                    )
+
+                    if (displayLyrics == null && !isLoading) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .padding(top = 96.dp)
+                                .clip(CircleShape)
+                                .background(Color.White.copy(alpha = 0.16f))
+                                .clickable(role = Role.Button, onClick = onClose)
+                                .padding(horizontal = 18.dp, vertical = 10.dp),
+                        ) {
+                            Text(
+                                text = "Back to player",
+                                style = TextStyle(
+                                    fontFamily = AuraPoppinsFontFamily,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 13.sp,
+                                    color = Color.White,
+                                ),
+                            )
+                        }
+                    }
+
+                    androidx.compose.animation.AnimatedVisibility(
+                        visible = showCluster && showControlsAllowed && !isLoading,
+                        enter = fadeIn(),
+                        exit = fadeOut(),
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(end = 20.dp, bottom = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            horizontalAlignment = Alignment.End,
+                        ) {
+                            if (hasTimedLyrics) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    AnimatedVisibility(
+                                        visible = showOffsetControl,
+                                        enter = fadeIn(tween(160)) + expandHorizontally(tween(200)),
+                                        exit = fadeOut(tween(140)) + shrinkHorizontally(tween(180)),
+                                    ) {
+                                        LyricsOffsetInlinePill(
+                                            offsetMs = lyricsOffsetMs,
+                                            backdrop = glassBackdrop,
+                                            onAdjustOffsetMs = { delta ->
+                                                interactionTick++
+                                                onAdjustLyricsOffset(delta)
+                                            },
+                                        )
+                                    }
+                                    FloatingLyricsPillButton(
+                                        icon = Icons.Rounded.Timer,
+                                        contentDescription = "Toggle lyrics timing offset controls",
+                                        active = showOffsetControl || lyricsOffsetMs != 0,
+                                        onClick = {
+                                            interactionTick++
+                                            showOffsetControl = !showOffsetControl
+                                        },
+                                    )
+                                }
+                            }
+
+                            if (displayLyrics?.hasRomanization == true) {
+                                FloatingLyricsPillButton(
+                                    icon = Icons.Rounded.Translate,
+                                    contentDescription = if (showRomanized) {
+                                        "Hide romanized lyrics"
+                                    } else {
+                                        "Show romanized lyrics"
+                                    },
+                                    active = showRomanized,
+                                    onClick = {
+                                        interactionTick++
+                                        onToggleRomanized()
+                                    },
+                                )
+                            }
+
+                            FloatingLyricsPillButton(
+                                icon = Icons.Rounded.CloseFullscreen,
+                                contentDescription = "Exit fullscreen lyrics",
+                                active = false,
+                                onClick = onClose,
+                            )
+                        }
+                    }
+                }
+
+                AnimatedVisibility(
+                    visible = showCluster && showControlsAllowed,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut(),
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown(requireUnconsumed = false)
+                                    interactionTick++
+                                    waitForUpOrCancellation()
+                                    interactionTick++
+                                }
+                            },
+                    ) {
+                        AppleMusicBottomCluster(
+                            track = track,
+                            isPlaying = isPlaying,
+                            isBuffering = isBuffering,
+                            positionSec = positionSec,
+                            durationSec = durationSec,
+                            viewState = AppleMusicView.LYRICS,
+                            onSelectView = { targetView ->
+                                interactionTick++
+                                when (targetView) {
+                                    AppleMusicView.MAIN -> onClose()
+                                    AppleMusicView.QUEUE -> onOpenQueue()
+                                    AppleMusicView.LYRICS -> onClose()
+                                }
+                            },
+                            seedColor = seedColor,
+                            lyricsAvailable = true,
+                            onSeekTo = { target ->
+                                interactionTick++
+                                onSeekTo(target)
+                            },
+                            onTogglePlayPause = {
+                                interactionTick++
+                                onTogglePlayPause()
+                            },
+                            onSkipPrevious = {
+                                interactionTick++
+                                onSkipPrevious()
+                            },
+                            onSkipNext = {
+                                interactionTick++
+                                onSkipNext()
+                            },
+                            onOpenComments = {
+                                interactionTick++
+                                onOpenComments()
+                            },
+                            onOpenOptions = {
+                                interactionTick++
+                                onOpenOptions()
+                            },
+                            onShareTrack = {
+                                interactionTick++
+                                onShareTrack()
+                            },
+                            isVideoMode = isVideoMode,
+                            onToggleVideoMode = {
+                                interactionTick++
+                                onToggleVideoMode()
+                            },
+                            typography = typography,
+                        )
+                    }
+                }
+            }
+
+            // 3. Top floating grabber (identical to AppleMusicNowPlayingView; swipe down or tap to close)
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .semantics {
+                        contentDescription = "Exit fullscreen lyrics"
+                        role = Role.Button
+                    }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount > 16f) onClose()
+                        }
+                    }
+                    .clickable(
+                        indication = null,
+                        interactionSource = remember { MutableInteractionSource() },
+                        onClick = onClose,
+                    ),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(top = 10.dp)
+                        .size(width = 40.dp, height = 5.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.White.copy(alpha = 0.45f)),
+                )
+            }
+        }
+    }
 }

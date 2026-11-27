@@ -23,6 +23,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import com.auramusic.app.R
+import com.auramusic.app.ui.theme.LocalAuraColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -37,6 +38,8 @@ fun AuraLaunchSplash(
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val auraColors = LocalAuraColors.current
+    val splashBackground = if (auraColors.isDark) Color(0xFF0D0E13) else auraColors.background
     // 0f = mascot tucked below circle out of view; 1f = settled in exact icon position
     val peekProgress = remember { Animatable(0f) }
 
@@ -63,7 +66,7 @@ fun AuraLaunchSplash(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0D0E13))
+            .background(splashBackground)
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,

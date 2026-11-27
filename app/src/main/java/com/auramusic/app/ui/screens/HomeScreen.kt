@@ -25,7 +25,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -135,28 +134,13 @@ import com.auramusic.app.domain.model.YtmChartSection
 import com.auramusic.app.domain.model.YtmCommunityPlaylist
 import com.auramusic.app.domain.model.YtmMoodBrowseParams
 import com.auramusic.app.domain.model.YtmTopArtist
-import com.auramusic.app.ui.theme.AuraCircleButtonBg
 import com.auramusic.app.ui.theme.AuraLilacButton
 import com.auramusic.app.ui.theme.AuraLilacCard
 import com.auramusic.app.ui.theme.AuraLilacDarkText
 import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.AuraPillInactive
-import com.auramusic.app.ui.theme.AuraPillInactiveText
-import com.auramusic.app.ui.theme.AuraPlayGreen
-import com.auramusic.app.ui.theme.AuraSageGreen
-import com.auramusic.app.ui.theme.BadgeExplicitBg
-import com.auramusic.app.ui.theme.BadgeLyricsBg
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.LocalLiquidGlassEnabled
-import com.auramusic.app.ui.theme.PillActiveBg
-import com.auramusic.app.ui.theme.PillActiveText
-import com.auramusic.app.ui.theme.PillInactiveBg
-import com.auramusic.app.ui.theme.PillInactiveText
-import com.auramusic.app.ui.theme.SpotifyCard
 import com.auramusic.app.ui.theme.SpotifyHeroCard
-import com.auramusic.app.ui.theme.SpotifyPitchBlack
-import com.auramusic.app.ui.theme.TextPrimary
-import com.auramusic.app.ui.theme.TextSecondary
-import com.auramusic.app.ui.theme.auraGlassSurface
 import com.auramusic.app.ui.theme.barBlurStyle
 import com.auramusic.app.ui.theme.hazeBlurBar
 import dev.chrisbanes.haze.hazeSource
@@ -212,6 +196,7 @@ fun HomeScreen(
     isChartLoading: Boolean = false,
     onSelectChartCountry: (String) -> Unit = {}
 ) {
+    val auraColors = LocalAuraColors.current
     val context = LocalContext.current
     var selectedTrackForOptions by remember { mutableStateOf<AuraTrack?>(null) }
     var trackForAddToPlaylist by remember { mutableStateOf<AuraTrack?>(null) }
@@ -361,7 +346,7 @@ fun HomeScreen(
         },
         modifier = Modifier
             .fillMaxSize()
-            .background(SpotifyPitchBlack)
+            .background(auraColors.background)
     ) {
         Box(
             modifier = Modifier.fillMaxSize()
@@ -376,7 +361,7 @@ fun HomeScreen(
                     val moodAtmosphereFilter = remember {
                         ColorFilter.colorMatrix(
                             ColorMatrix().apply {
-                                // Subtle night/sunset exposure curve so no mood background is ever bright
+                                // Subtle night/sunset exposure curve in Dark Mode so no mood background is ever bright
                                 setToScale(0.62f, 0.60f, 0.68f, 1f)
                             }
                         )
@@ -400,24 +385,31 @@ fun HomeScreen(
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
                             alignment = Alignment.TopCenter,
-                            colorFilter = moodAtmosphereFilter,
+                            colorFilter = if (auraColors.isDark) moodAtmosphereFilter else null,
                             modifier = Modifier.fillMaxSize()
                         )
-                        // 2. Vertical Gradient Darkening scrim on the single shared mood background:
-                        // 100% transparent across status bar, greeting, mood pills, and items 1 & 2,
-                        // darkening only on items 3 to 4 at the bottom of Quick Picks.
+                        // 2. Vertical Gradient scrim blending cleanly into auraColors.background
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
                                 .background(
-                                    Brush.verticalGradient(
-                                        0.00f to Color.Transparent,
-                                        0.56f to Color.Transparent,
-                                        0.72f to SpotifyPitchBlack.copy(alpha = 0.48f),
-                                        0.88f to SpotifyPitchBlack.copy(alpha = 0.88f),
-                                        0.97f to SpotifyPitchBlack,
-                                        1.00f to SpotifyPitchBlack
-                                    )
+                                    if (auraColors.isDark) {
+                                        Brush.verticalGradient(
+                                            0.00f to Color.Transparent,
+                                            0.56f to Color.Transparent,
+                                            0.72f to auraColors.background.copy(alpha = 0.48f),
+                                            0.88f to auraColors.background.copy(alpha = 0.88f),
+                                            0.97f to auraColors.background,
+                                            1.00f to auraColors.background
+                                        )
+                                    } else {
+                                        Brush.verticalGradient(
+                                            0.00f to auraColors.background.copy(alpha = 0.56f),
+                                            0.48f to auraColors.background.copy(alpha = 0.78f),
+                                            0.82f to auraColors.background.copy(alpha = 0.96f),
+                                            1.00f to auraColors.background
+                                        )
+                                    }
                                 )
                         )
                     }
@@ -463,7 +455,7 @@ fun HomeScreen(
                                     Text(
                                         text = titleText,
                                         style = MaterialTheme.typography.headlineMedium,
-                                        color = Color.White
+                                        color = auraColors.textPrimary
                                     )
                                 }
                                 HomePlayAllButton {
@@ -504,7 +496,7 @@ fun HomeScreen(
                                                         modifier = Modifier
                                                             .size(60.dp)
                                                             .clip(RoundedCornerShape(6.dp))
-                                                            .background(Color(0xFF202127))
+                                                            .background(auraColors.surfaceCard)
                                                             .clickable { onPlayTrack(track, quickPickTracks) },
                                                         contentAlignment = Alignment.Center
                                                     ) {
@@ -538,7 +530,7 @@ fun HomeScreen(
                                                     ) {
                                                         Text(
                                                             text = track.title,
-                                                            color = if (isCurrent) AuraNeonLime else Color.White,
+                                                            color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                                                             style = MaterialTheme.typography.titleSmall,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
@@ -548,7 +540,7 @@ fun HomeScreen(
                                                         }
                                                         Text(
                                                             text = if (albumLabel != null) "${track.artist}  •  $albumLabel" else track.artist,
-                                                            color = Color.White,
+                                                            color = auraColors.textSecondary,
                                                             style = MaterialTheme.typography.bodySmall,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
@@ -561,7 +553,7 @@ fun HomeScreen(
                                                         Icon(
                                                             imageVector = Icons.Rounded.MoreVert,
                                                             contentDescription = "Options for ${track.title}",
-                                                            tint = Color.White,
+                                                            tint = auraColors.textSecondary,
                                                             modifier = Modifier.size(22.dp)
                                                         )
                                                     }
@@ -601,7 +593,7 @@ fun HomeScreen(
                         ) { titleText ->
                             Text(
                                 text = titleText,
-                                color = Color.White,
+                                color = auraColors.textPrimary,
                                 fontWeight = FontWeight.SemiBold,
                                 fontSize = 23.sp
                             )
@@ -644,7 +636,7 @@ fun HomeScreen(
                                         .width(pageWidth)
                                         .aspectRatio(16f / 9f)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF202127))
+                                        .background(auraColors.surfaceCard)
                                         .clickable { onPlayMusicVideo(video, videosForState) }
                                 ) {
                                     AsyncImage(
@@ -724,7 +716,7 @@ fun HomeScreen(
                     Text(
                         text = "Recently Played",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         modifier = Modifier.padding(horizontal = 20.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -743,7 +735,7 @@ fun HomeScreen(
                                     modifier = Modifier
                                         .size(125.dp)
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(AuraPillInactive)
+                                        .background(auraColors.surfaceCard)
                                 ) {
                                     AsyncImage(
                                         model = track.highResArtworkUrl,
@@ -767,7 +759,7 @@ fun HomeScreen(
                                                 Icon(
                                                     imageVector = Icons.Rounded.PlayArrow,
                                                     contentDescription = null,
-                                                    tint = AuraNeonLime,
+                                                    tint = Color.White,
                                                     modifier = Modifier.size(28.dp)
                                                 )
                                             }
@@ -777,7 +769,7 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
                                     text = track.title,
-                                    color = if (isTrackCurrent) AuraNeonLime else Color.White,
+                                    color = if (isTrackCurrent) auraColors.accent else auraColors.textPrimary,
                                     style = MaterialTheme.typography.titleSmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -785,7 +777,7 @@ fun HomeScreen(
                                 Spacer(modifier = Modifier.height(2.dp))
                                 Text(
                                     text = track.artist,
-                                    color = TextSecondary,
+                                    color = auraColors.textSecondary,
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
@@ -804,7 +796,7 @@ fun HomeScreen(
                     Text(
                         text = "Your Playlists",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         modifier = Modifier.padding(horizontal = 20.dp)
                     )
                     Spacer(modifier = Modifier.height(12.dp))
@@ -823,7 +815,7 @@ fun HomeScreen(
                                                 .weight(1f)
                                                 .height(68.dp)
                                                 .clip(RoundedCornerShape(8.dp))
-                                                .background(Color(0xFF242529))
+                                                .background(auraColors.surfaceCard)
                                                 .clickable { onOpenUserPlaylist(pl) }
                                                 .padding(end = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
@@ -841,7 +833,7 @@ fun HomeScreen(
                                             ) {
                                                 Text(
                                                     text = pl.name,
-                                                    color = Color.White,
+                                                    color = auraColors.textPrimary,
                                                     style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.sp),
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -849,7 +841,7 @@ fun HomeScreen(
                                                 Spacer(modifier = Modifier.height(2.dp))
                                                 Text(
                                                     text = "${pl.tracks.size} songs",
-                                                    color = TextSecondary,
+                                                    color = auraColors.textSecondary,
                                                     style = MaterialTheme.typography.bodySmall.copy(fontSize = 10.5.sp),
                                                     maxLines = 1
                                                 )
@@ -880,7 +872,7 @@ fun HomeScreen(
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
                                         text = pl.name,
-                                        color = Color.White,
+                                        color = auraColors.textPrimary,
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 13.sp,
                                         maxLines = 1,
@@ -889,7 +881,7 @@ fun HomeScreen(
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
                                         text = "${pl.tracks.size} songs",
-                                        color = TextSecondary,
+                                        color = auraColors.textSecondary,
                                         fontSize = 11.5.sp,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -914,7 +906,7 @@ fun HomeScreen(
                             Column(Modifier.fillMaxWidth().padding(bottom = 22.dp)) {
                                 Text(
                                     text = "$cat albums",
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontWeight = FontWeight.SemiBold,
                                     fontSize = 21.sp,
                                     modifier = Modifier.padding(horizontal = 20.dp)
@@ -955,7 +947,7 @@ fun HomeScreen(
                     Text(
                         text = "$activeCategory Tracks",
                         style = MaterialTheme.typography.headlineMedium,
-                        color = Color.White
+                        color = auraColors.textPrimary
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -994,8 +986,7 @@ fun HomeScreen(
                     ) {
                         Surface(
                             shape = RoundedCornerShape(24.dp),
-                            color = Color(0xFF1E2028),
-                            border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                            color = auraColors.pillInactiveBg,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(24.dp))
                                 .clickable {
@@ -1010,13 +1001,13 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.ArrowDownward,
                                     contentDescription = "See More",
-                                    tint = AuraNeonLime,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
                                     text = "See More (${displayedTracks.size - visibleTrackCount} more tracks)",
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 13.sp
                                 )
@@ -1048,7 +1039,7 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp
                             ),
-                            color = TextSecondary
+                            color = auraColors.textSecondary
                         )
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -1057,7 +1048,7 @@ fun HomeScreen(
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 28.sp
                             ),
-                            color = Color.White
+                            color = auraColors.textPrimary
                         )
                         Spacer(modifier = Modifier.height(12.dp))
 
@@ -1067,8 +1058,7 @@ fun HomeScreen(
                         }
                         Surface(
                             shape = RoundedCornerShape(24.dp),
-                            color = Color(0xFF1E2028),
-                            border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                            color = auraColors.pillInactiveBg,
                             modifier = Modifier
                                 .clip(RoundedCornerShape(24.dp))
                                 .clickable { showCountryPickerModal = true }
@@ -1079,7 +1069,7 @@ fun HomeScreen(
                             ) {
                                 Text(
                                     text = countryName,
-                                    color = Color.White,
+                                    color = auraColors.textPrimary,
                                     fontSize = 14.sp,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -1087,7 +1077,7 @@ fun HomeScreen(
                                 Icon(
                                     imageVector = Icons.Rounded.ArrowDropDown,
                                     contentDescription = "Select country",
-                                    tint = Color.White,
+                                    tint = auraColors.textPrimary,
                                     modifier = Modifier.size(20.dp)
                                 )
                             }
@@ -1114,7 +1104,7 @@ fun HomeScreen(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 20.sp
                                         ),
-                                        color = Color.White,
+                                        color = auraColors.textPrimary,
                                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                                     )
                                     LazyRow(
@@ -1133,7 +1123,7 @@ fun HomeScreen(
                                                     modifier = Modifier
                                                         .size(155.dp)
                                                         .clip(RoundedCornerShape(12.dp))
-                                                        .background(Color(0xFF1E2028))
+                                                        .background(auraColors.surfaceCard)
                                                 ) {
                                                     AsyncImage(
                                                         model = playlist.highResArtworkUrl,
@@ -1145,7 +1135,7 @@ fun HomeScreen(
                                                 Spacer(modifier = Modifier.height(8.dp))
                                                 Text(
                                                     text = playlist.title,
-                                                    color = Color.White,
+                                                    color = auraColors.textPrimary,
                                                     style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
                                                     maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis
@@ -1153,7 +1143,7 @@ fun HomeScreen(
                                                 Spacer(modifier = Modifier.height(3.dp))
                                                 Text(
                                                     text = playlist.author.ifBlank { "Chart • YouTube Charts" },
-                                                    color = TextSecondary,
+                                                    color = auraColors.textSecondary,
                                                     style = MaterialTheme.typography.bodySmall,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -1171,7 +1161,7 @@ fun HomeScreen(
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 20.sp
                                         ),
-                                        color = Color.White,
+                                        color = auraColors.textPrimary,
                                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                                     )
                                     val configuration = LocalConfiguration.current
@@ -1212,7 +1202,7 @@ fun HomeScreen(
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 22.sp
                                                     ),
-                                                    color = Color.White,
+                                                    color = auraColors.textPrimary,
                                                     textAlign = TextAlign.Center,
                                                     modifier = Modifier.width(36.dp)
                                                 )
@@ -1224,14 +1214,14 @@ fun HomeScreen(
                                                     modifier = Modifier
                                                         .size(56.dp)
                                                         .clip(CircleShape)
-                                                        .background(Color(0xFF1E2028))
+                                                        .background(auraColors.surfaceCard)
                                                 )
                                                 Spacer(modifier = Modifier.width(14.dp))
                                                 Column(modifier = Modifier.weight(1f)) {
                                                     Text(
                                                         text = artist.name,
                                                         style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                                        color = Color.White,
+                                                        color = auraColors.textPrimary,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -1239,7 +1229,7 @@ fun HomeScreen(
                                                     Text(
                                                         text = artist.subscribers,
                                                         style = MaterialTheme.typography.bodySmall,
-                                                        color = TextSecondary,
+                                                        color = auraColors.textSecondary,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
@@ -1258,7 +1248,7 @@ fun HomeScreen(
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 20.sp
                                             ),
-                                            color = Color.White,
+                                            color = auraColors.textPrimary,
                                             modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)
                                         )
                                         val configuration = LocalConfiguration.current
@@ -1300,7 +1290,7 @@ fun HomeScreen(
                                                             fontWeight = FontWeight.Bold,
                                                             fontSize = 22.sp
                                                         ),
-                                                        color = Color.White,
+                                                        color = auraColors.textPrimary,
                                                         textAlign = TextAlign.Center,
                                                         modifier = Modifier.width(36.dp)
                                                     )
@@ -1312,14 +1302,14 @@ fun HomeScreen(
                                                         modifier = Modifier
                                                             .size(56.dp)
                                                             .clip(RoundedCornerShape(8.dp))
-                                                            .background(Color(0xFF1E2028))
+                                                            .background(auraColors.surfaceCard)
                                                     )
                                                     Spacer(modifier = Modifier.width(14.dp))
                                                     Column(modifier = Modifier.weight(1f)) {
                                                         Text(
                                                             text = show.name,
                                                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                                                            color = Color.White,
+                                                            color = auraColors.textPrimary,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
@@ -1327,7 +1317,7 @@ fun HomeScreen(
                                                         Text(
                                                             text = show.subscribers,
                                                             style = MaterialTheme.typography.bodySmall,
-                                                            color = TextSecondary,
+                                                            color = auraColors.textSecondary,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis
                                                         )
@@ -1420,7 +1410,7 @@ fun HomeScreen(
                                 Text(
                                     text = "$activeCategory picks",
                                     style = MaterialTheme.typography.headlineMedium,
-                                    color = Color.White
+                                    color = auraColors.textPrimary
                                 )
                                 HomePlayAllButton {
                                     quickPickTracks.firstOrNull()?.let { onPlayTrack(it, quickPickTracks) }
@@ -1450,7 +1440,7 @@ fun HomeScreen(
                                                     modifier = Modifier
                                                         .size(60.dp)
                                                         .clip(RoundedCornerShape(6.dp))
-                                                        .background(Color(0xFF202127))
+                                                        .background(auraColors.surfaceCard)
                                                         .clickable { onPlayTrack(track, quickPickTracks) },
                                                     contentAlignment = Alignment.Center
                                                 ) {
@@ -1484,14 +1474,14 @@ fun HomeScreen(
                                                 ) {
                                                     Text(
                                                         text = track.title,
-                                                        color = if (isCurrent) AuraNeonLime else Color.White,
+                                                        color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                                                         style = MaterialTheme.typography.titleSmall,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
                                                     )
                                                     Text(
                                                         text = track.artist,
-                                                        color = Color.White,
+                                                        color = auraColors.textSecondary,
                                                         style = MaterialTheme.typography.bodySmall,
                                                         maxLines = 1,
                                                         overflow = TextOverflow.Ellipsis
@@ -1504,7 +1494,7 @@ fun HomeScreen(
                                                     Icon(
                                                         imageVector = Icons.Rounded.MoreVert,
                                                         contentDescription = "Options for ${track.title}",
-                                                        tint = Color.White,
+                                                        tint = auraColors.textSecondary,
                                                         modifier = Modifier.size(22.dp)
                                                     )
                                                 }
@@ -1542,7 +1532,7 @@ fun HomeScreen(
                             Text(
                                 text = "$activeCategory Tracks",
                                 style = MaterialTheme.typography.headlineMedium,
-                                color = Color.White
+                                color = auraColors.textPrimary
                             )
                         }
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1580,8 +1570,7 @@ fun HomeScreen(
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(24.dp),
-                                    color = Color(0xFF1E2028),
-                                    border = BorderStroke(1.dp, Color(0xFF2E323D)),
+                                    color = auraColors.pillInactiveBg,
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(24.dp))
                                         .clickable {
@@ -1596,13 +1585,13 @@ fun HomeScreen(
                                         Icon(
                                             imageVector = Icons.Rounded.ArrowDownward,
                                             contentDescription = "See More",
-                                            tint = AuraNeonLime,
+                                            tint = auraColors.textPrimary,
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                             text = "See More (${displayedTracks.size - visibleTrackCount} more tracks)",
-                                            color = Color.White,
+                                            color = auraColors.textPrimary,
                                             fontWeight = FontWeight.Bold,
                                             fontSize = 13.sp
                                         )
@@ -1636,10 +1625,10 @@ fun HomeScreen(
             val headerChromeModifier = if (liquidGlassEnabled && !isAllCategory && darkFraction > 0.05f) {
                 Modifier.hazeBlurBar(
                     state = homeHazeState,
-                    style = barBlurStyle(SpotifyPitchBlack, tintAlpha = (0.48f * darkFraction).coerceIn(0.08f, 0.52f))
+                    style = barBlurStyle(auraColors.background, tintAlpha = (0.48f * darkFraction).coerceIn(0.08f, 0.52f))
                 )
             } else {
-                Modifier.background(SpotifyPitchBlack.copy(alpha = headerBgAlpha))
+                Modifier.background(auraColors.background.copy(alpha = headerBgAlpha))
             }
             Box(
                 modifier = Modifier
@@ -1669,7 +1658,7 @@ fun HomeScreen(
                         Text(
                             text = greeting,
                             style = MaterialTheme.typography.headlineLarge,
-                            color = Color.White
+                            color = auraColors.textPrimary
                         )
                     }
                 }
@@ -1713,7 +1702,7 @@ fun HomeScreen(
             }
         }
 
-        // Dark Android status bar sticky header when no category is tapped ("All")
+        // Android status bar sticky header when no category is tapped ("All")
         if (isAllCategory) {
             Box(
                 modifier = Modifier
@@ -1724,10 +1713,10 @@ fun HomeScreen(
                         if (liquidGlassEnabled) {
                             Modifier.hazeBlurBar(
                                 state = homeHazeState,
-                                style = barBlurStyle(SpotifyPitchBlack, tintAlpha = 0.42f)
+                                style = barBlurStyle(auraColors.background, tintAlpha = 0.42f)
                             )
                         } else {
-                            Modifier.background(SpotifyPitchBlack)
+                            Modifier.background(auraColors.background)
                         }
                     )
             )
@@ -1823,9 +1812,10 @@ private fun QuickAccessCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Surface(
         shape = RoundedCornerShape(6.dp),
-        color = SpotifyCard,
+        color = auraColors.surfaceCard,
         modifier = modifier
             .height(56.dp)
             .clip(RoundedCornerShape(6.dp))
@@ -1846,7 +1836,7 @@ private fun QuickAccessCard(
 
             Text(
                 text = track.title,
-                color = TextPrimary,
+                color = auraColors.textPrimary,
                 style = MaterialTheme.typography.titleSmall.copy(fontSize = 12.sp),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1860,13 +1850,13 @@ private fun QuickAccessCard(
                     .padding(end = 8.dp)
                     .size(30.dp)
                     .clip(CircleShape)
-                    .background(AuraPlayGreen),
+                    .background(auraColors.accent),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
                     imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                     contentDescription = if (isPlaying) "Pause" else "Play",
-                    tint = Color.Black,
+                    tint = auraColors.onAccent,
                     modifier = Modifier.size(17.dp)
                 )
             }
@@ -1887,6 +1877,7 @@ private fun FeaturedReleaseHeroCard(
     onToggleFavorite: () -> Unit,
     onDownload: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Surface(
         shape = RoundedCornerShape(18.dp),
         color = SpotifyHeroCard,
@@ -1915,13 +1906,13 @@ private fun FeaturedReleaseHeroCard(
                     Text(
                         text = "FEATURED RELEASE",
                         style = MaterialTheme.typography.labelSmall,
-                        color = AuraSageGreen
+                        color = AuraLilacButton
                     )
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = track.title,
                         style = MaterialTheme.typography.titleLarge,
-                        color = TextPrimary,
+                        color = AuraLilacDarkText,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1929,7 +1920,7 @@ private fun FeaturedReleaseHeroCard(
                     Text(
                         text = "${track.artist} • ${track.genre}",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = TextSecondary,
+                        color = Color(0xFF3E3952),
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -1940,13 +1931,13 @@ private fun FeaturedReleaseHeroCard(
                         Icon(
                             imageVector = Icons.AutoMirrored.Rounded.VolumeUp,
                             contentDescription = "Audio Quality",
-                            tint = AuraSageGreen,
+                            tint = AuraLilacButton,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = "Ultra HD • 320 KBPS",
-                            color = AuraSageGreen,
+                            color = AuraLilacButton,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium
                         )
@@ -1973,7 +1964,7 @@ private fun FeaturedReleaseHeroCard(
                         Icon(
                             imageVector = if (isFavorite) Icons.Rounded.CheckCircle else Icons.Rounded.CheckCircleOutline,
                             contentDescription = "In Library",
-                            tint = if (isFavorite) AuraPlayGreen else TextSecondary,
+                            tint = if (isFavorite) AuraLilacButton else Color(0xFF3E3952),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -1985,7 +1976,7 @@ private fun FeaturedReleaseHeroCard(
                         Icon(
                             imageVector = Icons.Rounded.ArrowCircleDown,
                             contentDescription = "Download for offline",
-                            tint = if (isDownloaded) AuraPlayGreen else TextSecondary,
+                            tint = if (isDownloaded) AuraLilacButton else Color(0xFF3E3952),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -1997,7 +1988,7 @@ private fun FeaturedReleaseHeroCard(
                         Icon(
                             imageVector = Icons.Rounded.MoreHoriz,
                             contentDescription = "More options",
-                            tint = TextSecondary,
+                            tint = Color(0xFF3E3952),
                             modifier = Modifier.size(24.dp)
                         )
                     }
@@ -2008,14 +1999,14 @@ private fun FeaturedReleaseHeroCard(
                     modifier = Modifier
                         .size(48.dp)
                         .clip(CircleShape)
-                        .background(AuraPlayGreen)
+                        .background(auraColors.accent)
                         .clickable(onClick = onPlay),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                         contentDescription = if (isPlaying) "Pause" else "Play",
-                        tint = Color.Black,
+                        tint = auraColors.onAccent,
                         modifier = Modifier.size(26.dp)
                     )
                 }
@@ -2153,6 +2144,7 @@ fun SpotifyTrackRowItem(
     onDownload: () -> Unit,
     onOptionsClick: (() -> Unit)? = null
 ) {
+    val auraColors = LocalAuraColors.current
     val isTrackPlaying = isCurrent && isPlaying
     Row(
         modifier = Modifier
@@ -2168,7 +2160,7 @@ fun SpotifyTrackRowItem(
             modifier = Modifier
                 .size(56.dp)
                 .clip(RoundedCornerShape(16.dp))
-                .background(Color(0xFF202127)),
+                .background(auraColors.surfaceCard),
             contentAlignment = Alignment.Center
         ) {
             AsyncImage(
@@ -2198,7 +2190,7 @@ fun SpotifyTrackRowItem(
             Text(
                 text = track.title,
                 style = MaterialTheme.typography.titleSmall,
-                color = if (isCurrent) AuraNeonLime else TextPrimary,
+                color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -2220,7 +2212,7 @@ fun SpotifyTrackRowItem(
                 Text(
                     text = if (isQueued) "Queued" else "Downloading • $pct%",
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (isQueued) TextSecondary else AuraNeonLime,
+                    color = if (isQueued) auraColors.textSecondary else auraColors.accent,
                     maxLines = 1
                 )
                 Spacer(modifier = Modifier.height(4.dp))
@@ -2230,8 +2222,8 @@ fun SpotifyTrackRowItem(
                         .fillMaxWidth()
                         .height(3.dp)
                         .clip(RoundedCornerShape(2.dp)),
-                    color = AuraNeonLime,
-                    trackColor = Color(0x33FFFFFF)
+                    color = auraColors.accent,
+                    trackColor = auraColors.divider
                 )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2239,7 +2231,7 @@ fun SpotifyTrackRowItem(
                         Icon(
                             imageVector = Icons.Rounded.DownloadDone,
                             contentDescription = "Downloaded",
-                            tint = AuraNeonLime,
+                            tint = auraColors.textSecondary,
                             modifier = Modifier.size(12.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
@@ -2247,7 +2239,7 @@ fun SpotifyTrackRowItem(
                     Text(
                         text = "By ${track.artist} • ${track.durationSeconds / 60}m",
                         style = MaterialTheme.typography.bodySmall,
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -2264,7 +2256,7 @@ fun SpotifyTrackRowItem(
             Icon(
                 imageVector = Icons.Rounded.MoreVert,
                 contentDescription = "Options for ${track.title}",
-                tint = TextSecondary,
+                tint = auraColors.textSecondary,
                 modifier = Modifier.size(20.dp)
             )
         }
@@ -2273,9 +2265,10 @@ fun SpotifyTrackRowItem(
 
 @Composable
 private fun HomePlayAllButton(onClick: () -> Unit) {
+    val auraColors = LocalAuraColors.current
     Text(
         text = "Play all",
-        color = Color.White,
+        color = auraColors.textPrimary,
         fontSize = 13.sp,
         fontWeight = FontWeight.Medium,
         modifier = Modifier.clickable(onClick = onClick).padding(vertical = 8.dp)
@@ -2301,6 +2294,7 @@ internal fun MoodCarouselShelf(
     onOptionsClick: (AuraTrack) -> Unit
 ) {
     if (shelf.items.isEmpty()) return
+    val auraColors = LocalAuraColors.current
 
     val shelfTracks = remember(shelf.items) {
         shelf.items.map { item ->
@@ -2335,7 +2329,7 @@ internal fun MoodCarouselShelf(
                 if (!shelf.subtitle.isNullOrBlank()) {
                     Text(
                         text = shelf.subtitle.uppercase(),
-                        color = Color.White.copy(alpha = 0.6f),
+                        color = auraColors.textSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold,
                         letterSpacing = 0.8.sp,
@@ -2346,7 +2340,7 @@ internal fun MoodCarouselShelf(
                 }
                 Text(
                     text = shelf.title,
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     style = MaterialTheme.typography.headlineMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -2391,7 +2385,7 @@ internal fun MoodCarouselShelf(
                                     modifier = Modifier
                                         .size(60.dp)
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(Color(0xFF202127))
+                                        .background(auraColors.surfaceCard)
                                         .clickable { onPlayTrack(track, shelfTracks) },
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -2425,14 +2419,14 @@ internal fun MoodCarouselShelf(
                                 ) {
                                     Text(
                                         text = item.title,
-                                        color = if (isCurrent) AuraNeonLime else Color.White,
+                                        color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                                         style = MaterialTheme.typography.titleSmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
                                     )
                                     Text(
                                         text = item.subtitle,
-                                        color = Color.White.copy(alpha = 0.70f),
+                                        color = auraColors.textSecondary,
                                         style = MaterialTheme.typography.bodySmall,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis
@@ -2445,7 +2439,7 @@ internal fun MoodCarouselShelf(
                                     Icon(
                                         imageVector = Icons.Rounded.MoreVert,
                                         contentDescription = "Options for ${item.title}",
-                                        tint = Color.White,
+                                        tint = auraColors.textSecondary,
                                         modifier = Modifier.size(22.dp)
                                     )
                                 }
@@ -2479,7 +2473,7 @@ internal fun MoodCarouselShelf(
                                 .fillMaxWidth()
                                 .height(146.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF202127))
+                                .background(auraColors.surfaceCard)
                         ) {
                             AsyncImage(
                                 model = track.highResArtworkUrl,
@@ -2498,7 +2492,7 @@ internal fun MoodCarouselShelf(
                                 Icon(
                                     imageVector = if (isCurrent && isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                     contentDescription = null,
-                                    tint = if (isCurrent) AuraNeonLime else Color.White,
+                                    tint = Color.White,
                                     modifier = Modifier.size(24.dp)
                                 )
                             }
@@ -2506,7 +2500,7 @@ internal fun MoodCarouselShelf(
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = item.title,
-                            color = if (isCurrent) AuraNeonLime else Color.White,
+                            color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
@@ -2515,7 +2509,7 @@ internal fun MoodCarouselShelf(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = item.subtitle,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2605,7 +2599,7 @@ internal fun MoodCarouselShelf(
                             modifier = Modifier
                                 .size(132.dp)
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(Color(0xFF202127))
+                                .background(auraColors.surfaceCard)
                         ) {
                             AsyncImage(
                                 model = item.artworkUrl,
@@ -2623,7 +2617,7 @@ internal fun MoodCarouselShelf(
                                     Icon(
                                         imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                         contentDescription = null,
-                                        tint = AuraNeonLime,
+                                        tint = Color.White,
                                         modifier = Modifier.size(28.dp)
                                     )
                                 }
@@ -2632,7 +2626,7 @@ internal fun MoodCarouselShelf(
                         Spacer(modifier = Modifier.height(7.dp))
                         Text(
                             text = item.title,
-                            color = if (isCurrent) AuraNeonLime else Color.White,
+                            color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                             style = MaterialTheme.typography.titleSmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
@@ -2641,7 +2635,7 @@ internal fun MoodCarouselShelf(
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
                                 text = item.subtitle,
-                                color = TextSecondary,
+                                color = auraColors.textSecondary,
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2666,6 +2660,7 @@ private fun HomeRecommendationShelf(
     keyPrefix: String
 ) {
     if (tracks.isEmpty()) return
+    val auraColors = LocalAuraColors.current
     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 22.dp)) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp),
@@ -2674,7 +2669,7 @@ private fun HomeRecommendationShelf(
         ) {
             Text(
                 text = title,
-                color = Color.White,
+                color = auraColors.textPrimary,
                 style = MaterialTheme.typography.headlineMedium
             )
             if (onOpenAlbum == null) {
@@ -2703,7 +2698,7 @@ private fun HomeRecommendationShelf(
                         modifier = Modifier
                             .size(132.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF202127))
+                            .background(auraColors.surfaceCard)
                     ) {
                         AsyncImage(
                             model = track.highResArtworkUrl,
@@ -2719,7 +2714,7 @@ private fun HomeRecommendationShelf(
                                 Icon(
                                     imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
                                     contentDescription = null,
-                                    tint = AuraNeonLime,
+                                    tint = Color.White,
                                     modifier = Modifier.size(28.dp)
                                 )
                             }
@@ -2728,7 +2723,7 @@ private fun HomeRecommendationShelf(
                     Spacer(modifier = Modifier.height(7.dp))
                     Text(
                         text = titleForTrack(track),
-                        color = if (isCurrent) AuraNeonLime else Color.White,
+                        color = if (isCurrent) auraColors.accent else auraColors.textPrimary,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -2736,7 +2731,7 @@ private fun HomeRecommendationShelf(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = track.artist,
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -2765,22 +2760,28 @@ private fun AuraMoodCategoryPill(
         label = "pillPressScale"
     )
 
+    val auraColors = LocalAuraColors.current
     val isGlass = LocalLiquidGlassEnabled.current
-    // Un-tapped pill fill: translucent frosted fill in Liquid Glass mode; gray (#353945) in Default mode
     val unselectedFill = when {
-        isGlass -> Color.White.copy(alpha = if (isHeaderDark) 0.12f else 0.14f)
-        isHeaderDark -> Color(0xFF353945)
-        hasMoodBackground -> Color.Black.copy(alpha = 0.45f)
-        else -> Color(0xFF353945)
+        isGlass && auraColors.isDark -> Color.White.copy(alpha = if (isHeaderDark) 0.12f else 0.14f)
+        isGlass -> auraColors.pillInactiveBg.copy(alpha = 0.85f)
+        isHeaderDark -> auraColors.pillInactiveBg
+        hasMoodBackground && auraColors.isDark -> Color.Black.copy(alpha = 0.45f)
+        else -> auraColors.pillInactiveBg
     }
 
     val pillBgColor by animateColorAsState(
-        targetValue = if (isSelected) AuraNeonLime else unselectedFill,
+        targetValue = if (isSelected) auraColors.accent else unselectedFill,
         animationSpec = tween(durationMillis = 240, easing = EaseOutCubic),
         label = "pillBgColor"
     )
+    val unselectedText = if (auraColors.isDark && hasMoodBackground && !isHeaderDark) {
+        Color.White
+    } else {
+        auraColors.pillInactiveText
+    }
     val pillTextColor by animateColorAsState(
-        targetValue = if (isSelected) Color.Black else Color.White,
+        targetValue = if (isSelected) auraColors.onAccent else unselectedText,
         animationSpec = tween(durationMillis = 240, easing = EaseOutCubic),
         label = "pillTextColor"
     )
@@ -2804,13 +2805,13 @@ private fun AuraMoodCategoryPill(
         label = "PillBorderDegrees"
     )
 
-    val borderBrush = remember {
+    val borderBrush = remember(auraColors.accent, auraColors.textPrimary) {
         Brush.sweepGradient(
             listOf(
                 Color.Transparent,
-                AuraNeonLime,
-                Color.White,
-                AuraNeonLime,
+                auraColors.accent,
+                auraColors.textPrimary,
+                auraColors.accent,
                 Color.Transparent
             )
         )
@@ -2842,7 +2843,7 @@ private fun AuraMoodCategoryPill(
             }
             .background(pillBgColor, CircleShape)
             .then(
-                if (isGlass && !isSelected) {
+                if (isGlass && !isSelected && auraColors.isDark) {
                     Modifier.border(
                         width = 0.75.dp,
                         brush = Brush.verticalGradient(

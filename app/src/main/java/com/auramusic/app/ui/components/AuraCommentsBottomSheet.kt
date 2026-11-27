@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
@@ -39,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -52,8 +53,8 @@ import com.auramusic.app.domain.model.AuraCommentSort
 import com.auramusic.app.domain.model.AuraCommentsPage
 import com.auramusic.app.domain.model.AuraTrack
 import com.auramusic.app.domain.model.AuraYouTubeComment
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,17 +71,20 @@ fun AuraCommentsBottomSheet(
     onLoadMoreReplies: (String) -> Unit = {},
     onDismiss: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        containerColor = Color(0xFF1B1D22),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(top = 10.dp, bottom = 4.dp)
-                    .size(width = 38.dp, height = 4.dp)
+                    .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.32f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -92,12 +96,25 @@ fun AuraCommentsBottomSheet(
                     .padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Rounded.Forum, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                Icon(
+                    Icons.Rounded.Forum,
+                    contentDescription = null,
+                    tint = auraColors.textPrimary,
+                    modifier = Modifier.size(22.dp)
+                )
                 Column(Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text("Comments", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        "Comments",
+                        color = auraColors.textPrimary,
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                     Text(
                         text = listOfNotNull(track.title, page?.countText).joinToString(" · "),
-                        color = TextSecondary, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                        color = auraColors.textSecondary,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -118,8 +135,9 @@ fun AuraCommentsBottomSheet(
                         }
                         Surface(
                             shape = RoundedCornerShape(18.dp),
-                            color = if (isSelected) Color.White else Color(0xFF292C34),
+                            color = if (isSelected) auraColors.accent else auraColors.pillInactiveBg,
                             modifier = Modifier
+                                .heightIn(min = 36.dp)
                                 .clip(RoundedCornerShape(18.dp))
                                 .clickable(enabled = hasToken && !isLoading) {
                                     onSelectSort(sort)
@@ -127,7 +145,11 @@ fun AuraCommentsBottomSheet(
                         ) {
                             Text(
                                 text = sort.label,
-                                color = if (isSelected) Color(0xFF141519) else Color.White.copy(alpha = if (hasToken) 0.88f else 0.45f),
+                                color = if (isSelected) {
+                                    auraColors.onAccent
+                                } else {
+                                    auraColors.pillInactiveText.copy(alpha = if (hasToken) 1f else 0.45f)
+                                },
                                 fontSize = 13.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
@@ -137,22 +159,30 @@ fun AuraCommentsBottomSheet(
                 }
             }
 
+            HorizontalDivider(
+                color = auraColors.divider,
+                thickness = 0.5.dp,
+                modifier = Modifier.padding(top = 6.dp)
+            )
+
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     isLoading && (page == null || page.comments.isEmpty()) -> CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center), color = Color.White, strokeWidth = 2.dp
+                        modifier = Modifier.align(Alignment.Center),
+                        color = auraColors.textPrimary,
+                        strokeWidth = 2.dp
                     )
                     error != null && page == null -> Column(
                         modifier = Modifier.align(Alignment.Center).padding(28.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(error, color = TextSecondary)
-                        TextButton(onClick = onRetry) { Text("Retry", color = Color.White) }
+                        Text(error, color = auraColors.textSecondary)
+                        TextButton(onClick = onRetry) { Text("Retry", color = auraColors.textPrimary) }
                     }
                     page?.commentsDisabled == true || (page != null && page.comments.isEmpty()) -> Text(
-                        if (page?.commentsDisabled == true) "Comments are turned off for this video." else "No comments to show yet.",
-                        color = TextSecondary,
+                        if (page?.commentsDisabled == true) "Comments are off" else "No comments yet",
+                        color = auraColors.textSecondary,
                         modifier = Modifier.align(Alignment.Center)
                     )
                     page != null -> LazyColumn(Modifier.fillMaxWidth()) {
@@ -165,8 +195,15 @@ fun AuraCommentsBottomSheet(
                         }
                         if (page.continuation != null) item {
                             TextButton(onClick = onLoadMore, modifier = Modifier.fillMaxWidth()) {
-                                if (isLoading) CircularProgressIndicator(Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                                else Text("Load more comments", color = Color.White)
+                                if (isLoading) {
+                                    CircularProgressIndicator(
+                                        Modifier.size(16.dp),
+                                        color = auraColors.textPrimary,
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text("Load more", color = auraColors.textPrimary)
+                                }
                             }
                         }
                     }
@@ -182,6 +219,7 @@ private fun CommentThreadItem(
     onToggleReplies: () -> Unit,
     onLoadMoreReplies: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     val hasReplies = comment.replyCountText.isNotBlank() ||
         comment.repliesContinuation != null ||
         comment.replies.isNotEmpty()
@@ -202,19 +240,19 @@ private fun CommentThreadItem(
                     .padding(start = 46.dp, top = 6.dp)
                     .clip(RoundedCornerShape(12.dp))
                     .clickable(enabled = !comment.isLoadingReplies) { onToggleReplies() }
-                    .padding(horizontal = 6.dp, vertical = 4.dp),
+                    .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
                     imageVector = if (comment.isRepliesExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                     contentDescription = if (comment.isRepliesExpanded) "Hide replies" else "Show replies",
-                    tint = AuraNeonLime,
+                    tint = auraColors.textPrimary,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(Modifier.width(4.dp))
                 Text(
                     text = if (comment.isRepliesExpanded) "Hide replies" else comment.replyCountText.ifBlank { "View replies" },
-                    color = AuraNeonLime,
+                    color = auraColors.textPrimary,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -243,20 +281,20 @@ private fun CommentThreadItem(
                     ) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
-                            color = Color.White,
+                            color = auraColors.textSecondary,
                             strokeWidth = 2.dp
                         )
                     }
                 } else if (comment.repliesNextContinuation != null) {
                     Text(
-                        text = "Show more replies",
-                        color = AuraNeonLime,
+                        text = "More replies",
+                        color = auraColors.textPrimary,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier
                             .clip(RoundedCornerShape(10.dp))
                             .clickable { onLoadMoreReplies() }
-                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .padding(horizontal = 6.dp, vertical = 6.dp)
                     )
                 }
             }
@@ -269,6 +307,7 @@ private fun CommentBodyRow(
     comment: AuraYouTubeComment,
     avatarSize: Dp
 ) {
+    val auraColors = LocalAuraColors.current
     val scope = rememberCoroutineScope()
     var translatedText by remember(comment.id) {
         mutableStateOf(YouTubeCommentsRepository.getCachedTranslation(comment.id))
@@ -301,21 +340,26 @@ private fun CommentBodyRow(
                 Modifier
                     .size(avatarSize)
                     .clip(CircleShape)
-                    .background(Color(0xFF353943))
+                    .background(auraColors.circleButtonBg)
             )
         }
         Column(Modifier.weight(1f).padding(start = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = comment.author,
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (comment.publishedTime.isNotBlank()) {
-                    Text("  ·  ${comment.publishedTime}", color = TextSecondary, fontSize = 11.sp, maxLines = 1)
+                    Text(
+                        "  ·  ${comment.publishedTime}",
+                        color = auraColors.textSecondary,
+                        fontSize = 11.sp,
+                        maxLines = 1
+                    )
                 }
             }
             Spacer(Modifier.height(4.dp))
@@ -326,7 +370,7 @@ private fun CommentBodyRow(
             }
             Text(
                 text = displayedText,
-                color = Color.White.copy(alpha = 0.90f),
+                color = auraColors.textPrimary.copy(alpha = 0.90f),
                 fontSize = 13.sp,
                 lineHeight = 19.sp
             )
@@ -363,23 +407,23 @@ private fun CommentBodyRow(
                     if (isTranslating) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(11.dp),
-                            color = TextSecondary,
+                            color = auraColors.textSecondary,
                             strokeWidth = 1.5.dp
                         )
                         Text(
                             text = "Translating…",
-                            color = TextSecondary,
+                            color = auraColors.textSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
                     } else {
                         Text(
                             text = if (isShowingTranslated && !translatedText.isNullOrBlank()) {
-                                "See original (Translated by Google)"
+                                "See original"
                             } else {
-                                "Translate to English"
+                                "Translate"
                             },
-                            color = TextSecondary,
+                            color = auraColors.textSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -388,7 +432,7 @@ private fun CommentBodyRow(
             }
             if (comment.likeCount.isNotBlank() && comment.likeCount != "0") {
                 Spacer(Modifier.height(5.dp))
-                Text("♡  ${comment.likeCount}", color = TextSecondary, fontSize = 11.sp)
+                Text("♡  ${comment.likeCount}", color = auraColors.textSecondary, fontSize = 11.sp)
             }
         }
     }

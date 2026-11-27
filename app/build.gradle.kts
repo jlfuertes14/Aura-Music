@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.google.services)
+    alias(libs.plugins.ksp)
 }
 
 android {
@@ -18,9 +19,9 @@ android {
         // Dynamic version code & name: CI build run number or Gradle parameter with local defaults
         val ciVersionCode = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull()
         val propVersionCode = (project.findProperty("versionCode") as? String)?.toIntOrNull()
-        versionCode = propVersionCode ?: ciVersionCode ?: 44
+        versionCode = propVersionCode ?: ciVersionCode ?: 45
 
-        versionName = "1.5.3"
+        versionName = "1.5.4"
         val propVersionName = project.findProperty("versionName") as? String
         val envVersionName = System.getenv("APP_VERSION_NAME")
         if (propVersionName != null) {
@@ -107,6 +108,10 @@ android {
         buildConfig = true
     }
 
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
@@ -172,6 +177,24 @@ dependencies {
 
     // Dictionary-backed kanji readings keep Japanese romaji lyrics complete.
     implementation("com.atilika.kuromoji:kuromoji-ipadic:0.9.0")
+    implementation(libs.pinyin4j)
+
+    // Room Persistence
+    implementation(libs.androidx.room.runtime)
+    implementation(libs.androidx.room.ktx)
+    ksp(libs.androidx.room.compiler)
+
+    // Preferences DataStore
+    implementation(libs.androidx.datastore.preferences)
+
+    // Koin DI
+    implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
+
+    // WorkManager & Glance Widgets
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
 
     // Firebase Cloud Messaging & In-App Push Notifications
     implementation(platform(libs.firebase.bom))
@@ -181,4 +204,9 @@ dependencies {
     implementation(libs.kyant.backdrop)
     implementation(libs.haze)
     implementation(libs.haze.materials)
+
+    // Unit Testing
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.org.json)
 }

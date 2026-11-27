@@ -2,22 +2,22 @@ package com.auramusic.app.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.PlaylistPlay
 import androidx.compose.material.icons.automirrored.rounded.QueueMusic
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Download
-import androidx.compose.material.icons.rounded.DownloadDone
 import androidx.compose.material.icons.rounded.Favorite
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material.icons.rounded.Person
@@ -35,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -43,9 +45,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.auramusic.app.domain.model.AuraTrack
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
 import com.auramusic.app.ui.theme.auraGlassSheetColor
+
+/**
+ * Returns a legible accent tint when drawn as text or small icon directly over a light surface.
+ */
+internal fun auraReadableAccent(accent: Color, isDark: Boolean): Color =
+    if (!isDark && accent.luminance() > 0.45f) lerp(accent, Color(0xFF1C1C1E), 0.56f) else accent
 
 /**
  * Universal 3-Dot Track Options Bottom Sheet Modal
@@ -69,20 +76,21 @@ fun AuraTrackOptionsModal(
     onRemoveFromRecent: (() -> Unit)? = null,
     onWatchVideo: (() -> Unit)? = null
 ) {
+    val auraColors = LocalAuraColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = auraGlassSheetColor(Color(0xFF14161E)),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -107,6 +115,7 @@ fun AuraTrackOptionsModal(
                     modifier = Modifier
                         .size(52.dp)
                         .clip(RoundedCornerShape(10.dp))
+                        .background(auraColors.surfaceCard)
                 )
 
                 Spacer(modifier = Modifier.width(14.dp))
@@ -114,7 +123,7 @@ fun AuraTrackOptionsModal(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = track.title,
-                        color = Color.White,
+                        color = auraColors.textPrimary,
                         style = MaterialTheme.typography.titleSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -122,7 +131,7 @@ fun AuraTrackOptionsModal(
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = track.artist,
-                        color = TextSecondary,
+                        color = auraColors.textSecondary,
                         style = MaterialTheme.typography.bodySmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
@@ -131,7 +140,7 @@ fun AuraTrackOptionsModal(
             }
 
             HorizontalDivider(
-                color = Color.White.copy(alpha = 0.08f),
+                color = auraColors.divider,
                 thickness = 0.5.dp,
                 modifier = Modifier.padding(bottom = 12.dp)
             )
@@ -140,14 +149,14 @@ fun AuraTrackOptionsModal(
             TrackOptionRow(
                 icon = if (isFavorite) Icons.Rounded.Favorite else Icons.Rounded.FavoriteBorder,
                 label = if (isFavorite) "Remove from Liked Songs" else "Save to Liked Songs",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onToggleFavorite
             )
 
             TrackOptionRow(
                 icon = Icons.Rounded.PlaylistAdd,
                 label = "Add to Playlist",
-                iconTint = Color.White,
+                iconTint = auraColors.textPrimary,
                 onClick = onAddToPlaylist
             )
 
@@ -155,14 +164,14 @@ fun AuraTrackOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.DeleteOutline,
                     label = "Remove from Downloads",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = onRemoveDownload
                 )
             } else if (onDownloadTrack != null) {
                 TrackOptionRow(
                     icon = if (isDownloaded) Icons.Rounded.DeleteOutline else Icons.Rounded.Download,
                     label = if (isDownloaded) "Remove from Downloads" else "Download Song",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = {
                         if (isDownloaded && onRemoveDownload != null) {
                             onRemoveDownload()
@@ -174,14 +183,16 @@ fun AuraTrackOptionsModal(
             }
 
             TrackOptionRow(
-                icon = Icons.AutoMirrored.Rounded.QueueMusic,
+                icon = Icons.AutoMirrored.Rounded.PlaylistPlay,
                 label = "Play Next",
+                iconTint = auraColors.textPrimary,
                 onClick = onPlayNext
             )
 
             TrackOptionRow(
-                icon = Icons.Rounded.PlaylistAdd,
+                icon = Icons.AutoMirrored.Rounded.QueueMusic,
                 label = "Add to Queue",
+                iconTint = auraColors.textPrimary,
                 onClick = onAddToQueue
             )
 
@@ -190,7 +201,7 @@ fun AuraTrackOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.DeleteOutline,
                     label = "Remove from Playlist",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = onRemoveFromPlaylist
                 )
             }
@@ -199,7 +210,7 @@ fun AuraTrackOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.DeleteOutline,
                     label = "Remove from Recent",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = onRemoveFromRecent
                 )
             }
@@ -208,7 +219,7 @@ fun AuraTrackOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.Videocam,
                     label = "Watch Music Video",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = onWatchVideo
                 )
             }
@@ -217,7 +228,7 @@ fun AuraTrackOptionsModal(
                 TrackOptionRow(
                     icon = Icons.Rounded.Person,
                     label = "View Artist",
-                    iconTint = Color.White,
+                    iconTint = auraColors.textPrimary,
                     onClick = onGoToArtist
                 )
             }
@@ -229,12 +240,14 @@ fun AuraTrackOptionsModal(
 fun TrackOptionRow(
     icon: ImageVector,
     label: String,
-    iconTint: Color = Color.White,
+    iconTint: Color = LocalAuraColors.current.textPrimary,
     onClick: () -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(12.dp))
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp, horizontal = 4.dp),
@@ -249,7 +262,7 @@ fun TrackOptionRow(
         Spacer(modifier = Modifier.width(16.dp))
         Text(
             text = label,
-            color = Color.White,
+            color = auraColors.textPrimary,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium
         )

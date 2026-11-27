@@ -38,10 +38,10 @@
 
         <activity
             android:name=".MainActivity"
-            android:configChanges="keyboardHidden|screenSize|screenLayout|smallestScreenSize"
+            android:configChanges="orientation|keyboardHidden|screenSize|screenLayout|smallestScreenSize"
             android:exported="true"
             android:launchMode="singleTask"
-            android:screenOrientation="portrait"
+            android:supportsPictureInPicture="true"
             android:theme="@style/Theme.AuraMusic">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -51,7 +51,32 @@
                 <category android:name="android.intent.category.APP_MUSIC" />
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="http" />
+                <data android:scheme="https" />
+                <data android:host="youtube.com" />
+                <data android:host="www.youtube.com" />
+                <data android:host="m.youtube.com" />
+                <data android:host="music.youtube.com" />
+                <data android:host="youtu.be" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
         </activity>
+
+        <activity
+            android:name=".ui.widget.AuraWidgetLaunchActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
             android:name=".core.media.AuraMediaService"
@@ -96,6 +121,36 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="aura_music_updates" />
+
+        <!-- Android Auto Media Support -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
+
+        <!-- Jetpack Glance Home Screen Widgets -->
+        <receiver
+            android:name=".ui.widget.AuraTurntableWidgetReceiver"
+            android:exported="true"
+            android:label="Aura Turntable">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/aura_turntable_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".ui.widget.AuraQuickPlayWidgetReceiver"
+            android:exported="true"
+            android:label="Aura Quick Play">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/aura_quickplay_widget_info" />
+        </receiver>
 
         <!-- Firebase Cloud Messaging Receiver Service -->
         <service

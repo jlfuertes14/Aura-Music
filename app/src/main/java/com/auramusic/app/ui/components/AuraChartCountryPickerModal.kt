@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,14 +19,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -45,8 +44,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.auramusic.app.domain.model.ChartSupportedCountries
-import com.auramusic.app.ui.theme.AuraNeonLime
-import com.auramusic.app.ui.theme.TextSecondary
+import com.auramusic.app.ui.theme.LocalAuraColors
+import com.auramusic.app.ui.theme.auraGlassSheetColor
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -55,6 +54,7 @@ fun AuraChartCountryPickerModal(
     onDismiss: () -> Unit,
     onSelectCountry: (String) -> Unit
 ) {
+    val auraColors = LocalAuraColors.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var searchQuery by remember { mutableStateOf("") }
 
@@ -79,15 +79,15 @@ fun AuraChartCountryPickerModal(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = Color(0xFF14161E),
-        scrimColor = Color.Black.copy(alpha = 0.75f),
+        containerColor = auraGlassSheetColor(auraColors.sheetBackground),
+        scrimColor = auraColors.scrim,
         dragHandle = {
             Box(
                 modifier = Modifier
                     .padding(vertical = 10.dp)
                     .size(width = 36.dp, height = 4.dp)
                     .clip(RoundedCornerShape(2.dp))
-                    .background(Color.White.copy(alpha = 0.20f))
+                    .background(auraColors.dragHandle)
             )
         }
     ) {
@@ -104,42 +104,34 @@ fun AuraChartCountryPickerModal(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = "Select Chart Country",
-                        style = androidx.compose.material3.MaterialTheme.typography.titleLarge.copy(
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 20.sp
-                        ),
-                        color = Color.White
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = "Explore official YouTube Music charts for this region",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = TextSecondary
-                    )
-                }
+                Text(
+                    text = "Chart Country",
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 20.sp
+                    ),
+                    color = auraColors.textPrimary
+                )
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Compact, borderless search bar with lowered font size and centered text
+            // Compact, borderless search bar
             BasicTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it },
                 textStyle = TextStyle(
                     fontSize = 13.5.sp,
-                    color = Color.White,
+                    color = auraColors.textPrimary,
                     fontWeight = FontWeight.Normal
                 ),
                 singleLine = true,
-                cursorBrush = SolidColor(AuraNeonLime),
+                cursorBrush = SolidColor(auraColors.textPrimary),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(Color(0xFF1E2028))
+                    .height(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(auraColors.surfaceCard)
                     .padding(horizontal = 12.dp),
                 decorationBox = { innerTextField ->
                     Row(
@@ -149,7 +141,7 @@ fun AuraChartCountryPickerModal(
                         Icon(
                             imageVector = Icons.Rounded.Search,
                             contentDescription = "Search",
-                            tint = TextSecondary,
+                            tint = auraColors.textSecondary,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -157,7 +149,7 @@ fun AuraChartCountryPickerModal(
                             if (searchQuery.isEmpty()) {
                                 Text(
                                     text = "Search country or region…",
-                                    color = TextSecondary,
+                                    color = auraColors.textSecondary,
                                     fontSize = 13.sp
                                 )
                             }
@@ -166,13 +158,13 @@ fun AuraChartCountryPickerModal(
                         if (searchQuery.isNotBlank()) {
                             IconButton(
                                 onClick = { searchQuery = "" },
-                                modifier = Modifier.size(28.dp)
+                                modifier = Modifier.size(32.dp)
                             ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Close,
                                     contentDescription = "Clear search",
-                                    tint = TextSecondary,
-                                    modifier = Modifier.size(14.dp)
+                                    tint = auraColors.textSecondary,
+                                    modifier = Modifier.size(15.dp)
                                 )
                             }
                         }
@@ -191,25 +183,36 @@ fun AuraChartCountryPickerModal(
             ) {
                 items(filteredCountries, key = { it.first }) { (code, name) ->
                     val isSelected = code.equals(currentCountryCode, ignoreCase = true)
+                    val rowBg = if (isSelected) auraColors.surfaceCard else Color.Transparent
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color.Transparent)
+                            .heightIn(min = 48.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(rowBg)
                             .clickable {
                                 onSelectCountry(code)
                                 onDismiss()
                             }
-                            .padding(horizontal = 8.dp, vertical = 12.dp),
+                            .padding(horizontal = 10.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = name,
-                            color = if (isSelected) AuraNeonLime else Color.White,
+                            color = auraColors.textPrimary,
                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                             fontSize = 15.sp,
                             modifier = Modifier.weight(1f)
                         )
+                        if (isSelected) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = "Selected country",
+                                tint = auraColors.textPrimary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
