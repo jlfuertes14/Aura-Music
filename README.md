@@ -35,7 +35,11 @@ Built with **100% Native Kotlin**, **Jetpack Compose (Material 3)**, **AndroidX 
   <a href="https://github.com/topics/music-player"><img src="https://img.shields.io/badge/topic-music--player-1E88E5?style=flat-square" alt="music-player"/></a>
 </p>
 
-[Features](#features) • [Credits & Inspiration](#credits--inspiration) • [Architecture](#architecture--data-flow) • [User Interface](#user-interface) • [Audio & Fidelity](#audio--equalizer-fidelity) • [Privacy](#privacy-manifesto) • [Build & Install](#building--installation) • [Legal Disclaimer](#legal-disclaimer--terms-of-use)
+[Features](#features) • [Credits & Inspiration](#credits--inspiration) • [Architecture](#architecture--data-flow) • [User Interface](#user-interface) • [Audio & Fidelity](#audio--equalizer-fidelity) • [Privacy](#privacy-manifesto) • [Build & Install](#building--installation) • [Support](#support) • [Legal Disclaimer](#legal-disclaimer--terms-of-use) • [License](#license)
+
+<br/><br/>
+
+<a href="https://ko-fi.com/O7L82BFM2D" target="_blank"><img height="36" style="border:0px;height:36px;" src="https://storage.ko-fi.com/cdn/kofi2.png?v=6" border="0" alt="Buy Me a Coffee at ko-fi.com" /></a>
 
 </div>
 
@@ -264,9 +268,19 @@ This software is provided "AS IS", without warranty of any kind, express or impl
 
 ---
 
+## Support
+
+Aura Music is 100% free, ad-free, and open-source. If you enjoy using Aura and want to support ongoing development, you can star the repository or buy me a coffee on Ko-fi:
+
+<a href="https://ko-fi.com/O7L82BFM2D" target="_blank"><img height="36" style="border:0px;height:36px;" src="https://storage.ko-fi.com/cdn/kofi2.png?v=6" border="0" alt="Buy Me a Coffee at ko-fi.com" /></a>
+
+---
+
 ## License
 
 This project is licensed under the **GNU General Public License v3.0 (GPL-3.0)**. You are free to inspect, modify, and redistribute this software under the terms and conditions of the GPL-3.0 license.
+
+See the full license text in the [LICENSE](LICENSE) file.
 
 <div align="center">
 Crafted by the AURA Music Engineering Team • Powered by the Open Source Community
